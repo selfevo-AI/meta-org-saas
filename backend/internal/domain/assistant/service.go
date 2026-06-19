@@ -12,6 +12,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
 var (
@@ -44,6 +45,7 @@ type Service struct {
 	dictionary         *DictionaryService
 	contextEngine      ContextPackageBuilder
 	runtime            AssistantRuntimeRunner
+	securityKernel     securitykernel.Client
 	maxTurns           int
 	maxHistory         int
 }
@@ -77,6 +79,12 @@ func WithVerifiedContextEngine(engine ContextPackageBuilder) ServiceOption {
 func WithAssistantRuntime(runtime AssistantRuntimeRunner) ServiceOption {
 	return func(s *Service) {
 		s.runtime = runtime
+	}
+}
+
+func WithSecurityKernel(client securitykernel.Client) ServiceOption {
+	return func(s *Service) {
+		s.securityKernel = client
 	}
 }
 
@@ -333,6 +341,17 @@ func (s *Service) CreateBusinessSkill(ctx context.Context, actorID uuid.UUID, ac
 	if input.Metadata == nil {
 		input.Metadata = map[string]any{}
 	}
+	if err := s.authorizeSkillWithKernel(ctx, actorID, actorType, "create", &BusinessSkill{
+		ScopeLevel:          input.ScopeLevel,
+		DeploymentMode:      input.DeploymentMode,
+		OrganizationID:      input.OrganizationID,
+		OwnerUserID:         input.OwnerUserID,
+		ModuleKey:           input.ModuleKey,
+		TargetType:          input.TargetType,
+		BusinessFunctionKey: input.BusinessFunctionKey,
+	}); err != nil {
+		return nil, err
+	}
 	return s.repo.CreateBusinessSkill(ctx, input, actorID, actorType)
 }
 
@@ -354,6 +373,9 @@ func (s *Service) ActivateBusinessSkill(ctx context.Context, id uuid.UUID, revie
 	if err := authorizeSkillActivation(ctx, skill); err != nil {
 		return nil, err
 	}
+	if err := s.authorizeSkillWithKernel(ctx, reviewerID, reviewerType, "activate", skill); err != nil {
+		return nil, err
+	}
 	return s.repo.ActivateBusinessSkill(ctx, id, reviewerID)
 }
 
@@ -369,6 +391,9 @@ func (s *Service) RunBusinessSkill(ctx context.Context, id uuid.UUID, actorID uu
 		return nil, fmt.Errorf("%w: skill is not active", ErrValidation)
 	}
 	if err := authorizeSkillUse(ctx, skill); err != nil {
+		return nil, err
+	}
+	if err := s.authorizeSkillWithKernel(ctx, actorID, actorType, "run", skill); err != nil {
 		return nil, err
 	}
 	if input == nil {
@@ -1058,6 +1083,83 @@ func authorizeSkillUse(ctx context.Context, skill *BusinessSkill) error {
 		return fmt.Errorf("%w: unsupported skill scope_level", ErrValidation)
 	}
 	return nil
+}
+
+func (s *Service) authorizeSkillWithKernel(ctx context.Context, actorID uuid.UUID, actorType string, action string, skill *BusinessSkill) error {
+	if s.securityKernel == nil || skill == nil {
+		return nil
+	}
+	tenant, _ := middleware.TenantFromContext(ctx)
+	request := securitykernel.Request{
+		Actor: securitykernel.Actor{
+			ActorID:         actorID,
+			ActorType:       actorType,
+			AuthorityTier:   tenantAuthorityTier(tenant),
+			IsPlatformAdmin: tenant != nil && tenant.IsPlatformAdmin,
+		},
+		OrganizationID:  tenantOrganizationID(tenant),
+		EnabledModules:  tenantEnabledModules(tenant),
+		EnabledFeatures: []string{"skill_governance"},
+		Resource: securitykernel.Resource{
+			ModuleKey:             firstNonEmpty(skill.ModuleKey, "assistant"),
+			ResourceType:          "skill",
+			Action:                action,
+			ScopeLevel:            firstNonEmpty(skill.ScopeLevel, SkillScopeSaaSGlobal),
+			OrganizationID:        skill.OrganizationID,
+			RequiredAuthorityTier: requiredSkillAuthority(action),
+			RequiredLicenseMode:   "commercial",
+		},
+		Metadata: map[string]any{
+			"target_type":           skill.TargetType,
+			"business_function_key": skill.BusinessFunctionKey,
+			"deployment_mode":       skill.DeploymentMode,
+		},
+	}
+	decision, err := s.securityKernel.Authorize(ctx, request)
+	if err != nil || !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" && err != nil {
+			reason = err.Error()
+		}
+		return fmt.Errorf("%w: security kernel denied skill %s: %s", ErrForbidden, action, reason)
+	}
+	return nil
+}
+
+func requiredSkillAuthority(action string) string {
+	switch action {
+	case "create", "activate":
+		return "organization_admin"
+	default:
+		return "executor"
+	}
+}
+
+func tenantAuthorityTier(tenant *middleware.TenantContext) string {
+	if tenant == nil {
+		return ""
+	}
+	return tenant.AuthorityTier
+}
+
+func tenantOrganizationID(tenant *middleware.TenantContext) *uuid.UUID {
+	if tenant == nil {
+		return nil
+	}
+	return tenant.OrganizationID
+}
+
+func tenantEnabledModules(tenant *middleware.TenantContext) []string {
+	if tenant == nil || tenant.EnabledModules == nil {
+		return []string{}
+	}
+	modules := []string{}
+	for moduleKey, enabled := range tenant.EnabledModules {
+		if enabled {
+			modules = append(modules, moduleKey)
+		}
+	}
+	return modules
 }
 
 func tenantMatchesOrganization(tenant *middleware.TenantContext, ok bool, orgID *uuid.UUID) bool {

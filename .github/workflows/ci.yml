@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, saas-main]
   pull_request:
-    branches: [master, main]
+    branches: [master, main, saas-main]
 
 jobs:
   compose:
@@ -44,6 +44,16 @@ jobs:
         run: |
           go test ./...
           go build ./cmd/server
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format
+        run: cargo fmt --check
+      - name: Test security kernel
+        run: cargo test
 
   frontend:
     runs-on: ubuntu-latest

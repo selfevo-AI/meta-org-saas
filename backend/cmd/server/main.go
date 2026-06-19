@@ -32,6 +32,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/config"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/database"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/secretbox"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/server"
 )
 
@@ -55,9 +56,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("model secret key invalid: %v", err)
 	}
+	securityKernel := securitykernel.NewClient(securitykernel.Config{
+		URL:             cfg.SecurityKernelURL,
+		SharedSecret:    cfg.SecurityKernelSharedSecret,
+		EnforcementMode: cfg.SecurityKernelEnforcementMode,
+	})
 
 	saasRepo := saas.NewRepository(db)
-	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode)
+	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saas.WithSecurityKernel(securityKernel))
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
 		log.Fatalf("platform admin bootstrap failed: %v", err)
 	}
@@ -113,7 +119,7 @@ func main() {
 	obsHandler := observability.NewHandler(obsSvc)
 
 	aiRepo := aigateway.NewRepository(db, modelSecretBox)
-	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc))
+	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel))
 	aiHandler := aigateway.NewHandler(aiSvc)
 
 	wfRepo := workflow.NewRepository(db)
@@ -137,7 +143,7 @@ func main() {
 	financeHandler := finance.NewHandler(financeSvc)
 
 	toolRepo := toolruntime.NewRepository(db)
-	toolSvc := toolruntime.NewService(toolRepo, govSvc, toolruntime.InternalTools(projectSvc, financeSvc, evoSvc), toolruntime.WithObservability(obsSvc))
+	toolSvc := toolruntime.NewService(toolRepo, govSvc, toolruntime.InternalTools(projectSvc, financeSvc, evoSvc), toolruntime.WithObservability(obsSvc), toolruntime.WithSecurityKernel(securityKernel))
 	toolHandler := toolruntime.NewHandler(toolSvc)
 
 	assistantRepo := assistant.NewRepository(db)
@@ -157,6 +163,7 @@ func main() {
 		assistant.WithProposalApplicator(assistant.NewDBProposalApplicator(db)),
 		assistant.WithDictionaryService(dictionarySvc),
 		assistant.WithVerifiedContextEngine(contextEngine),
+		assistant.WithSecurityKernel(securityKernel),
 	)
 	toolRunner := assistant.NewToolRunner(toolSvc, assistant.ToolRunnerConfig{})
 	eventSink := assistant.NewMemoryEventSink(assistantRepo)

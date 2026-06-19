@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -21,15 +22,48 @@ var (
 )
 
 type Service struct {
-	repo *Repository
-	mode string
+	repo           repository
+	mode           string
+	securityKernel securitykernel.Client
 }
 
-func NewService(repo *Repository, mode string) *Service {
+type ServiceOption func(*Service)
+
+type repository interface {
+	BootstrapPlatformAdmin(context.Context, string, string) error
+	GetUserProfile(context.Context, uuid.UUID) (*UserProfile, error)
+	ListModules(context.Context) ([]Module, error)
+	ListDefaultModuleKeys(context.Context) ([]string, error)
+	CompleteOnboarding(context.Context, uuid.UUID, OnboardingOrganizationInput, []string) (*OrganizationAccount, error)
+	ListOrganizationsForPlatform(context.Context, int) ([]OrganizationAccount, error)
+	GetSubscription(context.Context, uuid.UUID) (*OrganizationSubscription, error)
+	ListEnabledModules(context.Context, uuid.UUID) (map[string]bool, error)
+	UpdateOrganizationModules(context.Context, uuid.UUID, []string) (map[string]bool, error)
+	CreateInvitation(context.Context, uuid.UUID, uuid.UUID, CreateInvitationInput, string) (*Invitation, error)
+	ListInvitations(context.Context, uuid.UUID, int) ([]Invitation, error)
+	AcceptInvitationWithNewUser(context.Context, string, AcceptInvitationInput, string) (*OrganizationAccount, uuid.UUID, error)
+	EnsureSingleOrgForUser(context.Context, uuid.UUID) (*OrganizationAccount, error)
+	GetHumanMembership(context.Context, uuid.UUID, uuid.UUID) (*membershipRecord, error)
+	GetAgentMembership(context.Context, uuid.UUID, uuid.UUID) (*membershipRecord, error)
+	GetOrganizationAccount(context.Context, uuid.UUID) (*OrganizationAccount, error)
+	GetPlatformRole(context.Context, uuid.UUID) (string, error)
+}
+
+func WithSecurityKernel(client securitykernel.Client) ServiceOption {
+	return func(s *Service) {
+		s.securityKernel = client
+	}
+}
+
+func NewService(repo repository, mode string, opts ...ServiceOption) *Service {
 	if mode != ModeSaaS {
 		mode = ModeSingleOrg
 	}
-	return &Service{repo: repo, mode: mode}
+	s := &Service{repo: repo, mode: mode}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Service) Mode() string {
@@ -101,6 +135,26 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, inpu
 		}
 		modules = defaults
 	}
+	if err := s.authorizeWithKernel(ctx, securitykernel.Request{
+		Actor: securitykernel.Actor{
+			ActorID:       userID,
+			ActorType:     "human",
+			AuthorityTier: AuthorityOwner,
+		},
+		EnabledModules:  modules,
+		EnabledFeatures: []string{"owner_attestation"},
+		Resource: securitykernel.Resource{
+			ModuleKey:             "organization",
+			ResourceType:          "owner_attestation",
+			Action:                "verify",
+			ScopeLevel:            "organization",
+			RequiredAuthorityTier: AuthorityOwner,
+			RequiredLicenseMode:   "commercial",
+		},
+		Metadata: map[string]any{"organization_name": input.OrganizationName},
+	}); err != nil {
+		return nil, err
+	}
 	org, err := s.repo.CompleteOnboarding(ctx, userID, input, modules)
 	if err != nil {
 		return nil, err
@@ -137,7 +191,31 @@ func (s *Service) UpdateOrganizationModules(ctx context.Context, actorID uuid.UU
 	if err := s.requireOrgAdmin(ctx, actorID, orgID); err != nil {
 		return nil, err
 	}
-	return s.repo.UpdateOrganizationModules(ctx, orgID, normalizeModuleKeys(input.EnabledModules))
+	modules := normalizeModuleKeys(input.EnabledModules)
+	authorityTier, isPlatformAdmin := s.actorAuthority(ctx, actorID, orgID)
+	if err := s.authorizeWithKernel(ctx, securitykernel.Request{
+		Actor: securitykernel.Actor{
+			ActorID:         actorID,
+			ActorType:       "human",
+			AuthorityTier:   authorityTier,
+			IsPlatformAdmin: isPlatformAdmin,
+		},
+		OrganizationID:  &orgID,
+		EnabledModules:  modules,
+		EnabledFeatures: []string{"module_entitlements"},
+		Resource: securitykernel.Resource{
+			ModuleKey:             "organization",
+			ResourceType:          "module_entitlement",
+			Action:                "update",
+			ScopeLevel:            "organization",
+			OrganizationID:        &orgID,
+			RequiredAuthorityTier: AuthorityAdmin,
+			RequiredLicenseMode:   "commercial",
+		},
+	}); err != nil {
+		return nil, err
+	}
+	return s.repo.UpdateOrganizationModules(ctx, orgID, modules)
 }
 
 func (s *Service) CreateInvitation(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID, input CreateInvitationInput) (*Invitation, error) {
@@ -311,6 +389,32 @@ func (s *Service) requireOrgAdmin(ctx context.Context, userID uuid.UUID, orgID u
 	default:
 		return ErrForbidden
 	}
+}
+
+func (s *Service) authorizeWithKernel(ctx context.Context, request securitykernel.Request) error {
+	if s.securityKernel == nil {
+		return nil
+	}
+	decision, err := s.securityKernel.Authorize(ctx, request)
+	if err != nil || !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" && err != nil {
+			reason = err.Error()
+		}
+		return fmt.Errorf("%w: security kernel denied %s %s: %s", ErrForbidden, request.Resource.ResourceType, request.Resource.Action, reason)
+	}
+	return nil
+}
+
+func (s *Service) actorAuthority(ctx context.Context, userID uuid.UUID, orgID uuid.UUID) (string, bool) {
+	if _, err := s.repo.GetPlatformRole(ctx, userID); err == nil {
+		return "", true
+	}
+	membership, err := s.repo.GetHumanMembership(ctx, userID, orgID)
+	if err != nil || membership == nil {
+		return "", false
+	}
+	return membership.AuthorityTier, false
 }
 
 func normalizeModuleKeys(values []string) []string {

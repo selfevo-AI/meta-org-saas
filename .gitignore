@@ -12,6 +12,9 @@
 go.work
 go.work.sum
 
+# Rust workspace
+target/
+
 # Dependency directories
 vendor/
 node_modules/

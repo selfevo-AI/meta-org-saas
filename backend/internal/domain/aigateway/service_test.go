@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
 type fakeGatewayRepo struct {
@@ -87,6 +89,37 @@ func TestServiceInvokeRecordsFailedUsage(t *testing.T) {
 	}
 	if repo.lastLedger.Amount != 0 {
 		t.Fatalf("failed ledger amount = %.8f, want 0", repo.lastLedger.Amount)
+	}
+}
+
+func TestServiceInvokeRequiresSecurityKernelAuthorization(t *testing.T) {
+	orgID := uuid.New()
+	userID := uuid.New()
+	repo := newFakeGatewayRepo()
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "license_denied", DecisionType: "deny"}, err: securitykernel.ErrDenied}
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{
+		OrganizationID: &orgID,
+		UserID:         userID,
+		AuthorityTier:  "executor",
+		EnabledModules: map[string]bool{"ai_gateway": true},
+	})
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{}}, WithSecurityKernel(kernel))
+
+	_, err := svc.Invoke(ctx, InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "hi"}},
+		Attribution:  Attribution{UserID: &userID},
+	})
+
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Invoke error = %v, want ErrForbidden", err)
+	}
+	if repo.recorded {
+		t.Fatalf("invocation was recorded after security denial")
+	}
+	if kernel.lastRequest.Resource.ResourceType != "model_provider_channel" || kernel.lastRequest.Resource.Action != "use" {
+		t.Fatalf("security resource = %#v, want model_provider_channel use", kernel.lastRequest.Resource)
 	}
 }
 
@@ -296,4 +329,15 @@ func (a fakeAdapter) Stream(context.Context, ProviderRequest) (<-chan StreamEven
 	ch := make(chan StreamEvent)
 	close(ch)
 	return ch, a.err
+}
+
+type fakeSecurityKernel struct {
+	lastRequest securitykernel.Request
+	decision    securitykernel.Decision
+	err         error
+}
+
+func (f *fakeSecurityKernel) Authorize(_ context.Context, request securitykernel.Request) (securitykernel.Decision, error) {
+	f.lastRequest = request
+	return f.decision, f.err
 }

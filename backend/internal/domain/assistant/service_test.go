@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
 func TestCreateSessionAutoModelUsesModuleDefault(t *testing.T) {
@@ -262,6 +263,36 @@ func TestCreateBusinessSkillValidatesComponents(t *testing.T) {
 	}
 }
 
+func TestCreateBusinessSkillRequiresSecurityKernelAuthorization(t *testing.T) {
+	orgID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{
+		OrganizationID: &orgID,
+		AuthorityTier:  "organization_admin",
+		EnabledModules: map[string]bool{"assistant": true},
+	})
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "license_denied", DecisionType: "deny"}, err: securitykernel.ErrDenied}
+	repo := &fakeRepository{}
+	svc := NewService(repo, nil, nil, WithSecurityKernel(kernel))
+
+	_, err := svc.CreateBusinessSkill(ctx, uuid.New(), "internal_human", CreateBusinessSkillInput{
+		ScopeLevel:      SkillScopeOrganization,
+		ModuleKey:       "assistant",
+		Name:            "denied skill",
+		PromptTemplate:  "Review target",
+		SkillComponents: validSkillComponents(),
+	})
+
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("CreateBusinessSkill error = %v, want ErrForbidden", err)
+	}
+	if repo.skill != nil {
+		t.Fatalf("skill was persisted after security denial")
+	}
+	if kernel.lastRequest.Resource.Action != "create" || kernel.lastRequest.Resource.ResourceType != "skill" {
+		t.Fatalf("security request resource = %#v, want skill create", kernel.lastRequest.Resource)
+	}
+}
+
 func TestActivateBusinessSkillRequiresLayeredAuthority(t *testing.T) {
 	orgID := uuid.New()
 	skillID := uuid.New()
@@ -319,6 +350,40 @@ func TestActivateSaaSGlobalSkillRequiresPlatformAdmin(t *testing.T) {
 	platformCtx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{IsPlatformAdmin: true})
 	if _, err := svc.ActivateBusinessSkill(platformCtx, skillID, uuid.New(), "internal_human"); err != nil {
 		t.Fatalf("ActivateBusinessSkill platform admin returned error: %v", err)
+	}
+}
+
+func TestActivateBusinessSkillRequiresSecurityKernelAuthorization(t *testing.T) {
+	orgID := uuid.New()
+	skillID := uuid.New()
+	repo := &fakeRepository{
+		skill: &BusinessSkill{
+			ID:              skillID,
+			ScopeLevel:      SkillScopeOrganization,
+			OrganizationID:  &orgID,
+			ModuleKey:       "assistant",
+			Name:            "organization skill",
+			PromptTemplate:  "Review target",
+			SkillComponents: validSkillComponents(),
+			Status:          SkillDraft,
+		},
+	}
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "authority_denied", DecisionType: "deny"}, err: securitykernel.ErrDenied}
+	svc := NewService(repo, nil, nil, WithSecurityKernel(kernel))
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{
+		OrganizationID: &orgID,
+		AuthorityTier:  "organization_admin",
+		EnabledModules: map[string]bool{"assistant": true},
+	})
+
+	if _, err := svc.ActivateBusinessSkill(ctx, skillID, uuid.New(), "internal_human"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ActivateBusinessSkill error = %v, want ErrForbidden", err)
+	}
+	if repo.skill.Status != SkillDraft {
+		t.Fatalf("skill status = %q, want draft", repo.skill.Status)
+	}
+	if kernel.lastRequest.Resource.Action != "activate" {
+		t.Fatalf("security action = %q, want activate", kernel.lastRequest.Resource.Action)
 	}
 }
 
@@ -417,6 +482,40 @@ func TestRunBusinessSkillRejectsCrossTenantOrganization(t *testing.T) {
 
 	if _, err := svc.RunBusinessSkill(ctx, skillID, uuid.New(), "internal_human", map[string]any{}); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("RunBusinessSkill error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestRunBusinessSkillRequiresSecurityKernelAuthorization(t *testing.T) {
+	orgID := uuid.New()
+	skillID := uuid.New()
+	repo := &fakeRepository{
+		skill: &BusinessSkill{
+			ID:              skillID,
+			ScopeLevel:      SkillScopeOrganization,
+			OrganizationID:  &orgID,
+			ModuleKey:       "assistant",
+			Name:            "organization skill",
+			PromptTemplate:  "Review target",
+			SkillComponents: validSkillComponents(),
+			Status:          SkillActive,
+		},
+	}
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "context_denied", DecisionType: "deny"}, err: securitykernel.ErrDenied}
+	svc := NewService(repo, nil, nil, WithSecurityKernel(kernel))
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{
+		OrganizationID: &orgID,
+		AuthorityTier:  "executor",
+		EnabledModules: map[string]bool{"assistant": true},
+	})
+
+	if _, err := svc.RunBusinessSkill(ctx, skillID, uuid.New(), "internal_human", map[string]any{}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("RunBusinessSkill error = %v, want ErrForbidden", err)
+	}
+	if repo.lastSkillRun.SkillID != uuid.Nil {
+		t.Fatalf("skill run was recorded after security denial")
+	}
+	if kernel.lastRequest.Resource.Action != "run" {
+		t.Fatalf("security action = %q, want run", kernel.lastRequest.Resource.Action)
 	}
 }
 
@@ -725,4 +824,15 @@ type fakeContextResolver struct {
 func (f *fakeContextResolver) Resolve(_ context.Context, session *Session) WorkRecordContext {
 	f.session = session
 	return f.result
+}
+
+type fakeSecurityKernel struct {
+	lastRequest securitykernel.Request
+	decision    securitykernel.Decision
+	err         error
+}
+
+func (f *fakeSecurityKernel) Authorize(_ context.Context, request securitykernel.Request) (securitykernel.Decision, error) {
+	f.lastRequest = request
+	return f.decision, f.err
 }

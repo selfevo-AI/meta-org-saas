@@ -12,6 +12,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
 var (
@@ -54,10 +55,11 @@ type ObservabilityRecorder interface {
 }
 
 type Service struct {
-	repo          Repository
-	governance    GovernanceService
-	adapters      map[string]ToolAdapter
-	observability ObservabilityRecorder
+	repo           Repository
+	governance     GovernanceService
+	adapters       map[string]ToolAdapter
+	observability  ObservabilityRecorder
+	securityKernel securitykernel.Client
 }
 
 type ServiceOption func(*Service)
@@ -65,6 +67,12 @@ type ServiceOption func(*Service)
 func WithObservability(recorder ObservabilityRecorder) ServiceOption {
 	return func(s *Service) {
 		s.observability = recorder
+	}
+}
+
+func WithSecurityKernel(client securitykernel.Client) ServiceOption {
+	return func(s *Service) {
+		s.securityKernel = client
 	}
 }
 
@@ -196,6 +204,9 @@ func (s *Service) ExecuteTool(ctx context.Context, input ExecuteToolInput) (*Exe
 	}
 	tool, err := s.repo.GetToolByName(ctx, input.ToolName)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeToolWithKernel(ctx, tool, input); err != nil {
 		return nil, err
 	}
 	governanceResult, err := s.decide(ctx, tool, input)
@@ -387,6 +398,9 @@ func (s *Service) authorizeApprovalReview(ctx context.Context, approvalID uuid.U
 	if !authorityTierAllows(actualTier, requiredTier) {
 		return nil, nil, nil, fmt.Errorf("%w: %s approval requires %s authority", ErrForbidden, normalizeToolCategory(tool.ToolCategory), requiredTier)
 	}
+	if err := s.authorizeApprovalWithKernel(ctx, tool, execution, *reviewedBy, actualTier); err != nil {
+		return nil, nil, nil, err
+	}
 	return approval, execution, tool, nil
 }
 
@@ -463,6 +477,87 @@ func (s *Service) decide(ctx context.Context, tool *ToolDefinition, input Execut
 		return GovernanceResult{}, err
 	}
 	return GovernanceResult{Decision: decision.Decision, Allowed: decision.Allowed, Reason: decision.Reason}, nil
+}
+
+func (s *Service) authorizeToolWithKernel(ctx context.Context, tool *ToolDefinition, input ExecuteToolInput) error {
+	if s.securityKernel == nil {
+		return nil
+	}
+	tenant, _ := middleware.TenantFromContext(ctx)
+	request := securitykernel.Request{
+		Actor: securitykernel.Actor{
+			ActorID:         input.ActorID,
+			ActorType:       input.ActorType,
+			AuthorityTier:   tenantAuthorityTier(tenant),
+			IsPlatformAdmin: tenant != nil && tenant.IsPlatformAdmin,
+		},
+		OrganizationID:  input.OrganizationID,
+		EnabledModules:  tenantEnabledModules(tenant),
+		EnabledFeatures: []string{"tool_execution"},
+		Resource: securitykernel.Resource{
+			ModuleKey:             "toolruntime",
+			ResourceType:          "tool",
+			Action:                "execute",
+			ScopeLevel:            "organization",
+			OrganizationID:        input.OrganizationID,
+			RequiredAuthorityTier: normalizeApprovalTier(tool.ApprovalTierRequired, approvalTierForCategory(tool.ToolCategory)),
+			RequiredLicenseMode:   "commercial",
+		},
+		Metadata: map[string]any{
+			"tool_name":      tool.Name,
+			"risk_level":     tool.RiskLevel,
+			"required_level": tool.RequiredLevel,
+		},
+	}
+	decision, err := s.securityKernel.Authorize(ctx, request)
+	if err != nil || !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" && err != nil {
+			reason = err.Error()
+		}
+		return fmt.Errorf("%w: security kernel denied tool execution: %s", ErrForbidden, reason)
+	}
+	return nil
+}
+
+func (s *Service) authorizeApprovalWithKernel(ctx context.Context, tool *ToolDefinition, execution *ToolExecution, reviewerID uuid.UUID, reviewerTier string) error {
+	if s.securityKernel == nil {
+		return nil
+	}
+	tenant, _ := middleware.TenantFromContext(ctx)
+	request := securitykernel.Request{
+		Actor: securitykernel.Actor{
+			ActorID:         reviewerID,
+			ActorType:       "human",
+			AuthorityTier:   reviewerTier,
+			IsPlatformAdmin: tenant != nil && tenant.IsPlatformAdmin,
+		},
+		OrganizationID:  execution.OrganizationID,
+		EnabledModules:  tenantEnabledModules(tenant),
+		EnabledFeatures: []string{"tool_approval"},
+		Resource: securitykernel.Resource{
+			ModuleKey:             "toolruntime",
+			ResourceType:          "tool_approval",
+			Action:                "review",
+			ScopeLevel:            "organization",
+			OrganizationID:        execution.OrganizationID,
+			RequiredAuthorityTier: normalizeApprovalTier(tool.ApprovalTierRequired, approvalTierForCategory(tool.ToolCategory)),
+			RequiredLicenseMode:   "commercial",
+		},
+		Metadata: map[string]any{
+			"tool_name":    tool.Name,
+			"execution_id": execution.ID.String(),
+		},
+	}
+	decision, err := s.securityKernel.Authorize(ctx, request)
+	if err != nil || !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" && err != nil {
+			reason = err.Error()
+		}
+		return fmt.Errorf("%w: security kernel denied tool approval: %s", ErrForbidden, reason)
+	}
+	return nil
 }
 
 func (s *Service) startToolTrace(ctx context.Context, tool *ToolDefinition, execution *ToolExecution, input ExecuteToolInput, policy string, governanceResult GovernanceResult) *observability.Trace {
@@ -613,6 +708,26 @@ func currentTenantOrganizationID(ctx context.Context) *uuid.UUID {
 	}
 	id := *tenant.OrganizationID
 	return &id
+}
+
+func tenantAuthorityTier(tenant *middleware.TenantContext) string {
+	if tenant == nil {
+		return ""
+	}
+	return tenant.AuthorityTier
+}
+
+func tenantEnabledModules(tenant *middleware.TenantContext) []string {
+	if tenant == nil || tenant.EnabledModules == nil {
+		return []string{}
+	}
+	modules := []string{}
+	for moduleKey, enabled := range tenant.EnabledModules {
+		if enabled {
+			modules = append(modules, moduleKey)
+		}
+	}
+	return modules
 }
 
 func normalizeToolCategory(category string) string {

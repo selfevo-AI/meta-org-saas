@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
 func TestEffectivePolicyGovernanceOverridesAuto(t *testing.T) {
@@ -86,6 +87,95 @@ func TestExecuteToolRejectsCrossTenantOrganization(t *testing.T) {
 	})
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("ExecuteTool error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestExecuteToolRequiresSecurityKernelAuthorization(t *testing.T) {
+	orgID := uuid.New()
+	actorID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{
+		OrganizationID: &orgID,
+		AuthorityTier:  "executor",
+		EnabledModules: map[string]bool{"toolruntime": true},
+	})
+	repo := &fakeApprovalRepository{
+		tool: ToolDefinition{
+			ID:                   uuid.New(),
+			Name:                 "project.summarize",
+			DefaultPolicy:        PolicyNotify,
+			RiskLevel:            "medium",
+			RequiredLevel:        "L1",
+			ToolCategory:         ToolCategoryExecutionOperation,
+			ApprovalTierRequired: ApprovalTierExecutor,
+			IsActive:             true,
+		},
+	}
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "tool_denied", DecisionType: "deny"}, err: securitykernel.ErrDenied}
+	adapterCalled := false
+	svc := NewService(repo, nil, map[string]ToolAdapter{
+		"project.summarize": func(context.Context, ExecuteToolInput) (ToolResult, error) {
+			adapterCalled = true
+			return ToolResult{}, nil
+		},
+	}, WithSecurityKernel(kernel))
+
+	_, err := svc.ExecuteTool(ctx, ExecuteToolInput{
+		ToolName:  "project.summarize",
+		ActorID:   actorID,
+		ActorType: "internal_human",
+	})
+
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ExecuteTool error = %v, want ErrForbidden", err)
+	}
+	if adapterCalled {
+		t.Fatalf("adapter called after security denial")
+	}
+	if kernel.lastRequest.Resource.ResourceType != "tool" || kernel.lastRequest.Resource.Action != "execute" {
+		t.Fatalf("security resource = %#v, want tool execute", kernel.lastRequest.Resource)
+	}
+}
+
+func TestApproveRequiresSecurityKernelAuthorization(t *testing.T) {
+	orgID := uuid.New()
+	toolID := uuid.New()
+	executionID := uuid.New()
+	approvalID := uuid.New()
+	reviewerID := uuid.New()
+	repo := &fakeApprovalRepository{
+		tool: ToolDefinition{
+			ID:                   toolID,
+			Name:                 "project.summarize",
+			DefaultPolicy:        PolicyApprove,
+			RiskLevel:            "high",
+			RequiredLevel:        "L3",
+			ToolCategory:         ToolCategoryBusinessApproval,
+			ApprovalTierRequired: ApprovalTierReviewer,
+			IsActive:             true,
+		},
+		execution: ToolExecution{
+			ID:             executionID,
+			ToolID:         toolID,
+			ActorID:        uuid.New(),
+			ActorType:      "internal_human",
+			OrganizationID: &orgID,
+			Status:         ExecutionApprovalRequired,
+			Arguments:      map[string]any{},
+		},
+		approval: ToolApproval{ID: approvalID, ExecutionID: executionID, Status: ApprovalPending},
+		tier:     ApprovalTierReviewer,
+	}
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "approval_denied", DecisionType: "deny"}, err: securitykernel.ErrDenied}
+	svc := NewService(repo, nil, nil, WithSecurityKernel(kernel))
+
+	if _, err := svc.Approve(context.Background(), approvalID, &reviewerID, "review"); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Approve error = %v, want ErrForbidden", err)
+	}
+	if repo.approval.Status != ApprovalPending {
+		t.Fatalf("approval status = %q, want pending", repo.approval.Status)
+	}
+	if kernel.lastRequest.Resource.ResourceType != "tool_approval" || kernel.lastRequest.Resource.Action != "review" {
+		t.Fatalf("security resource = %#v, want tool approval review", kernel.lastRequest.Resource)
 	}
 }
 
@@ -452,4 +542,15 @@ func (f *fakeApprovalRepository) UpdateApproval(_ context.Context, _ uuid.UUID, 
 		f.execution.Status = ExecutionFailed
 	}
 	return &f.approval, nil
+}
+
+type fakeSecurityKernel struct {
+	lastRequest securitykernel.Request
+	decision    securitykernel.Decision
+	err         error
+}
+
+func (f *fakeSecurityKernel) Authorize(_ context.Context, request securitykernel.Request) (securitykernel.Decision, error) {
+	f.lastRequest = request
+	return f.decision, f.err
 }

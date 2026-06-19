@@ -13,3 +13,6 @@ backend/server
 backend/*.exe
 backend/*.test
 backend/*.out
+
+target
+security-kernel/target

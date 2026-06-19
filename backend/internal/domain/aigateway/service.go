@@ -11,11 +11,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
 var (
 	ErrValidation  = errors.New("validation error")
 	ErrNotFound    = errors.New("not found")
+	ErrForbidden   = errors.New("forbidden")
 	ErrUnavailable = errors.New("unavailable")
 )
 
@@ -63,12 +66,13 @@ type CatalogRepository interface {
 }
 
 type Service struct {
-	repo          InvocationRepository
-	catalog       CatalogRepository
-	adapters      AdapterRegistry
-	client        *http.Client
-	observability ObservabilityRecorder
-	costRecorder  CostRecorder
+	repo           InvocationRepository
+	catalog        CatalogRepository
+	adapters       AdapterRegistry
+	client         *http.Client
+	observability  ObservabilityRecorder
+	costRecorder   CostRecorder
+	securityKernel securitykernel.Client
 }
 
 type ServiceOption func(*Service)
@@ -86,6 +90,12 @@ func WithObservability(recorder ObservabilityRecorder) ServiceOption {
 func WithCostRecorder(recorder CostRecorder) ServiceOption {
 	return func(s *Service) {
 		s.costRecorder = recorder
+	}
+}
+
+func WithSecurityKernel(client securitykernel.Client) ServiceOption {
+	return func(s *Service) {
+		s.securityKernel = client
 	}
 }
 
@@ -423,6 +433,9 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 	}
 	target, err := s.repo.ResolveInvocationTarget(ctx, input)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeInvocationWithKernel(ctx, input, target); err != nil {
 		return nil, err
 	}
 	adapter, err := s.adapterFor(target)
@@ -842,6 +855,55 @@ func (s *Service) adapterFor(target ResolvedModel) (ProviderAdapter, error) {
 	}
 }
 
+func (s *Service) authorizeInvocationWithKernel(ctx context.Context, input InvokeInput, target ResolvedModel) error {
+	if s.securityKernel == nil {
+		return nil
+	}
+	tenant, _ := middleware.TenantFromContext(ctx)
+	actorID, actorType := actorFromAttribution(input.Attribution)
+	if actorID == nil && tenant != nil && tenant.UserID != uuid.Nil {
+		id := tenant.UserID
+		actorID = &id
+		actorType = "human"
+	}
+	request := securitykernel.Request{
+		Actor: securitykernel.Actor{
+			ActorID:         optionalActorID(actorID),
+			ActorType:       actorType,
+			AuthorityTier:   tenantAuthorityTier(tenant),
+			IsPlatformAdmin: tenant != nil && tenant.IsPlatformAdmin,
+		},
+		OrganizationID:  input.Attribution.OrganizationID,
+		EnabledModules:  tenantEnabledModules(tenant),
+		EnabledFeatures: []string{"ai_model_use"},
+		Resource: securitykernel.Resource{
+			ModuleKey:             "ai_gateway",
+			ResourceType:          "model_provider_channel",
+			Action:                "use",
+			ScopeLevel:            "organization",
+			OrganizationID:        input.Attribution.OrganizationID,
+			RequiredAuthorityTier: "executor",
+			RequiredLicenseMode:   "commercial",
+		},
+		Metadata: map[string]any{
+			"provider_id":   target.ProviderID.String(),
+			"provider_type": target.ProviderType,
+			"model_id":      target.ModelID.String(),
+			"model":         target.Model,
+			"channel_id":    optionalUUIDString(target.ChannelID),
+		},
+	}
+	decision, err := s.securityKernel.Authorize(ctx, request)
+	if err != nil || !decision.Allowed {
+		reason := decision.Reason
+		if reason == "" && err != nil {
+			reason = err.Error()
+		}
+		return fmt.Errorf("%w: security kernel denied ai invocation: %s", ErrForbidden, reason)
+	}
+	return nil
+}
+
 func (s *Service) catalogRepo() CatalogRepository {
 	if s.catalog == nil {
 		panic("aigateway: catalog repository is not configured")
@@ -1064,9 +1126,36 @@ func actorFromAttribution(attribution Attribution) (*uuid.UUID, string) {
 	return nil, ""
 }
 
+func optionalActorID(id *uuid.UUID) uuid.UUID {
+	if id == nil {
+		return uuid.Nil
+	}
+	return *id
+}
+
 func optionalUUIDString(id *uuid.UUID) string {
 	if id == nil {
 		return ""
 	}
 	return id.String()
+}
+
+func tenantAuthorityTier(tenant *middleware.TenantContext) string {
+	if tenant == nil {
+		return ""
+	}
+	return tenant.AuthorityTier
+}
+
+func tenantEnabledModules(tenant *middleware.TenantContext) []string {
+	if tenant == nil || tenant.EnabledModules == nil {
+		return []string{}
+	}
+	modules := []string{}
+	for moduleKey, enabled := range tenant.EnabledModules {
+		if enabled {
+			modules = append(modules, moduleKey)
+		}
+	}
+	return modules
 }
