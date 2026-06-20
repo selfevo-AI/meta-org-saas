@@ -23,11 +23,13 @@ import {
   Menu,
   Moon,
   MoreHorizontal,
+  PackageCheck,
   RefreshCw,
   Send,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  ShoppingCart,
   Sun,
   Users,
   WalletCards,
@@ -87,9 +89,12 @@ import {
 import { CostingWorkspace } from './costing-workspace'
 import { DeveloperToolsWorkspace } from './developer-tools-workspace'
 import { FinanceWorkspace } from './finance-workspace'
+import { InventoryWorkspace } from './inventory-workspace'
 import { MetaResourceWorkspace } from './meta-resource-workspace'
 import { OrganizationWorkspace } from './organization-workspace'
+import { ProcurementWorkspace } from './procurement-workspace'
 import { ProjectLifecycleWorkspace } from './project-lifecycle-workspace'
+import { SalesWorkspace } from './sales-workspace'
 
 type AuthMode = 'login' | 'register'
 type WorkspaceView = 'overview' | `domain:${string}`
@@ -120,6 +125,9 @@ const domainLabels: Record<string, string> = {
   FinancePayables: '应付',
   FinanceCostAccounting: '成本核算',
   MetaResource: 'Meta 资源',
+  Inventory: '库存',
+  Procurement: '采购',
+  Sales: '销售',
 }
 
 const domainIcons: Record<string, typeof Gauge> = {
@@ -147,6 +155,9 @@ const domainIcons: Record<string, typeof Gauge> = {
   FinancePayables: ArrowUp,
   FinanceCostAccounting: CircleDollarSign,
   MetaResource: Boxes,
+  Inventory: Boxes,
+  Procurement: PackageCheck,
+  Sales: ShoppingCart,
 }
 
 function defaultSkillComponents(prompt: string): AssistantSkillComponent[] {
@@ -192,6 +203,19 @@ type BusinessTargetType =
   | 'finance_settlement'
   | 'finance_receivable'
   | 'finance_payable'
+  | 'business_partner'
+  | 'inventory_item'
+  | 'warehouse'
+  | 'inventory_balance'
+  | 'inventory_movement'
+  | 'purchase_requisition'
+  | 'purchase_order'
+  | 'purchase_receipt'
+  | 'purchase_return'
+  | 'sales_quotation'
+  | 'sales_order'
+  | 'sales_shipment'
+  | 'sales_return'
   | 'cost_rate_card'
   | 'cost_budget'
   | 'cost_ledger_entry'
@@ -282,6 +306,9 @@ const dedicatedDomains = new Set([
   'FinanceReceivables',
   'FinancePayables',
   'FinanceCostAccounting',
+  'Inventory',
+  'Procurement',
+  'Sales',
   ...lifecycleDomains,
 ])
 const menuStorageKey = 'meta_org.menu.groups.v2'
@@ -329,6 +356,11 @@ const defaultMenuGroups: MenuGroup[] = [
       'Layer',
       'Observability',
     ],
+  },
+  {
+    id: 'supplyChain',
+    label: 'nav.group.supplyChain',
+    domains: ['Procurement', 'Sales', 'Inventory'],
   },
   {
     id: 'finance',
@@ -572,6 +604,170 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
     })
   }
 
+  if (domain === 'Inventory') {
+    const [partners, items, warehouses, balances, movements] = await Promise.all([
+      apiRequest<unknown>('/inventory/partners?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/items?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/warehouses?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/balances?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/movements?limit=100', { token }).catch(() => []),
+    ])
+    return [
+      {
+        id: 'inventory:partners',
+        domain,
+        targetType: 'business_partner',
+        label: 'inventory.partners',
+        children: buildRecordNodes(domain, asRecords(partners), 'business_partner', {
+          labelKeys: ['name', 'partner_code'],
+          descriptionKeys: ['partner_type', 'email', 'id'],
+        }),
+      },
+      {
+        id: 'inventory:items',
+        domain,
+        targetType: 'inventory_item',
+        label: 'inventory.items',
+        children: buildRecordNodes(domain, asRecords(items), 'inventory_item', {
+          labelKeys: ['name', 'item_code'],
+          descriptionKeys: ['item_type', 'base_uom', 'id'],
+        }),
+      },
+      {
+        id: 'inventory:warehouses',
+        domain,
+        targetType: 'warehouse',
+        label: 'inventory.warehouses',
+        children: buildRecordNodes(domain, asRecords(warehouses), 'warehouse', {
+          labelKeys: ['name', 'warehouse_code'],
+          descriptionKeys: ['status', 'id'],
+        }),
+      },
+      {
+        id: 'inventory:balances',
+        domain,
+        targetType: 'inventory_balance',
+        label: 'inventory.balances',
+        children: buildRecordNodes(domain, asRecords(balances), 'inventory_balance', {
+          labelKeys: ['master_key', 'item_id', 'id'],
+          descriptionKeys: ['warehouse_id', 'currency'],
+        }),
+      },
+      {
+        id: 'inventory:movements',
+        domain,
+        targetType: 'inventory_movement',
+        label: 'inventory.movements',
+        children: buildRecordNodes(domain, asRecords(movements), 'inventory_movement', {
+          labelKeys: ['movement_type', 'master_key', 'id'],
+          descriptionKeys: ['source_type', 'item_id', 'warehouse_id'],
+        }),
+      },
+    ]
+  }
+
+  if (domain === 'Procurement') {
+    const [requisitions, orders, receipts, returns] = await Promise.all([
+      apiRequest<unknown>('/procurement/requisitions?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/procurement/orders?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/procurement/receipts?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/procurement/returns?limit=100', { token }).catch(() => []),
+    ])
+    return [
+      {
+        id: 'procurement:requisitions',
+        domain,
+        targetType: 'purchase_requisition',
+        label: 'procurement.requisitions',
+        children: buildRecordNodes(domain, asRecords(requisitions), 'purchase_requisition', {
+          labelKeys: ['title', 'master_key'],
+          descriptionKeys: ['supplier_name', 'currency', 'id'],
+        }),
+      },
+      {
+        id: 'procurement:orders',
+        domain,
+        targetType: 'purchase_order',
+        label: 'procurement.orders',
+        children: buildRecordNodes(domain, asRecords(orders), 'purchase_order', {
+          labelKeys: ['order_number', 'master_key'],
+          descriptionKeys: ['supplier_name', 'currency', 'id'],
+        }),
+      },
+      {
+        id: 'procurement:receipts',
+        domain,
+        targetType: 'purchase_receipt',
+        label: 'procurement.receipts',
+        children: buildRecordNodes(domain, asRecords(receipts), 'purchase_receipt', {
+          labelKeys: ['receipt_number', 'master_key'],
+          descriptionKeys: ['supplier_name', 'payable_id', 'id'],
+        }),
+      },
+      {
+        id: 'procurement:returns',
+        domain,
+        targetType: 'purchase_return',
+        label: 'procurement.returns',
+        children: buildRecordNodes(domain, asRecords(returns), 'purchase_return', {
+          labelKeys: ['return_number', 'master_key'],
+          descriptionKeys: ['supplier_name', 'receipt_id', 'id'],
+        }),
+      },
+    ]
+  }
+
+  if (domain === 'Sales') {
+    const [quotations, orders, shipments, returns] = await Promise.all([
+      apiRequest<unknown>('/sales/quotations?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/sales/orders?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/sales/shipments?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/sales/returns?limit=100', { token }).catch(() => []),
+    ])
+    return [
+      {
+        id: 'sales:quotations',
+        domain,
+        targetType: 'sales_quotation',
+        label: 'sales.quotations',
+        children: buildRecordNodes(domain, asRecords(quotations), 'sales_quotation', {
+          labelKeys: ['quotation_number', 'master_key'],
+          descriptionKeys: ['customer_name', 'currency', 'id'],
+        }),
+      },
+      {
+        id: 'sales:orders',
+        domain,
+        targetType: 'sales_order',
+        label: 'sales.orders',
+        children: buildRecordNodes(domain, asRecords(orders), 'sales_order', {
+          labelKeys: ['order_number', 'master_key'],
+          descriptionKeys: ['customer_name', 'currency', 'id'],
+        }),
+      },
+      {
+        id: 'sales:shipments',
+        domain,
+        targetType: 'sales_shipment',
+        label: 'sales.shipments',
+        children: buildRecordNodes(domain, asRecords(shipments), 'sales_shipment', {
+          labelKeys: ['shipment_number', 'master_key'],
+          descriptionKeys: ['customer_name', 'receivable_id', 'id'],
+        }),
+      },
+      {
+        id: 'sales:returns',
+        domain,
+        targetType: 'sales_return',
+        label: 'sales.returns',
+        children: buildRecordNodes(domain, asRecords(returns), 'sales_return', {
+          labelKeys: ['return_number', 'master_key'],
+          descriptionKeys: ['customer_name', 'shipment_id', 'id'],
+        }),
+      },
+    ]
+  }
+
   if (domain === 'Finance' || domain === 'FinanceAccounting') {
     const data = await apiRequest<unknown>('/finance/settlement-orders', { token })
     return buildRecordNodes(domain, asRecords(data), 'finance_settlement', {
@@ -759,6 +955,9 @@ function assistantModuleForDomain(domain: string): string {
     FinanceReceivables: 'finance',
     FinancePayables: 'finance',
     FinanceCostAccounting: 'costing',
+    Inventory: 'inventory',
+    Procurement: 'procurement',
+    Sales: 'sales',
   }
   return modules[domain] ?? domain.toLowerCase()
 }
@@ -775,6 +974,9 @@ const globalAssistantModules = [
   { id: 'finance_receivables', key: 'finance', targetType: 'finance_receivable', label: 'FinanceReceivables' },
   { id: 'finance_payables', key: 'finance', targetType: 'finance_payable', label: 'FinancePayables' },
   { id: 'finance_costing', key: 'costing', targetType: 'cost_ledger_entry', label: 'FinanceCostAccounting' },
+  { id: 'inventory', key: 'inventory', targetType: 'inventory_item', label: 'Inventory' },
+  { id: 'procurement', key: 'procurement', targetType: 'purchase_order', label: 'Procurement' },
+  { id: 'sales', key: 'sales', targetType: 'sales_order', label: 'Sales' },
 ]
 
 const overviewBusinessFunctions: OverviewBusinessFunction[] = [
@@ -2003,6 +2205,12 @@ export default function Home() {
                 <DeveloperToolsWorkspace token={token} />
               ) : workspaceView === 'domain:Costing' || workspaceView === 'domain:FinanceCostAccounting' ? (
                 <CostingWorkspace token={token} />
+              ) : workspaceView === 'domain:Inventory' ? (
+                <InventoryWorkspace token={token} />
+              ) : workspaceView === 'domain:Procurement' ? (
+                <ProcurementWorkspace token={token} />
+              ) : workspaceView === 'domain:Sales' ? (
+                <SalesWorkspace token={token} />
               ) : workspaceView === 'domain:Finance' || workspaceView === 'domain:FinanceAccounting' ? (
                 <FinanceWorkspace token={token} mode="accounting" />
               ) : workspaceView === 'domain:FinanceReceivables' ? (

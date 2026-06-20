@@ -14,13 +14,16 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/inventory"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaorg"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaresource"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/procurement"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
@@ -42,6 +45,9 @@ type Dependencies struct {
 	WorkflowHandler      *workflow.Handler
 	ProjectHandler       *project.Handler
 	FinanceHandler       *finance.Handler
+	InventoryHandler     *inventory.Handler
+	ProcurementHandler   *procurement.Handler
+	SalesHandler         *sales.Handler
 	ToolRuntimeHandler   *toolruntime.Handler
 	SaaSHandler          *saas.Handler
 	TenantResolver       middleware.TenantResolver
@@ -114,6 +120,15 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 				}
 				if deps.FinanceHandler != nil {
 					deps.FinanceHandler.RegisterRoutes(r)
+				}
+				if deps.InventoryHandler != nil {
+					deps.InventoryHandler.RegisterRoutes(r)
+				}
+				if deps.ProcurementHandler != nil {
+					deps.ProcurementHandler.RegisterRoutes(r)
+				}
+				if deps.SalesHandler != nil {
+					deps.SalesHandler.RegisterRoutes(r)
 				}
 				if deps.ToolRuntimeHandler != nil {
 					deps.ToolRuntimeHandler.RegisterRoutes(r)

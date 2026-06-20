@@ -18,13 +18,16 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/inventory"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaorg"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaresource"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/procurement"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
@@ -142,6 +145,26 @@ func main() {
 	financeSvc := finance.NewService(financeRepo, finance.WithCostPoster(projectSvc), finance.WithObservability(obsSvc))
 	financeHandler := finance.NewHandler(financeSvc)
 
+	inventoryRepo := inventory.NewRepository(db)
+	inventorySvc := inventory.NewService(inventoryRepo)
+	inventoryHandler := inventory.NewHandler(inventorySvc)
+
+	procurementRepo := procurement.NewRepository(db)
+	procurementSvc := procurement.NewService(
+		procurementRepo,
+		procurement.WithInventoryPoster(inventorySvc),
+		procurement.WithFinancePoster(financeSvc),
+	)
+	procurementHandler := procurement.NewHandler(procurementSvc)
+
+	salesRepo := sales.NewRepository(db)
+	salesSvc := sales.NewService(
+		salesRepo,
+		sales.WithInventoryPoster(inventorySvc),
+		sales.WithFinancePoster(financeSvc),
+	)
+	salesHandler := sales.NewHandler(salesSvc)
+
 	toolRepo := toolruntime.NewRepository(db)
 	toolSvc := toolruntime.NewService(toolRepo, govSvc, toolruntime.InternalTools(projectSvc, financeSvc, evoSvc), toolruntime.WithObservability(obsSvc), toolruntime.WithSecurityKernel(securityKernel))
 	toolHandler := toolruntime.NewHandler(toolSvc)
@@ -191,6 +214,9 @@ func main() {
 		WorkflowHandler:      wfHandler,
 		ProjectHandler:       projectHandler,
 		FinanceHandler:       financeHandler,
+		InventoryHandler:     inventoryHandler,
+		ProcurementHandler:   procurementHandler,
+		SalesHandler:         salesHandler,
 		ToolRuntimeHandler:   toolHandler,
 		SaaSHandler:          saasHandler,
 		TenantResolver:       saasSvc,

@@ -510,6 +510,162 @@ export async function allocateFinancePayment(token: string, paymentID: string, i
   return apiRequest<FinancePaymentAllocation>(`/finance/payments/${paymentID}/allocate`, { method: 'POST', token, body: input })
 }
 
+export async function listBusinessPartners(token: string): Promise<BusinessPartner[]> {
+  return apiRequest<BusinessPartner[]>('/inventory/partners', { token })
+}
+
+export async function createBusinessPartner(token: string, input: CreateBusinessPartnerInput): Promise<BusinessPartner> {
+  return apiRequest<BusinessPartner>('/inventory/partners', { method: 'POST', token, body: input })
+}
+
+export async function listInventoryItems(token: string): Promise<InventoryItem[]> {
+  return apiRequest<InventoryItem[]>('/inventory/items', { token })
+}
+
+export async function createInventoryItem(token: string, input: CreateInventoryItemInput): Promise<InventoryItem> {
+  return apiRequest<InventoryItem>('/inventory/items', { method: 'POST', token, body: input })
+}
+
+export async function listWarehouses(token: string): Promise<Warehouse[]> {
+  return apiRequest<Warehouse[]>('/inventory/warehouses', { token })
+}
+
+export async function createWarehouse(token: string, input: CreateWarehouseInput): Promise<Warehouse> {
+  return apiRequest<Warehouse>('/inventory/warehouses', { method: 'POST', token, body: input })
+}
+
+export async function listInventoryBalances(token: string): Promise<InventoryBalance[]> {
+  return apiRequest<InventoryBalance[]>('/inventory/balances', { token })
+}
+
+export async function listInventoryMovements(token: string): Promise<InventoryMovement[]> {
+  return apiRequest<InventoryMovement[]>('/inventory/movements', { token })
+}
+
+export async function createInventoryMovement(token: string, input: CreateInventoryMovementInput): Promise<InventoryMovement> {
+  return apiRequest<InventoryMovement>('/inventory/movements', { method: 'POST', token, body: input })
+}
+
+export async function listInventoryTransfers(token: string): Promise<InventoryTransfer[]> {
+  return apiRequest<InventoryTransfer[]>('/inventory/transfers', { token })
+}
+
+export async function createInventoryTransfer(token: string, input: CreateInventoryTransferInput): Promise<InventoryTransfer> {
+  return apiRequest<InventoryTransfer>('/inventory/transfers', { method: 'POST', token, body: input })
+}
+
+export async function listInventoryAdjustments(token: string): Promise<InventoryAdjustment[]> {
+  return apiRequest<InventoryAdjustment[]>('/inventory/adjustments', { token })
+}
+
+export async function createInventoryAdjustment(token: string, input: CreateInventoryAdjustmentInput): Promise<InventoryAdjustment> {
+  return apiRequest<InventoryAdjustment>('/inventory/adjustments', { method: 'POST', token, body: input })
+}
+
+export async function listInventoryCounts(token: string): Promise<InventoryCount[]> {
+  return apiRequest<InventoryCount[]>('/inventory/counts', { token })
+}
+
+export async function createInventoryCount(token: string, input: CreateInventoryCountInput): Promise<InventoryCount> {
+  return apiRequest<InventoryCount>('/inventory/counts', { method: 'POST', token, body: input })
+}
+
+export async function listPurchaseRequisitions(token: string): Promise<PurchaseRequisition[]> {
+  return apiRequest<PurchaseRequisition[]>('/procurement/requisitions', { token })
+}
+
+export async function createPurchaseRequisition(token: string, input: CreatePurchaseRequisitionInput): Promise<PurchaseRequisition> {
+  return apiRequest<PurchaseRequisition>('/procurement/requisitions', { method: 'POST', token, body: input })
+}
+
+export async function submitPurchaseRequisition(token: string, id: string): Promise<PurchaseRequisition> {
+  return apiRequest<PurchaseRequisition>(`/procurement/requisitions/${id}/submit`, { method: 'POST', token })
+}
+
+export async function approvePurchaseRequisition(token: string, id: string): Promise<PurchaseRequisition> {
+  return apiRequest<PurchaseRequisition>(`/procurement/requisitions/${id}/approve`, { method: 'POST', token })
+}
+
+export async function listPurchaseOrders(token: string): Promise<PurchaseOrder[]> {
+  return apiRequest<PurchaseOrder[]>('/procurement/orders', { token })
+}
+
+export async function createPurchaseOrder(token: string, input: CreatePurchaseOrderInput): Promise<PurchaseOrder> {
+  return apiRequest<PurchaseOrder>('/procurement/orders', { method: 'POST', token, body: input })
+}
+
+export async function submitPurchaseOrder(token: string, id: string): Promise<PurchaseOrder> {
+  return apiRequest<PurchaseOrder>(`/procurement/orders/${id}/submit`, { method: 'POST', token })
+}
+
+export async function approvePurchaseOrder(token: string, id: string): Promise<PurchaseOrder> {
+  return apiRequest<PurchaseOrder>(`/procurement/orders/${id}/approve`, { method: 'POST', token })
+}
+
+export async function listPurchaseReceipts(token: string): Promise<PurchaseReceipt[]> {
+  return apiRequest<PurchaseReceipt[]>('/procurement/receipts', { token })
+}
+
+export async function createPurchaseReceipt(token: string, input: CreatePurchaseReceiptInput): Promise<PurchaseReceipt> {
+  return apiRequest<PurchaseReceipt>('/procurement/receipts', { method: 'POST', token, body: input })
+}
+
+export async function postPurchaseReceipt(token: string, id: string): Promise<PurchaseReceipt> {
+  return apiRequest<PurchaseReceipt>(`/procurement/receipts/${id}/post`, { method: 'POST', token })
+}
+
+export async function listPurchaseReturns(token: string): Promise<PurchaseReturn[]> {
+  return apiRequest<PurchaseReturn[]>('/procurement/returns', { token })
+}
+
+export async function createPurchaseReturn(token: string, input: CreatePurchaseReturnInput): Promise<PurchaseReturn> {
+  return apiRequest<PurchaseReturn>('/procurement/returns', { method: 'POST', token, body: input })
+}
+
+export async function listSalesQuotations(token: string): Promise<SalesQuotation[]> {
+  return apiRequest<SalesQuotation[]>('/sales/quotations', { token })
+}
+
+export async function createSalesQuotation(token: string, input: CreateSalesQuotationInput): Promise<SalesQuotation> {
+  return apiRequest<SalesQuotation>('/sales/quotations', { method: 'POST', token, body: input })
+}
+
+export async function listSalesOrders(token: string): Promise<SalesOrder[]> {
+  return apiRequest<SalesOrder[]>('/sales/orders', { token })
+}
+
+export async function createSalesOrder(token: string, input: CreateSalesOrderInput): Promise<SalesOrder> {
+  return apiRequest<SalesOrder>('/sales/orders', { method: 'POST', token, body: input })
+}
+
+export async function confirmSalesOrder(token: string, id: string): Promise<SalesOrder> {
+  return apiRequest<SalesOrder>(`/sales/orders/${id}/confirm`, { method: 'POST', token })
+}
+
+export async function approveSalesOrder(token: string, id: string): Promise<SalesOrder> {
+  return apiRequest<SalesOrder>(`/sales/orders/${id}/approve`, { method: 'POST', token })
+}
+
+export async function listSalesShipments(token: string): Promise<SalesShipment[]> {
+  return apiRequest<SalesShipment[]>('/sales/shipments', { token })
+}
+
+export async function createSalesShipment(token: string, input: CreateSalesShipmentInput): Promise<SalesShipment> {
+  return apiRequest<SalesShipment>('/sales/shipments', { method: 'POST', token, body: input })
+}
+
+export async function postSalesShipment(token: string, id: string): Promise<SalesShipment> {
+  return apiRequest<SalesShipment>(`/sales/shipments/${id}/post`, { method: 'POST', token })
+}
+
+export async function listSalesReturns(token: string): Promise<SalesReturn[]> {
+  return apiRequest<SalesReturn[]>('/sales/returns', { token })
+}
+
+export async function createSalesReturn(token: string, input: CreateSalesReturnInput): Promise<SalesReturn> {
+  return apiRequest<SalesReturn>('/sales/returns', { method: 'POST', token, body: input })
+}
+
 export async function listCurrencies(token: string): Promise<Currency[]> {
   return apiRequest<Currency[]>('/costing/currencies', { token })
 }
@@ -1945,6 +2101,718 @@ export interface FinancePaymentAllocation {
   currency: string
   metadata: Record<string, unknown>
   created_at: string
+}
+
+export interface BusinessPartner {
+  id: string
+  master_key?: string
+  partner_code: string
+  partner_type: string
+  name: string
+  email: string
+  phone: string
+  status: string
+  organization_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateBusinessPartnerInput {
+  partner_code?: string
+  partner_type: string
+  name: string
+  email?: string
+  phone?: string
+  status?: string
+  organization_id?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface InventoryItem {
+  id: string
+  master_key?: string
+  item_code: string
+  name: string
+  item_type: string
+  base_uom: string
+  status: string
+  organization_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateInventoryItemInput {
+  item_code?: string
+  name: string
+  item_type?: string
+  base_uom?: string
+  status?: string
+  organization_id?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface Warehouse {
+  id: string
+  master_key?: string
+  warehouse_code: string
+  name: string
+  status: string
+  organization_id?: string
+  department_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateWarehouseInput {
+  warehouse_code?: string
+  name: string
+  status?: string
+  organization_id?: string
+  department_id?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface InventoryBalance {
+  id: string
+  master_key?: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  reserved_qty: number
+  average_cost: number
+  value_amount: number
+  currency: string
+  organization_id?: string
+  metadata: Record<string, unknown>
+  updated_at: string
+}
+
+export interface InventoryMovement {
+  id: string
+  master_key?: string
+  movement_type: string
+  source_type: string
+  source_id?: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  unit_cost: number
+  amount: number
+  currency: string
+  balance_after: number
+  organization_id?: string
+  department_id?: string
+  occurred_at: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface CreateInventoryMovementInput {
+  movement_type: string
+  source_type?: string
+  source_id?: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  unit_cost?: number
+  currency?: string
+  organization_id?: string
+  department_id?: string
+  occurred_at?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface InventoryTransfer {
+  id: string
+  master_key?: string
+  transfer_number: string
+  from_warehouse_id: string
+  to_warehouse_id: string
+  status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  metadata: Record<string, unknown>
+  lines?: InventoryTransferLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface InventoryTransferLine {
+  id: string
+  transfer_id: string
+  item_id: string
+  quantity: number
+  unit_cost: number
+}
+
+export interface CreateInventoryTransferInput {
+  transfer_number?: string
+  from_warehouse_id: string
+  to_warehouse_id: string
+  status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    quantity: number
+    unit_cost?: number
+  }>
+}
+
+export interface InventoryAdjustment {
+  id: string
+  master_key?: string
+  adjustment_number: string
+  warehouse_id: string
+  reason: string
+  status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  metadata: Record<string, unknown>
+  lines?: InventoryAdjustmentLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface InventoryAdjustmentLine {
+  id: string
+  adjustment_id: string
+  item_id: string
+  quantity_delta: number
+  unit_cost: number
+}
+
+export interface CreateInventoryAdjustmentInput {
+  adjustment_number?: string
+  warehouse_id: string
+  reason?: string
+  status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    quantity_delta: number
+    unit_cost?: number
+  }>
+}
+
+export interface InventoryCount {
+  id: string
+  master_key?: string
+  count_number: string
+  warehouse_id: string
+  status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  metadata: Record<string, unknown>
+  lines?: InventoryCountLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface InventoryCountLine {
+  id: string
+  count_id: string
+  item_id: string
+  book_qty: number
+  counted_qty: number
+  variance_qty: number
+}
+
+export interface CreateInventoryCountInput {
+  count_number?: string
+  warehouse_id: string
+  status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    book_qty?: number
+    counted_qty: number
+  }>
+}
+
+export interface PurchaseRequisition {
+  id: string
+  master_key?: string
+  title: string
+  supplier_id: string
+  supplier_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency: string
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: PurchaseRequisitionLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PurchaseRequisitionLine {
+  id: string
+  requisition_id: string
+  item_id: string
+  warehouse_id: string
+  quantity: number
+  unit_cost: number
+  amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreatePurchaseRequisitionInput {
+  title: string
+  supplier_id?: string
+  supplier_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    warehouse_id: string
+    quantity: number
+    unit_cost: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface PurchaseOrder {
+  id: string
+  master_key?: string
+  order_number: string
+  requisition_id?: string
+  supplier_id: string
+  supplier_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: PurchaseOrderLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PurchaseOrderLine {
+  id: string
+  order_id: string
+  item_id: string
+  warehouse_id: string
+  quantity: number
+  unit_cost: number
+  tax_rate: number
+  amount: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreatePurchaseOrderInput {
+  order_number?: string
+  requisition_id?: string
+  supplier_id?: string
+  supplier_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    warehouse_id: string
+    quantity: number
+    unit_cost: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface PurchaseReceipt {
+  id: string
+  master_key?: string
+  receipt_number: string
+  order_id?: string
+  supplier_id: string
+  supplier_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  warehouse_id?: string
+  payable_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: PurchaseReceiptLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PurchaseReceiptLine {
+  id: string
+  receipt_id: string
+  order_line_id?: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  unit_cost: number
+  tax_rate: number
+  amount: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreatePurchaseReceiptInput {
+  receipt_number?: string
+  order_id?: string
+  supplier_id?: string
+  supplier_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  warehouse_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    order_line_id?: string
+    item_id: string
+    warehouse_id: string
+    location_id?: string
+    quantity: number
+    unit_cost: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface PurchaseReturn {
+  id: string
+  master_key?: string
+  return_number: string
+  receipt_id?: string
+  supplier_id: string
+  supplier_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: PurchaseReturnLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface PurchaseReturnLine {
+  id: string
+  return_id: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  unit_cost: number
+  tax_amount: number
+  amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreatePurchaseReturnInput {
+  return_number?: string
+  receipt_id?: string
+  supplier_id?: string
+  supplier_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    warehouse_id: string
+    location_id?: string
+    quantity: number
+    unit_cost: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface SalesQuotation {
+  id: string
+  master_key?: string
+  quotation_number: string
+  customer_id: string
+  customer_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: SalesQuotationLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SalesQuotationLine {
+  id: string
+  quotation_id: string
+  item_id: string
+  warehouse_id: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  amount: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreateSalesQuotationInput {
+  quotation_number?: string
+  customer_id?: string
+  customer_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    warehouse_id: string
+    quantity: number
+    unit_price: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface SalesOrder {
+  id: string
+  master_key?: string
+  order_number: string
+  quotation_id?: string
+  customer_id: string
+  customer_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: SalesOrderLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SalesOrderLine {
+  id: string
+  order_id: string
+  item_id: string
+  warehouse_id: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  amount: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreateSalesOrderInput {
+  order_number?: string
+  quotation_id?: string
+  customer_id?: string
+  customer_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    warehouse_id: string
+    quantity: number
+    unit_price: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface SalesShipment {
+  id: string
+  master_key?: string
+  shipment_number: string
+  order_id?: string
+  customer_id: string
+  customer_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  receivable_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: SalesShipmentLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SalesShipmentLine {
+  id: string
+  shipment_id: string
+  order_line_id?: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  unit_price: number
+  tax_rate: number
+  amount: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreateSalesShipmentInput {
+  shipment_number?: string
+  order_id?: string
+  customer_id?: string
+  customer_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    order_line_id?: string
+    item_id: string
+    warehouse_id: string
+    location_id?: string
+    quantity: number
+    unit_price: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface SalesReturn {
+  id: string
+  master_key?: string
+  return_number: string
+  shipment_id?: string
+  customer_id: string
+  customer_name: string
+  status: string
+  approval_status: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency: string
+  subtotal: number
+  tax_amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+  lines?: SalesReturnLine[]
+  created_at: string
+  updated_at: string
+}
+
+export interface SalesReturnLine {
+  id: string
+  return_id: string
+  item_id: string
+  warehouse_id: string
+  location_id?: string
+  quantity: number
+  unit_price: number
+  tax_amount: number
+  amount: number
+  total_amount: number
+  metadata: Record<string, unknown>
+}
+
+export interface CreateSalesReturnInput {
+  return_number?: string
+  shipment_id?: string
+  customer_id?: string
+  customer_name?: string
+  status?: string
+  approval_status?: string
+  organization_id?: string
+  department_id?: string
+  workflow_instance_id?: string
+  currency?: string
+  metadata?: Record<string, unknown>
+  lines?: Array<{
+    item_id: string
+    warehouse_id: string
+    location_id?: string
+    quantity: number
+    unit_price: number
+    tax_rate?: number
+    metadata?: Record<string, unknown>
+  }>
 }
 
 export interface Currency {
