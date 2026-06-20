@@ -21,6 +21,10 @@ type MovementRepository interface {
 	CreateMovement(ctx context.Context, input CreateInventoryMovementInput, balance InventoryBalance) (*InventoryMovement, error)
 }
 
+type atomicMovementRepository interface {
+	PostMovementAtomic(ctx context.Context, input CreateInventoryMovementInput, direction int) (*InventoryMovement, error)
+}
+
 type Service struct {
 	repo MovementRepository
 	raw  any
@@ -28,6 +32,21 @@ type Service struct {
 
 func NewService(repo MovementRepository) *Service {
 	return &Service{repo: repo, raw: repo}
+}
+
+func (s *Service) FindMovementBySourceLine(ctx context.Context, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) (*InventoryMovement, error) {
+	repo, ok := s.raw.(interface {
+		FindMovementBySourceLine(context.Context, string, uuid.UUID, string, uuid.UUID) (*InventoryMovement, error)
+	})
+	if !ok {
+		return nil, ErrNotFound
+	}
+	sourceType = strings.TrimSpace(sourceType)
+	lineKey = strings.TrimSpace(lineKey)
+	if sourceType == "" || sourceID == uuid.Nil || lineKey == "" || lineID == uuid.Nil {
+		return nil, fmt.Errorf("%w: source_type, source_id, line key, and line id are required", ErrValidation)
+	}
+	return repo.FindMovementBySourceLine(ctx, sourceType, sourceID, lineKey, lineID)
 }
 
 func (s *Service) PostMovement(ctx context.Context, input CreateInventoryMovementInput) (*InventoryMovement, error) {
@@ -44,6 +63,9 @@ func (s *Service) PostMovement(ctx context.Context, input CreateInventoryMovemen
 	direction, err := movementDirection(input.MovementType)
 	if err != nil {
 		return nil, err
+	}
+	if repo, ok := s.raw.(atomicMovementRepository); ok {
+		return repo.PostMovementAtomic(ctx, input, direction)
 	}
 
 	balance, err := s.repo.GetBalance(ctx, input.ItemID, input.WarehouseID, input.LocationID)

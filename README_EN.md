@@ -4,7 +4,7 @@ English | [简体中文](README.md)
 
 Meta-Org is an AI-native organization operating platform for hybrid human and AI-agent teams. It brings human employees, AI agents, external collaborators, organization structure, project delivery, governance rules, and continuous learning into one operating system. The current product flow covers requirement intake, project formation, workflow execution, deliverable acceptance, cost tracking, and feedback capture.
 
-The project is built around the **ETCLOVG** framework: Execution, Tooling, Context, Lifecycle, Observability, Verification, and Governance. This repository currently includes a Go backend, a Next.js frontend, PostgreSQL migrations, Docker Compose orchestration, JWT authentication, Meta-Org Home, Meta Resource / PDCA workspace, organization and project workspaces, Model Settings, AI Gateway, tool runtime, cost accounting, and generic finance exports.
+The project is built around the **ETCLOVG** framework: Execution, Tooling, Context, Lifecycle, Observability, Verification, and Governance. This repository currently includes a Go backend, a Next.js frontend, PostgreSQL migrations, Docker Compose orchestration, JWT authentication, Meta-Org Home, Meta Resource / PDCA workspace, organization and project workspaces, Model Settings, AI Gateway, tool runtime, cost accounting, generic finance, SaaS module gating, security-kernel integration, and inventory/procurement/sales supply-chain workflows.
 
 ## Product Goal
 
@@ -164,7 +164,7 @@ Shared packages live under `backend/internal/pkg/` and cover configuration, data
 
 ## Database Migrations
 
-The backend applies SQL files from the root `migrations/` directory at startup. The current migration set goes through `021`:
+The backend applies SQL files from the root `migrations/` directory at startup. The current migration set goes through `039`:
 
 | Migration | Topic |
 |---|---|
@@ -189,6 +189,24 @@ The backend applies SQL files from the root `migrations/` directory at startup. 
 | `019_costing_framework.sql` | Shared currencies, exchange rates, rate cards, budgets, and cost ledger. |
 | `020_ai_gateway_internal_ops.sql` | AI Gateway channel/key pool, multidimensional pricing, model routing, invocation attribution, and usage analysis fields. |
 | `021_meta_resource_pdca.sql` | Meta Resource, Demand Profile, PDCA Cycle, and PDCA Event tables for demand-driven resource profiling and continuous evolution records. |
+| `022_assistant_runtime.sql` | AI Assistant sessions, messages, runs, and tool-call context. |
+| `023_org_meta_task_matrix.sql` | Organization meta-task matrix and business-context mappings. |
+| `024_strong_base_data_uniqueness.sql` | Strong uniqueness constraints for base data. |
+| `025_authority_tiers_agent_governance.sql` | Authority tiers, agent governance, and approval guardrails. |
+| `026_master_detail_permissions.sql` | Master/detail data permissions and access control. |
+| `027_finance_expense_ingestion.sql` | Finance expense imports, pull batches, and failed records. |
+| `028_finance_receivables_accounting_crud.sql` | Receivables, payables, receipts, payments, and allocations CRUD. |
+| `029_assistant_business_interaction.sql` | Assistant and business-workspace interaction records. |
+| `030_assistant_business_interaction_patch.sql` | Assistant business-interaction field patch. |
+| `031_master_key_defaults.sql` | Master-data master key defaults. |
+| `032_module_master_detail_unification.sql` | Module master/detail model unification. |
+| `033_user_ui_preferences.sql` | User UI preferences. |
+| `034_saas_foundation.sql` | SaaS organizations, tenant modules, and subscription foundation. |
+| `035_assistant_context_engine.sql` | Assistant context engine, semantic context, and runtime memory. |
+| `036_unified_skill.sql` | Unified skill catalog and skill import structures. |
+| `037_security_kernel.sql` | Security-kernel policies, decision records, and external authorization integration. |
+| `038_supply_chain_core.sql` | Inventory, procurement, and sales supply-chain core tables. |
+| `039_supply_chain_posting_idempotency.sql` | Supply-chain posting idempotency indexes to prevent duplicate inventory movements, receivables, and payables on retry. |
 
 ## API Overview
 
@@ -327,7 +345,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health returning `{"status":"ok"}`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
 
-After the AI Gateway and Meta Resource refactors, startup must apply `019_costing_framework.sql`, `020_ai_gateway_internal_ops.sql`, and `021_meta_resource_pdca.sql`. If backend startup, Model Settings, or Meta Resource fails with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, or `relation demand_profiles does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. Confirm `DATABASE_URL`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
+After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply migrations through `039_supply_chain_posting_idempotency.sql`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. Confirm `DATABASE_URL`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so migrations apply through `039`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
 
 ## Configuration
 
@@ -341,6 +359,12 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32-character key for model provider and finance adapter secret encryption. Replace in production. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Frontend origins allowed to call the API. |
 | `MIGRATIONS_PATH` | `migrations` | SQL migration directory; when running from `backend/`, usually set it to `../migrations`. |
+| `META_ORG_MODE` | `single_org` | Runtime mode; set to `saas` for multi-tenant/SaaS semantics. |
+| `META_ORG_DISTRIBUTION_MODE` | Follows `META_ORG_MODE` | Distribution mode: `saas`, `saas_org_private`, `single_org_commercial`, or `private_deployment`. |
+| `META_ORG_LICENSE_MODE` | `commercial` | License mode: `community`, `commercial`, `enterprise`, or `private_contract`. |
+| `SECURITY_KERNEL_URL` | empty | External security-kernel authorization service URL; when empty, the client treats it as not configured and allows requests. |
+| `SECURITY_KERNEL_SHARED_SECRET` | empty | Shared secret for calls to the external security kernel. |
+| `SECURITY_KERNEL_ENFORCEMENT_MODE` | `blocking` | Security-kernel enforcement mode; supports `blocking` and `audit`. |
 
 Frontend configuration:
 
@@ -360,14 +384,14 @@ frontend/
   src/app/                    Next.js App Router pages and workspaces
   src/lib/                    API, auth, i18n, API Workbench metadata
 docker-compose.yml            Full local environment orchestration
-migrations/                   PostgreSQL SQL migrations 001-021
+migrations/                   PostgreSQL SQL migrations 001-039
 docs/operations/              Production operations and finance adapter protocol docs
 .github/workflows/            GitHub Actions CI
 ```
 
 ## Current Status and Boundaries
 
-The codebase now provides a single-enterprise Meta-Org entry, Meta Resource / PDCA resource framework, organization management, project lifecycle, AI Gateway, tool runtime loop, cost accounting, finance exports, governance, evolution, observability, and verification foundation. It is suitable as a production v1 base for 10-50 humans and 50-250+ agents.
+The codebase now provides a single-enterprise Meta-Org entry, Meta Resource / PDCA resource framework, organization management, project lifecycle, AI Gateway, tool runtime loop, cost accounting, generic finance, SaaS module gating, security-kernel integration, inventory/procurement/sales supply-chain workflows, governance, evolution, observability, and verification foundation. It is suitable as a production v1 base for 10-50 humans and 50-250+ agents.
 
 When upgrading from the old `harness_org` database to `meta_org`, explicitly back up and migrate data first. The system does not automatically delete or overwrite the old database.
 

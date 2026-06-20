@@ -658,6 +658,20 @@ func (s *Service) ListReceivables(ctx context.Context, limit int) ([]Receivable,
 	return items, err
 }
 
+func (s *Service) FindReceivableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*Receivable, error) {
+	sourceType = strings.TrimSpace(sourceType)
+	if sourceType == "" || sourceID == uuid.Nil {
+		return nil, fmt.Errorf("%w: source_type and source_id are required", ErrValidation)
+	}
+	repo, ok := s.repo.(interface {
+		FindReceivableBySource(context.Context, string, uuid.UUID) (*Receivable, error)
+	})
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return repo.FindReceivableBySource(ctx, sourceType, sourceID)
+}
+
 func (s *Service) UpdateReceivable(ctx context.Context, id uuid.UUID, input UpdateReceivableInput) (*Receivable, error) {
 	if id == uuid.Nil {
 		return nil, fmt.Errorf("%w: receivable_id is required", ErrValidation)
@@ -763,6 +777,20 @@ func (s *Service) ListPayables(ctx context.Context, limit int) ([]Payable, error
 		items = []Payable{}
 	}
 	return items, err
+}
+
+func (s *Service) FindPayableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*Payable, error) {
+	sourceType = strings.TrimSpace(sourceType)
+	if sourceType == "" || sourceID == uuid.Nil {
+		return nil, fmt.Errorf("%w: source_type and source_id are required", ErrValidation)
+	}
+	repo, ok := s.repo.(interface {
+		FindPayableBySource(context.Context, string, uuid.UUID) (*Payable, error)
+	})
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return repo.FindPayableBySource(ctx, sourceType, sourceID)
 }
 
 func (s *Service) UpdatePayable(ctx context.Context, id uuid.UUID, input UpdatePayableInput) (*Payable, error) {

@@ -1488,7 +1488,7 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
                 label="组织需求"
                 value={agentPrompt}
                 onChange={setAgentPrompt}
-                placeholder="例如：创建一个面向 AI 产品交付的组织，需要产品、工程、运营和治理部门"
+                placeholder="organization.agentPromptPlaceholder"
               />
               <div className="flex flex-wrap gap-2">
                 <button

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -168,6 +169,146 @@ func (r *PostgresRepository) CreateMovement(ctx context.Context, input CreateInv
 		input.Quantity, input.UnitCost, input.Currency, balance.Quantity, input.OrganizationID, input.DepartmentID,
 		input.OccurredAt, jsonMap(input.Metadata))
 	return scanMovement(row)
+}
+
+func (r *PostgresRepository) PostMovementAtomic(ctx context.Context, input CreateInventoryMovementInput, direction int) (*InventoryMovement, error) {
+	if lineKey, lineID, ok := movementLineIdentity(input); ok && input.SourceID != nil {
+		movement, err := r.FindMovementBySourceLine(ctx, input.SourceType, *input.SourceID, lineKey, lineID)
+		if err == nil {
+			return movement, nil
+		}
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var balance *InventoryBalance
+	row := tx.QueryRow(ctx, `
+		SELECT id, master_key, item_id, warehouse_id, location_id, quantity::float8, reserved_qty::float8,
+		       average_cost::float8, value_amount::float8, currency, organization_id, metadata, updated_at
+		FROM inventory_balances
+		WHERE item_id = $1
+		  AND warehouse_id = $2
+		  AND COALESCE(location_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+		FOR UPDATE`, input.ItemID, input.WarehouseID, input.LocationID)
+	balance, err = scanBalance(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && direction > 0 {
+			balance = &InventoryBalance{
+				ItemID:         input.ItemID,
+				WarehouseID:    input.WarehouseID,
+				LocationID:     input.LocationID,
+				Currency:       input.Currency,
+				OrganizationID: input.OrganizationID,
+				Metadata:       map[string]any{},
+			}
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrInsufficientStock
+		} else {
+			return nil, err
+		}
+	}
+
+	next := *balance
+	if next.Currency == "" {
+		next.Currency = input.Currency
+	}
+	if next.OrganizationID == nil {
+		next.OrganizationID = input.OrganizationID
+	}
+	if direction > 0 {
+		oldValue := next.Quantity * next.AverageCost
+		addedValue := input.Quantity * input.UnitCost
+		next.Quantity += input.Quantity
+		if next.Quantity > 0 {
+			next.AverageCost = (oldValue + addedValue) / next.Quantity
+		}
+		next.ValueAmount = next.Quantity * next.AverageCost
+	} else {
+		if next.Quantity < input.Quantity {
+			return nil, ErrInsufficientStock
+		}
+		if input.UnitCost <= 0 {
+			input.UnitCost = next.AverageCost
+		}
+		next.Quantity -= input.Quantity
+		next.ValueAmount = next.Quantity * next.AverageCost
+	}
+
+	updated, err := scanBalanceRow(tx.QueryRow(ctx, `
+		INSERT INTO inventory_balances (item_id, warehouse_id, location_id, quantity, reserved_qty, average_cost, value_amount, currency, organization_id, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		ON CONFLICT (item_id, warehouse_id, COALESCE(location_id, '00000000-0000-0000-0000-000000000000'::uuid))
+		DO UPDATE SET
+			quantity = EXCLUDED.quantity,
+			reserved_qty = EXCLUDED.reserved_qty,
+			average_cost = EXCLUDED.average_cost,
+			value_amount = EXCLUDED.value_amount,
+			currency = EXCLUDED.currency,
+			organization_id = COALESCE(EXCLUDED.organization_id, inventory_balances.organization_id),
+			metadata = inventory_balances.metadata || EXCLUDED.metadata,
+			updated_at = NOW()
+		RETURNING id, master_key, item_id, warehouse_id, location_id, quantity::float8, reserved_qty::float8,
+		          average_cost::float8, value_amount::float8, currency, organization_id, metadata, updated_at`,
+		next.ItemID, next.WarehouseID, next.LocationID, next.Quantity, next.ReservedQty,
+		next.AverageCost, next.ValueAmount, next.Currency, next.OrganizationID, jsonMap(next.Metadata)))
+	if err != nil {
+		return nil, err
+	}
+	input.Currency = updated.Currency
+	if input.UnitCost <= 0 {
+		input.UnitCost = updated.AverageCost
+	}
+
+	movement, err := scanMovementRow(tx.QueryRow(ctx, `
+		INSERT INTO inventory_movements (
+			movement_type, source_type, source_id, item_id, warehouse_id, location_id,
+			quantity, unit_cost, amount, currency, balance_after, organization_id, department_id, occurred_at, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7::numeric * $8::numeric, $9, $10, $11, $12, COALESCE($13, NOW()), $14)
+		RETURNING id, master_key, movement_type, source_type, source_id, item_id, warehouse_id, location_id,
+		          quantity::float8, unit_cost::float8, amount::float8, currency, balance_after::float8,
+		          organization_id, department_id, occurred_at, metadata, created_at`,
+		input.MovementType, input.SourceType, input.SourceID, input.ItemID, input.WarehouseID, input.LocationID,
+		input.Quantity, input.UnitCost, input.Currency, updated.Quantity, input.OrganizationID, input.DepartmentID,
+		input.OccurredAt, jsonMap(input.Metadata)))
+	if err != nil {
+		if isUniqueViolation(err) {
+			tx.Rollback(ctx)
+			if lineKey, lineID, ok := movementLineIdentity(input); ok && input.SourceID != nil {
+				return r.FindMovementBySourceLine(ctx, input.SourceType, *input.SourceID, lineKey, lineID)
+			}
+		}
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return movement, nil
+}
+
+func (r *PostgresRepository) FindMovementBySourceLine(ctx context.Context, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) (*InventoryMovement, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT id, master_key, movement_type, source_type, source_id, item_id, warehouse_id, location_id,
+		       quantity::float8, unit_cost::float8, amount::float8, currency, balance_after::float8,
+		       organization_id, department_id, occurred_at, metadata, created_at
+		FROM inventory_movements
+		WHERE source_type = $1
+		  AND source_id = $2
+		  AND metadata ->> $3 = $4
+		ORDER BY created_at DESC
+		LIMIT 1`, sourceType, sourceID, lineKey, lineID.String())
+	movement, err := scanMovement(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return movement, err
 }
 
 func (r *PostgresRepository) ListBalances(ctx context.Context, limit int) ([]InventoryBalance, error) {
@@ -446,6 +587,37 @@ func scanMovement(row rowScanner) (*InventoryMovement, error) {
 	err := row.Scan(&item.ID, &item.MasterKey, &item.MovementType, &item.SourceType, &item.SourceID, &item.ItemID, &item.WarehouseID, &item.LocationID, &item.Quantity, &item.UnitCost, &item.Amount, &item.Currency, &item.BalanceAfter, &item.OrganizationID, &item.DepartmentID, &item.OccurredAt, &raw, &item.CreatedAt)
 	item.Metadata = parseJSONMap(raw)
 	return &item, err
+}
+
+func scanBalanceRow(row rowScanner) (*InventoryBalance, error) {
+	return scanBalance(row)
+}
+
+func scanMovementRow(row rowScanner) (*InventoryMovement, error) {
+	return scanMovement(row)
+}
+
+func movementLineIdentity(input CreateInventoryMovementInput) (string, uuid.UUID, bool) {
+	for _, key := range []string{"receipt_line_id", "shipment_line_id"} {
+		raw, ok := input.Metadata[key]
+		if !ok {
+			continue
+		}
+		value, ok := raw.(string)
+		if !ok {
+			continue
+		}
+		id, err := uuid.Parse(value)
+		if err == nil {
+			return key, id, true
+		}
+	}
+	return "", uuid.Nil, false
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 func jsonMap(value map[string]any) []byte {

@@ -27,6 +27,9 @@ func TestTenantMiddlewareModuleGate(t *testing.T) {
 		EnabledModules: map[string]bool{
 			"organization": false,
 			"project":      false,
+			"inventory":    false,
+			"procurement":  false,
+			"sales":        false,
 		},
 	}
 
@@ -43,6 +46,21 @@ func TestTenantMiddlewareModuleGate(t *testing.T) {
 		{
 			name:       "blocks disabled agent management route",
 			path:       "/api/v1/agents",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "blocks disabled inventory module route",
+			path:       "/api/v1/inventory/items",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "blocks disabled procurement module route",
+			path:       "/api/v1/procurement/orders",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "blocks disabled sales module route",
+			path:       "/api/v1/sales/orders",
 			wantStatus: http.StatusForbidden,
 		},
 		{

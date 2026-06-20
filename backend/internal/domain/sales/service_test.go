@@ -69,6 +69,115 @@ func TestPostShipmentCreatesInventoryMovementsAndReceivable(t *testing.T) {
 	}
 }
 
+func TestPostShipmentRetryAfterFinanceFailureDoesNotDuplicateInventory(t *testing.T) {
+	ctx := context.Background()
+	shipmentID := uuid.New()
+	repo := shipmentRepositoryWithLine(shipmentID)
+	inv := &salesInventoryRecorder{}
+	fin := &receivableRecorder{err: errors.New("finance unavailable")}
+	svc := NewService(repo, WithInventoryPoster(inv), WithFinancePoster(fin))
+
+	_, err := svc.PostShipment(ctx, shipmentID)
+	if err == nil {
+		t.Fatalf("PostShipment error = nil, want finance failure")
+	}
+	if len(inv.movements) != 1 {
+		t.Fatalf("inventory movements after failed post = %d, want 1", len(inv.movements))
+	}
+
+	fin.err = nil
+	posted, err := svc.PostShipment(ctx, shipmentID)
+	if err != nil {
+		t.Fatalf("PostShipment retry error = %v", err)
+	}
+	if posted.Status != "posted" {
+		t.Fatalf("posted status = %q, want posted", posted.Status)
+	}
+	if len(inv.movements) != 1 {
+		t.Fatalf("inventory movements after retry = %d, want 1", len(inv.movements))
+	}
+}
+
+func TestPostShipmentRetryAfterMarkFailureDoesNotDuplicateReceivable(t *testing.T) {
+	ctx := context.Background()
+	shipmentID := uuid.New()
+	repo := shipmentRepositoryWithLine(shipmentID)
+	repo.markErr = errors.New("mark failed")
+	inv := &salesInventoryRecorder{}
+	fin := &receivableRecorder{}
+	svc := NewService(repo, WithInventoryPoster(inv), WithFinancePoster(fin))
+
+	_, err := svc.PostShipment(ctx, shipmentID)
+	if err == nil {
+		t.Fatalf("PostShipment error = nil, want mark failure")
+	}
+	if fin.created != 1 {
+		t.Fatalf("receivables after failed mark = %d, want 1", fin.created)
+	}
+
+	repo.markErr = nil
+	posted, err := svc.PostShipment(ctx, shipmentID)
+	if err != nil {
+		t.Fatalf("PostShipment retry error = %v", err)
+	}
+	if posted.Status != "posted" {
+		t.Fatalf("posted status = %q, want posted", posted.Status)
+	}
+	if fin.created != 1 {
+		t.Fatalf("receivables after retry = %d, want 1", fin.created)
+	}
+}
+
+func TestConfirmOrderRequiresDraftStatus(t *testing.T) {
+	ctx := context.Background()
+	orderID := uuid.New()
+	repo := &shipmentRepository{
+		order: &SalesOrder{
+			ID:     orderID,
+			Status: "approved",
+		},
+	}
+	svc := NewService(repo)
+
+	_, err := svc.ConfirmOrder(ctx, orderID)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("ConfirmOrder error = %v, want ErrValidation", err)
+	}
+	if repo.order.Status != "approved" {
+		t.Fatalf("order status = %q, want approved after rejected confirm", repo.order.Status)
+	}
+}
+
+func TestApproveOrderRequiresConfirmedStatus(t *testing.T) {
+	ctx := context.Background()
+	orderID := uuid.New()
+	repo := &shipmentRepository{
+		order: &SalesOrder{
+			ID:     orderID,
+			Status: "draft",
+		},
+	}
+	svc := NewService(repo)
+
+	_, err := svc.ApproveOrder(ctx, orderID)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("ApproveOrder error = %v, want ErrValidation", err)
+	}
+	if repo.order.Status != "draft" {
+		t.Fatalf("order status = %q, want draft after rejected approve", repo.order.Status)
+	}
+}
+
+func TestConfirmOrderReturnsNotFoundForNilRecord(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(&shipmentRepository{})
+
+	_, err := svc.ConfirmOrder(ctx, uuid.New())
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ConfirmOrder error = %v, want ErrNotFound", err)
+	}
+}
+
 func shipmentRepositoryWithLine(shipmentID uuid.UUID) *shipmentRepository {
 	orgID := uuid.New()
 	deptID := uuid.New()
@@ -102,7 +211,9 @@ func shipmentRepositoryWithLine(shipmentID uuid.UUID) *shipmentRepository {
 }
 
 type shipmentRepository struct {
+	order    *SalesOrder
 	shipment *SalesShipment
+	markErr  error
 }
 
 func (r *shipmentRepository) CreateQuotation(ctx context.Context, input CreateSalesQuotationInput) (*SalesQuotation, error) {
@@ -122,11 +233,14 @@ func (r *shipmentRepository) ListOrders(ctx context.Context, limit int) ([]Sales
 }
 
 func (r *shipmentRepository) GetOrder(ctx context.Context, id uuid.UUID) (*SalesOrder, error) {
-	return nil, nil
+	return r.order, nil
 }
 
 func (r *shipmentRepository) UpdateOrderStatus(ctx context.Context, id uuid.UUID, status string) (*SalesOrder, error) {
-	return nil, nil
+	copy := *r.order
+	copy.Status = status
+	r.order = &copy
+	return &copy, nil
 }
 
 func (r *shipmentRepository) CreateShipment(ctx context.Context, input CreateSalesShipmentInput) (*SalesShipment, error) {
@@ -142,6 +256,9 @@ func (r *shipmentRepository) GetShipment(ctx context.Context, id uuid.UUID) (*Sa
 }
 
 func (r *shipmentRepository) MarkShipmentPosted(ctx context.Context, id uuid.UUID, receivableID *uuid.UUID) (*SalesShipment, error) {
+	if r.markErr != nil {
+		return nil, r.markErr
+	}
 	copy := *r.shipment
 	copy.Status = "posted"
 	copy.ReceivableID = receivableID
@@ -162,6 +279,18 @@ type salesInventoryRecorder struct {
 	err       error
 }
 
+func (r *salesInventoryRecorder) FindMovementBySourceLine(ctx context.Context, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) (*inventory.InventoryMovement, error) {
+	for _, movement := range r.movements {
+		if movement.SourceType != sourceType || movement.SourceID == nil || *movement.SourceID != sourceID {
+			continue
+		}
+		if value, ok := movement.Metadata[lineKey].(string); ok && value == lineID.String() {
+			return &inventory.InventoryMovement{ID: uuid.New()}, nil
+		}
+	}
+	return nil, inventory.ErrNotFound
+}
+
 func (r *salesInventoryRecorder) PostMovement(ctx context.Context, input inventory.CreateInventoryMovementInput) (*inventory.InventoryMovement, error) {
 	if r.err != nil {
 		return nil, r.err
@@ -171,11 +300,25 @@ func (r *salesInventoryRecorder) PostMovement(ctx context.Context, input invento
 }
 
 type receivableRecorder struct {
-	receivable *finance.CreateReceivableInput
+	receivable   *finance.CreateReceivableInput
+	receivableID uuid.UUID
+	err          error
+	created      int
+}
+
+func (r *receivableRecorder) FindReceivableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*finance.Receivable, error) {
+	if r.receivable == nil || r.receivable.SourceType != sourceType || r.receivable.SourceID == nil || *r.receivable.SourceID != sourceID {
+		return nil, finance.ErrNotFound
+	}
+	return &finance.Receivable{ID: r.receivableID}, nil
 }
 
 func (r *receivableRecorder) CreateReceivable(ctx context.Context, input finance.CreateReceivableInput) (*finance.Receivable, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
 	r.receivable = &input
-	id := uuid.New()
-	return &finance.Receivable{ID: id}, nil
+	r.receivableID = uuid.New()
+	r.created++
+	return &finance.Receivable{ID: r.receivableID}, nil
 }

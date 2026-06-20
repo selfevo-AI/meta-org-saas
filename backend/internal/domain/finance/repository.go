@@ -3,6 +3,7 @@ package finance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -645,6 +646,23 @@ func (r *PostgresRepository) ListPayables(ctx context.Context, limit int) ([]Pay
 	return items, rows.Err()
 }
 
+func (r *PostgresRepository) FindPayableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*Payable, error) {
+	payable := &Payable{}
+	err := scanPayable(r.db.QueryRow(ctx, payableSelectSQL()+`
+		WHERE source_type = $1
+		  AND source_id = $2
+		  AND ($3::uuid IS NULL OR organization_id IS NOT DISTINCT FROM $3)
+		ORDER BY created_at DESC
+		LIMIT 1`, sourceType, sourceID, nullableUUID(currentTenantOrganizationID(ctx))), payable)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find finance payable by source: %w", err)
+	}
+	return payable, nil
+}
+
 func (r *PostgresRepository) CreatePayment(ctx context.Context, input CreatePaymentInput, paidAt *time.Time) (*Payment, error) {
 	payment := &Payment{}
 	err := scanPayment(r.db.QueryRow(ctx, `
@@ -988,6 +1006,23 @@ func (r *PostgresRepository) ListReceivables(ctx context.Context, limit int) ([]
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (r *PostgresRepository) FindReceivableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*Receivable, error) {
+	receivable := &Receivable{}
+	err := scanReceivable(r.db.QueryRow(ctx, receivableSelectSQL()+`
+		WHERE source_type = $1
+		  AND source_id = $2
+		  AND ($3::uuid IS NULL OR organization_id IS NOT DISTINCT FROM $3)
+		ORDER BY created_at DESC
+		LIMIT 1`, sourceType, sourceID, nullableUUID(currentTenantOrganizationID(ctx))), receivable)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find finance receivable by source: %w", err)
+	}
+	return receivable, nil
 }
 
 func (r *PostgresRepository) GetReceivable(ctx context.Context, id uuid.UUID) (*Receivable, error) {

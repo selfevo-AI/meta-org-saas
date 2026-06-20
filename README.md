@@ -4,7 +4,7 @@
 
 Meta-Org 是一个面向混合人力组织的 AI 原生组织操作平台。它把人类员工、AI Agent、外部协作者、组织结构、项目交付、治理规则和持续学习机制放进同一套运行系统中，用于支持从需求进入、项目组建、工作流执行、交付验收、成本归集到反馈沉淀的完整业务闭环。
 
-项目基于 **ETCLOVG** 框架构建：Execution、Tooling、Context、Lifecycle、Observability、Verification、Governance。当前仓库已经包含 Go 后端、Next.js 前端、PostgreSQL 迁移、Docker Compose 编排、JWT 鉴权、Meta-Org 首页、Meta Resource / PDCA 工作台、组织/项目工作台、模型设置、AI Gateway、工具运行闭环、成本核算和通用财务导出。
+项目基于 **ETCLOVG** 框架构建：Execution、Tooling、Context、Lifecycle、Observability、Verification、Governance。当前仓库已经包含 Go 后端、Next.js 前端、PostgreSQL 迁移、Docker Compose 编排、JWT 鉴权、Meta-Org 首页、Meta Resource / PDCA 工作台、组织/项目工作台、模型设置、AI Gateway、工具运行闭环、成本核算、通用财务、SaaS 模块门控、安全内核接入，以及库存、采购、销售供应链闭环。
 
 ## 项目目标
 
@@ -164,7 +164,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 
 ## 数据库迁移
 
-后端启动时会执行根目录 `migrations/` 中的 SQL 文件。当前迁移已到 `021`：
+后端启动时会执行根目录 `migrations/` 中的 SQL 文件。当前迁移已到 `039`：
 
 | 迁移 | 主题 |
 |---|---|
@@ -189,6 +189,24 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `019_costing_framework.sql` | 统一成本币种、汇率、费率卡、预算和成本账本。 |
 | `020_ai_gateway_internal_ops.sql` | AI Gateway 通道/key 池、多维模型计费、模型路由、调用归因和成本分析字段。 |
 | `021_meta_resource_pdca.sql` | Meta Resource、Demand Profile、PDCA Cycle 和 PDCA Event，用于需求驱动的统一资源画像和持续进化记录。 |
+| `022_assistant_runtime.sql` | AI Assistant 会话、消息、运行记录和工具调用上下文。 |
+| `023_org_meta_task_matrix.sql` | 组织 Meta 任务矩阵和业务上下文映射。 |
+| `024_strong_base_data_uniqueness.sql` | 基础数据强唯一性约束。 |
+| `025_authority_tiers_agent_governance.sql` | 权限层级、Agent 治理和审批约束增强。 |
+| `026_master_detail_permissions.sql` | 主从数据权限和访问控制。 |
+| `027_finance_expense_ingestion.sql` | 财务费用导入、拉取批次和失败记录。 |
+| `028_finance_receivables_accounting_crud.sql` | 应收、应付、收付款和核销 CRUD。 |
+| `029_assistant_business_interaction.sql` | Assistant 与业务工作台交互记录。 |
+| `030_assistant_business_interaction_patch.sql` | Assistant 业务交互字段补丁。 |
+| `031_master_key_defaults.sql` | 主数据 master key 默认值。 |
+| `032_module_master_detail_unification.sql` | 模块主从模型统一。 |
+| `033_user_ui_preferences.sql` | 用户 UI 偏好。 |
+| `034_saas_foundation.sql` | SaaS 组织、租户模块和订阅基础。 |
+| `035_assistant_context_engine.sql` | Assistant 上下文引擎、语义上下文和运行记忆。 |
+| `036_unified_skill.sql` | 统一技能目录和技能导入结构。 |
+| `037_security_kernel.sql` | 安全内核策略、决策记录和外部授权集成。 |
+| `038_supply_chain_core.sql` | 库存、采购、销售供应链核心表。 |
+| `039_supply_chain_posting_idempotency.sql` | 供应链过账幂等唯一索引，避免重试重复写入库存流水、应收和应付。 |
 
 ## API 概览
 
@@ -327,11 +345,11 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 返回 `{"status":"ok"}`。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
 
-AI Gateway 和 Meta Resource 重构后启动必须确认 `019_costing_framework.sql`、`020_ai_gateway_internal_ops.sql` 和 `021_meta_resource_pdca.sql` 已执行。若后端启动、模型设置或 Meta Resource 页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation demand_profiles does not exist`，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。处理顺序：
+AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必须确认迁移已执行到 `039_supply_chain_posting_idempotency.sql`。若后端启动、模型设置、Meta Resource、SaaS 模块或供应链页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`、`relation inventory_items does not exist` 等错误，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。处理顺序：
 
 1. 确认 `DATABASE_URL` 指向当前 `meta_org` 数据库。
 2. 确认从 `backend/` 本地运行时使用 `MIGRATIONS_PATH=../migrations`。
-3. 重启后端，让迁移器执行到 `021`。
+3. 重启后端，让迁移器执行到 `039`。
 4. 再打开模型设置，检查 Channels / Keys、Routing、Usage Analysis 页面是否能加载。
 5. 打开 Meta Resource 工作区，先执行一次“同步现有资源”，确认 human、agent、external_human、model_channel、tool、capability 资源能进入统一资源视图。
 
@@ -347,6 +365,12 @@ AI Gateway 和 Meta Resource 重构后启动必须确认 `019_costing_framework.
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32 字符密钥，用于模型供应商和财务适配器密钥加密，生产环境必须替换。 |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | 允许访问 API 的前端来源。 |
 | `MIGRATIONS_PATH` | `migrations` | SQL 迁移目录；本地从 `backend/` 运行时通常设为 `../migrations`。 |
+| `META_ORG_MODE` | `single_org` | 运行模式；可设为 `saas` 启用多租户/SaaS 语义。 |
+| `META_ORG_DISTRIBUTION_MODE` | 跟随 `META_ORG_MODE` | 分发模式：`saas`、`saas_org_private`、`single_org_commercial` 或 `private_deployment`。 |
+| `META_ORG_LICENSE_MODE` | `commercial` | 授权模式：`community`、`commercial`、`enterprise` 或 `private_contract`。 |
+| `SECURITY_KERNEL_URL` | 空 | 外部安全内核授权服务地址；为空时客户端按未配置处理并允许通过。 |
+| `SECURITY_KERNEL_SHARED_SECRET` | 空 | 调用外部安全内核的共享密钥。 |
+| `SECURITY_KERNEL_ENFORCEMENT_MODE` | `blocking` | 安全内核执行模式；支持 `blocking` 和 `audit`。 |
 
 前端配置：
 
@@ -365,7 +389,7 @@ backend/
 frontend/
   src/app/                    Next.js App Router 页面和工作台
   src/lib/                    API、认证、i18n、API Workbench 元数据
-migrations/                   PostgreSQL SQL 迁移 001-021
+migrations/                   PostgreSQL SQL 迁移 001-039
 docs/operations/              生产运维、财务适配器协议和排障文档
 .github/workflows/            GitHub Actions CI
 docker-compose.yml            本地完整环境编排
@@ -373,7 +397,7 @@ docker-compose.yml            本地完整环境编排
 
 ## 当前状态与边界
 
-当前代码已经具备单企业 Meta-Org 入口、Meta Resource / PDCA 资源框架、组织管理、项目生命周期、AI Gateway、工具运行闭环、成本核算、财务导出、治理、演化、观测和验证骨架，适合作为 10-50 人团队与 50-250+ Agent 的生产 v1 基础。
+当前代码已经具备单企业 Meta-Org 入口、Meta Resource / PDCA 资源框架、组织管理、项目生命周期、AI Gateway、工具运行闭环、成本核算、通用财务、SaaS 模块门控、安全内核、库存/采购/销售供应链、治理、演化、观测和验证骨架，适合作为 10-50 人团队与 50-250+ Agent 的生产 v1 基础。
 
 从旧 `harness_org` 数据库升级到 `meta_org` 时，必须先显式备份并迁移数据；系统不会自动删除或覆盖旧库。
 

@@ -14,6 +14,12 @@ Backend:
 | `SERVER_PORT` | no | Defaults to `8080`. |
 | `CORS_ORIGINS` | yes | Comma-separated frontend origins. |
 | `MIGRATIONS_PATH` | yes | Usually `migrations` in containers and `../migrations` when running from `backend/`. |
+| `META_ORG_MODE` | no | Defaults to `single_org`; set to `saas` for multi-tenant semantics. |
+| `META_ORG_DISTRIBUTION_MODE` | no | Distribution mode for licensing/deployment policy. |
+| `META_ORG_LICENSE_MODE` | no | Defaults to `commercial`; choose the deployment license mode deliberately. |
+| `SECURITY_KERNEL_URL` | no | External authorization service URL. Empty means the client is not configured and allows requests. |
+| `SECURITY_KERNEL_SHARED_SECRET` | if kernel enabled | Shared secret for security-kernel calls. |
+| `SECURITY_KERNEL_ENFORCEMENT_MODE` | no | Defaults to `blocking`; use `audit` only for controlled rollout. |
 
 Frontend:
 
@@ -47,11 +53,13 @@ Keep both values in the deployment secret manager. Do not commit them.
 
 1. Create an empty PostgreSQL database named `meta_org`.
 2. Set backend environment variables, including `DATABASE_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, and `MIGRATIONS_PATH`.
-3. Start the backend. It applies SQL migrations automatically through `021_meta_resource_pdca.sql`.
-4. Start the frontend with `NEXT_PUBLIC_API_URL` pointing at `/api/v1`.
-5. Create the first human user through the frontend registration flow.
-6. Open Meta-Org Home and confirm overview and inbox data load.
-7. Open Meta Resource and run Sync Existing Resources once so humans, agents, external members, model channels, tools, and capabilities are indexed into the meta resource layer.
+3. If using an external security kernel, set `SECURITY_KERNEL_URL`, `SECURITY_KERNEL_SHARED_SECRET`, and choose `SECURITY_KERNEL_ENFORCEMENT_MODE`.
+4. Start the backend. It applies SQL migrations automatically through `039_supply_chain_posting_idempotency.sql`.
+5. Start the frontend with `NEXT_PUBLIC_API_URL` pointing at `/api/v1`.
+6. Create the first human user through the frontend registration flow.
+7. Open Meta-Org Home and confirm overview and inbox data load.
+8. Open Meta Resource and run Sync Existing Resources once so humans, agents, external members, model channels, tools, and capabilities are indexed into the meta resource layer.
+9. Open Inventory, Procurement, and Sales if those SaaS modules are enabled for the organization, then confirm list endpoints load before running posting actions.
 
 ## Migrating From `harness_org`
 
@@ -110,13 +118,13 @@ Channel key rotation:
 
 ## Startup and Migration Troubleshooting
 
-The AI Gateway internal-ops and Meta Resource refactors depend on migrations `019_costing_framework.sql`, `020_ai_gateway_internal_ops.sql`, and `021_meta_resource_pdca.sql`. These migrations add `model_provider_channels`, `ai_routing_rules`, multidimensional model price fields, invocation attribution fields, ledger cost breakdown fields, `meta_resources`, `demand_profiles`, `pdca_cycles`, and `pdca_events`.
+The current production schema baseline depends on migrations through `039_supply_chain_posting_idempotency.sql`. The later migrations add AI Gateway internal ops, Meta Resource / PDCA, Assistant runtime context, SaaS module entitlements, security-kernel policies and decision records, inventory/procurement/sales supply-chain tables, and idempotency indexes for posting retries.
 
-If startup, Developer Tools, Meta Resource, or AI Assistant calls fail with errors such as `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `column cost_breakdown does not exist`, `relation meta_resources does not exist`, or `relation demand_profiles does not exist`:
+If startup, Developer Tools, Meta Resource, SaaS module pages, supply-chain pages, or AI Assistant calls fail with errors such as `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `column cost_breakdown does not exist`, `relation meta_resources does not exist`, `relation demand_profiles does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`:
 
 1. Confirm `DATABASE_URL` points to the intended `meta_org` database.
 2. Confirm `MIGRATIONS_PATH` points to the root `migrations/` directory. When running from `backend/`, use `../migrations`.
-3. Restart the backend so the migration runner applies SQL through `021`.
+3. Restart the backend so the migration runner applies SQL through `039`.
 4. Re-run `cd backend && go test ./...` and `cd frontend && npm run build`.
 5. Open Developer Tools and verify Providers, Channels / Keys, Routing, Invocations, and Usage Analysis all load.
 6. Open Meta Resource, run Sync Existing Resources, and verify the summary includes at least the existing human, agent, tool, and capability counts.

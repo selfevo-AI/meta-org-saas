@@ -35,8 +35,16 @@ type InventoryPoster interface {
 	PostMovement(ctx context.Context, input inventory.CreateInventoryMovementInput) (*inventory.InventoryMovement, error)
 }
 
+type inventoryMovementFinder interface {
+	FindMovementBySourceLine(ctx context.Context, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) (*inventory.InventoryMovement, error)
+}
+
 type FinancePoster interface {
 	CreateReceivable(ctx context.Context, input finance.CreateReceivableInput) (*finance.Receivable, error)
+}
+
+type financeReceivableFinder interface {
+	FindReceivableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*finance.Receivable, error)
 }
 
 type Service struct {
@@ -92,10 +100,30 @@ func (s *Service) ListOrders(ctx context.Context, limit int) ([]SalesOrder, erro
 }
 
 func (s *Service) ConfirmOrder(ctx context.Context, id uuid.UUID) (*SalesOrder, error) {
+	order, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrNotFound
+	}
+	if order.Status != "draft" {
+		return nil, fmt.Errorf("%w: sales order must be draft to confirm", ErrValidation)
+	}
 	return s.repo.UpdateOrderStatus(ctx, id, "confirmed")
 }
 
 func (s *Service) ApproveOrder(ctx context.Context, id uuid.UUID) (*SalesOrder, error) {
+	order, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrNotFound
+	}
+	if order.Status != "confirmed" {
+		return nil, fmt.Errorf("%w: sales order must be confirmed to approve", ErrValidation)
+	}
 	return s.repo.UpdateOrderStatus(ctx, id, "approved")
 }
 
@@ -137,6 +165,9 @@ func (s *Service) PostShipment(ctx context.Context, id uuid.UUID) (*SalesShipmen
 		}
 		subtotal += line.Amount
 		taxAmount += line.TaxAmount
+		if movementAlreadyPosted(ctx, s.inventory, "sales_shipment", shipment.ID, "shipment_line_id", line.ID) {
+			continue
+		}
 		if _, err := s.inventory.PostMovement(ctx, inventory.CreateInventoryMovementInput{
 			MovementType:   inventory.MovementSalesShipment,
 			SourceType:     "sales_shipment",
@@ -154,7 +185,7 @@ func (s *Service) PostShipment(ctx context.Context, id uuid.UUID) (*SalesShipmen
 		}
 	}
 
-	receivable, err := s.finance.CreateReceivable(ctx, finance.CreateReceivableInput{
+	receivable, err := receivableForSource(ctx, s.finance, "sales_shipment", shipment.ID, finance.CreateReceivableInput{
 		ReceivableType: "sales",
 		SourceType:     "sales_shipment",
 		SourceID:       &shipment.ID,
@@ -185,6 +216,29 @@ func (s *Service) CreateReturn(ctx context.Context, input CreateSalesReturnInput
 
 func (s *Service) ListReturns(ctx context.Context, limit int) ([]SalesReturn, error) {
 	return s.repo.ListReturns(ctx, normalizeLimit(limit))
+}
+
+func movementAlreadyPosted(ctx context.Context, poster InventoryPoster, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) bool {
+	finder, ok := poster.(inventoryMovementFinder)
+	if !ok {
+		return false
+	}
+	movement, err := finder.FindMovementBySourceLine(ctx, sourceType, sourceID, lineKey, lineID)
+	return err == nil && movement != nil
+}
+
+func receivableForSource(ctx context.Context, poster FinancePoster, sourceType string, sourceID uuid.UUID, input finance.CreateReceivableInput) (*finance.Receivable, error) {
+	finder, ok := poster.(financeReceivableFinder)
+	if ok {
+		receivable, err := finder.FindReceivableBySource(ctx, sourceType, sourceID)
+		if err == nil && receivable != nil {
+			return receivable, nil
+		}
+		if err != nil && !errors.Is(err, finance.ErrNotFound) {
+			return nil, err
+		}
+	}
+	return poster.CreateReceivable(ctx, input)
 }
 
 func normalizeQuotationInput(input *CreateSalesQuotationInput) {

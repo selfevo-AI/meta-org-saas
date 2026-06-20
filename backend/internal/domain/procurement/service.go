@@ -37,8 +37,16 @@ type InventoryPoster interface {
 	PostMovement(ctx context.Context, input inventory.CreateInventoryMovementInput) (*inventory.InventoryMovement, error)
 }
 
+type inventoryMovementFinder interface {
+	FindMovementBySourceLine(ctx context.Context, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) (*inventory.InventoryMovement, error)
+}
+
 type FinancePoster interface {
 	CreatePayable(ctx context.Context, input finance.CreatePayableInput) (*finance.Payable, error)
+}
+
+type financePayableFinder interface {
+	FindPayableBySource(ctx context.Context, sourceType string, sourceID uuid.UUID) (*finance.Payable, error)
 }
 
 type Service struct {
@@ -82,10 +90,30 @@ func (s *Service) ListRequisitions(ctx context.Context, limit int) ([]PurchaseRe
 }
 
 func (s *Service) SubmitRequisition(ctx context.Context, id uuid.UUID) (*PurchaseRequisition, error) {
+	requisition, err := s.repo.GetRequisition(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if requisition == nil {
+		return nil, ErrNotFound
+	}
+	if requisition.Status != "draft" {
+		return nil, fmt.Errorf("%w: only draft requisitions can be submitted", ErrValidation)
+	}
 	return s.repo.UpdateRequisitionStatus(ctx, id, "submitted")
 }
 
 func (s *Service) ApproveRequisition(ctx context.Context, id uuid.UUID) (*PurchaseRequisition, error) {
+	requisition, err := s.repo.GetRequisition(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if requisition == nil {
+		return nil, ErrNotFound
+	}
+	if requisition.Status != "submitted" {
+		return nil, fmt.Errorf("%w: only submitted requisitions can be approved", ErrValidation)
+	}
 	return s.repo.UpdateRequisitionStatus(ctx, id, "approved")
 }
 
@@ -102,10 +130,30 @@ func (s *Service) ListOrders(ctx context.Context, limit int) ([]PurchaseOrder, e
 }
 
 func (s *Service) SubmitOrder(ctx context.Context, id uuid.UUID) (*PurchaseOrder, error) {
+	order, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrNotFound
+	}
+	if order.Status != "draft" {
+		return nil, fmt.Errorf("%w: only draft purchase orders can be submitted", ErrValidation)
+	}
 	return s.repo.UpdateOrderStatus(ctx, id, "submitted")
 }
 
 func (s *Service) ApproveOrder(ctx context.Context, id uuid.UUID) (*PurchaseOrder, error) {
+	order, err := s.repo.GetOrder(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if order == nil {
+		return nil, ErrNotFound
+	}
+	if order.Status != "submitted" {
+		return nil, fmt.Errorf("%w: only submitted purchase orders can be approved", ErrValidation)
+	}
 	return s.repo.UpdateOrderStatus(ctx, id, "approved")
 }
 
@@ -147,6 +195,9 @@ func (s *Service) PostReceipt(ctx context.Context, id uuid.UUID) (*PurchaseRecei
 		}
 		subtotal += line.Amount
 		taxAmount += line.TaxAmount
+		if movementAlreadyPosted(ctx, s.inventory, "purchase_receipt", receipt.ID, "receipt_line_id", line.ID) {
+			continue
+		}
 		if _, err := s.inventory.PostMovement(ctx, inventory.CreateInventoryMovementInput{
 			MovementType:   inventory.MovementPurchaseReceipt,
 			SourceType:     "purchase_receipt",
@@ -165,7 +216,7 @@ func (s *Service) PostReceipt(ctx context.Context, id uuid.UUID) (*PurchaseRecei
 		}
 	}
 
-	payable, err := s.finance.CreatePayable(ctx, finance.CreatePayableInput{
+	payable, err := payableForSource(ctx, s.finance, "purchase_receipt", receipt.ID, finance.CreatePayableInput{
 		PayableType:    "vendor",
 		SourceType:     "purchase_receipt",
 		SourceID:       &receipt.ID,
@@ -196,6 +247,29 @@ func (s *Service) CreateReturn(ctx context.Context, input CreatePurchaseReturnIn
 
 func (s *Service) ListReturns(ctx context.Context, limit int) ([]PurchaseReturn, error) {
 	return s.repo.ListReturns(ctx, normalizeLimit(limit))
+}
+
+func movementAlreadyPosted(ctx context.Context, poster InventoryPoster, sourceType string, sourceID uuid.UUID, lineKey string, lineID uuid.UUID) bool {
+	finder, ok := poster.(inventoryMovementFinder)
+	if !ok {
+		return false
+	}
+	movement, err := finder.FindMovementBySourceLine(ctx, sourceType, sourceID, lineKey, lineID)
+	return err == nil && movement != nil
+}
+
+func payableForSource(ctx context.Context, poster FinancePoster, sourceType string, sourceID uuid.UUID, input finance.CreatePayableInput) (*finance.Payable, error) {
+	finder, ok := poster.(financePayableFinder)
+	if ok {
+		payable, err := finder.FindPayableBySource(ctx, sourceType, sourceID)
+		if err == nil && payable != nil {
+			return payable, nil
+		}
+		if err != nil && !errors.Is(err, finance.ErrNotFound) {
+			return nil, err
+		}
+	}
+	return poster.CreatePayable(ctx, input)
 }
 
 func normalizeRequisitionInput(input *CreatePurchaseRequisitionInput) {
