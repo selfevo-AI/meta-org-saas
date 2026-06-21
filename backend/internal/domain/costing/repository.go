@@ -591,12 +591,13 @@ func (r *Repository) Summary(ctx context.Context, filter SummaryFilter) (*CostSu
 	if err := r.db.QueryRow(ctx, totalSQL, args...).Scan(&summary.EntryCount, &summary.TotalAmount); err != nil {
 		return nil, fmt.Errorf("cost summary total: %w", err)
 	}
+	budgetWhere, budgetArgs := budgetScopeWhere(filter.ScopeType, filter.ScopeID)
 	budgetSQL := fmt.Sprintf(`
 		SELECT COALESCE(SUM(base_amount), 0)::float8
 		FROM cost_budgets
 		WHERE status = 'active' %s
-	`, where)
-	if err := r.db.QueryRow(ctx, budgetSQL, args...).Scan(&summary.BudgetAmount); err != nil {
+	`, budgetWhere)
+	if err := r.db.QueryRow(ctx, budgetSQL, budgetArgs...).Scan(&summary.BudgetAmount); err != nil {
 		return nil, fmt.Errorf("cost budget summary: %w", err)
 	}
 	summary.BudgetVariance = summary.BudgetAmount - summary.TotalAmount
@@ -672,6 +673,13 @@ func scopeWhere(scopeType string, scopeID *uuid.UUID) (string, []any) {
 		return "", []any{}
 	}
 	return " AND " + column + " = $1", []any{*scopeID}
+}
+
+func budgetScopeWhere(scopeType string, scopeID *uuid.UUID) (string, []any) {
+	if scopeType == "" || scopeID == nil {
+		return "", []any{}
+	}
+	return " AND scope_type = $1 AND scope_id = $2", []any{scopeType, *scopeID}
 }
 
 func scopeColumn(scopeType string) string {

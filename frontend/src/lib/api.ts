@@ -6,6 +6,7 @@ interface RequestOptions {
   method?: string
   body?: unknown
   token?: string
+  organizationId?: string | null
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -14,7 +15,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   if (options.token) {
     headers['Authorization'] = `Bearer ${options.token}`
-    const organizationId = getCurrentOrganizationId()
+    const organizationId = options.organizationId !== undefined ? options.organizationId : getCurrentOrganizationId()
     if (organizationId) {
       headers['X-Organization-ID'] = organizationId
     }
@@ -60,6 +61,59 @@ export async function listSaaSModules(token: string): Promise<SaaSModule[]> {
   return apiRequest<SaaSModule[]>('/modules', { token })
 }
 
+export async function listPlatformOrganizations(token: string, limit = 100): Promise<SessionOrganization[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<SessionOrganization[]>(`/platform/organizations${query}`, { token })
+}
+
+export async function getOrganizationSubscription(token: string, organizationID: string): Promise<OrganizationSubscription> {
+  return apiRequest<OrganizationSubscription>(`/organizations/${encodeURIComponent(organizationID)}/subscription`, {
+    token,
+    organizationId: organizationID,
+  })
+}
+
+export async function getOrganizationEntitlements(token: string, organizationID: string): Promise<Record<string, boolean>> {
+  return apiRequest<Record<string, boolean>>(`/organizations/${encodeURIComponent(organizationID)}/entitlements`, {
+    token,
+    organizationId: organizationID,
+  })
+}
+
+export async function updateOrganizationModules(
+  token: string,
+  organizationID: string,
+  enabledModules: string[],
+): Promise<Record<string, boolean>> {
+  return apiRequest<Record<string, boolean>>(`/organizations/${encodeURIComponent(organizationID)}/modules`, {
+    method: 'PATCH',
+    token,
+    organizationId: organizationID,
+    body: { enabled_modules: enabledModules },
+  })
+}
+
+export async function listOrganizationInvitations(token: string, organizationID: string, limit = 100): Promise<OrganizationInvitation[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<OrganizationInvitation[]>(`/organizations/${encodeURIComponent(organizationID)}/invitations${query}`, {
+    token,
+    organizationId: organizationID,
+  })
+}
+
+export async function createOrganizationInvitation(
+  token: string,
+  organizationID: string,
+  input: CreateOrganizationInvitationInput,
+): Promise<OrganizationInvitation> {
+  return apiRequest<OrganizationInvitation>(`/organizations/${encodeURIComponent(organizationID)}/invitations`, {
+    method: 'POST',
+    token,
+    organizationId: organizationID,
+    body: input,
+  })
+}
+
 export async function completeOnboarding(token: string, input: OnboardingOrganizationInput): Promise<OnboardingOrganizationResponse> {
   return apiRequest<OnboardingOrganizationResponse>('/onboarding/organization', {
     method: 'POST',
@@ -70,6 +124,51 @@ export async function completeOnboarding(token: string, input: OnboardingOrganiz
 
 export async function listRoles(): Promise<Role[]> {
   return apiRequest<Role[]>('/roles')
+}
+
+export async function listPlatformMasters(token: string, moduleKey: string, limit = 100): Promise<PlatformMaster[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<PlatformMaster[]>(`/platform/admin/modules/${encodeURIComponent(moduleKey)}/masters${query}`, { token })
+}
+
+export async function listPlatformDetails(token: string, masterKey: string): Promise<PlatformDetail[]> {
+  return apiRequest<PlatformDetail[]>(`/platform/admin/masters/${encodeURIComponent(masterKey)}/details`, { token })
+}
+
+export async function listOrganizationSchemaTargets(token: string, limit = 100): Promise<OrganizationSchemaTarget[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<OrganizationSchemaTarget[]>(`/platform/admin/schema-targets${query}`, { token })
+}
+
+export async function exportOrganizationSchema(token: string, organizationID: string): Promise<SchemaPackage> {
+  return apiRequest<SchemaPackage>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/schema/export`, { token })
+}
+
+export async function createOrganizationSchemaChange(
+  token: string,
+  organizationID: string,
+  input: CreateSchemaChangeRequestInput,
+): Promise<SchemaChangeRequest> {
+  return apiRequest<SchemaChangeRequest>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/schema/change-requests`, {
+    method: 'POST',
+    token,
+    body: input,
+  })
+}
+
+export async function approveSchemaChange(token: string, requestID: string, reason = ''): Promise<SchemaChangeRequest> {
+  return apiRequest<SchemaChangeRequest>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/approve`, {
+    method: 'POST',
+    token,
+    body: { reason },
+  })
+}
+
+export async function applySchemaChange(token: string, requestID: string): Promise<SchemaApplyJob> {
+  return apiRequest<SchemaApplyJob>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/apply`, {
+    method: 'POST',
+    token,
+  })
 }
 
 export async function listDataTables(token: string, category?: string): Promise<DataTable[]> {
@@ -793,6 +892,48 @@ export interface SaaSModule {
   metadata: Record<string, unknown>
 }
 
+export interface OrganizationSubscription {
+  id: string
+  organization_id: string
+  plan_id?: string
+  plan_code?: string
+  plan_name?: string
+  status: string
+  trial_ends_at?: string
+  current_period_start?: string
+  current_period_end?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface OrganizationInvitation {
+  id: string
+  organization_id: string
+  email: string
+  name?: string
+  role_id?: string
+  authority_tier: string
+  status: string
+  invited_by?: string
+  accepted_by?: string
+  expires_at: string
+  metadata: Record<string, unknown>
+  accepted_at?: string
+  created_at: string
+  updated_at: string
+  token?: string
+}
+
+export interface CreateOrganizationInvitationInput {
+  email: string
+  name?: string
+  role_id?: string
+  authority_tier?: string
+  expires_in_days?: number
+  metadata?: Record<string, unknown>
+}
+
 export interface OnboardingOrganizationInput {
   organization_name: string
   description?: string
@@ -825,6 +966,115 @@ export interface Role {
   role_type: 'planner' | 'executor' | 'reviewer'
   description?: string
   permissions: string[]
+}
+
+export interface PlatformMaster {
+  master_key: string
+  module_key: string
+  entity_type: string
+  source_table: string
+  source_pk: string
+  title: string
+  status: string
+  organization_id?: string
+  payload: Record<string, unknown>
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformDetail {
+  detail_key: string
+  master_key: string
+  detail_type: string
+  field_key: string
+  line_no: number
+  payload: Record<string, unknown>
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface OrganizationSchemaTarget {
+  organization_id: string
+  schema_name: string
+  template_version: string
+  status: string
+  last_change_request_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface SchemaPackage {
+  format_version: string
+  module_key: string
+  tables: SchemaTableDefinition[]
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaTableDefinition {
+  name: string
+  fields: SchemaFieldDefinition[]
+  indexes?: SchemaIndexDefinition[]
+  constraints?: string[]
+  seeds?: Array<Record<string, unknown>>
+  metadata?: Record<string, unknown>
+}
+
+export interface SchemaFieldDefinition {
+  name: string
+  data_type: string
+  nullable: boolean
+  primary_key?: boolean
+  default?: string
+}
+
+export interface SchemaIndexDefinition {
+  name: string
+  fields: string[]
+  unique?: boolean
+  where?: string
+  comment?: string
+}
+
+export interface SchemaChangeRequest {
+  id: string
+  organization_id: string
+  schema_name: string
+  request_type: string
+  status: string
+  reason: string
+  schema_package: SchemaPackage
+  statements: string[]
+  requested_by?: string
+  reviewed_by?: string
+  applied_by?: string
+  review_reason?: string
+  created_at: string
+  reviewed_at?: string
+  applied_at?: string
+  updated_at: string
+}
+
+export interface SchemaApplyJob {
+  id: string
+  change_request_id: string
+  organization_id: string
+  schema_name: string
+  status: string
+  statements: string[]
+  error_message?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateSchemaChangeRequestInput {
+  organization_id?: string
+  request_type?: string
+  reason?: string
+  schema_package: SchemaPackage
 }
 
 export interface DataTable {

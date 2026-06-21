@@ -38,10 +38,14 @@ export function setSession(token: string, userId: string, userType: string, deta
   const user: SessionUser = { id: userId, type: userType, ...details }
   localStorage.setItem(TOKEN_KEY, token)
   localStorage.setItem(USER_KEY, JSON.stringify(user))
+  if (user.platform_role) {
+    localStorage.removeItem(ORGANIZATION_KEY)
+    return
+  }
   const nextOrgID = user.default_organization_id || user.organizations?.[0]?.id
   if (nextOrgID) {
     localStorage.setItem(ORGANIZATION_KEY, nextOrgID)
-  } else if (user.onboarding_required) {
+  } else {
     localStorage.removeItem(ORGANIZATION_KEY)
   }
 }

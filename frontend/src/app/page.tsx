@@ -95,8 +95,10 @@ import { OrganizationWorkspace } from './organization-workspace'
 import { ProcurementWorkspace } from './procurement-workspace'
 import { ProjectLifecycleWorkspace } from './project-lifecycle-workspace'
 import { SalesWorkspace } from './sales-workspace'
+import { SystemAdminWorkspace } from './system-admin-workspace'
 
 type AuthMode = 'login' | 'register'
+type LoginSurface = 'tenant' | 'platform'
 type WorkspaceView = 'overview' | `domain:${string}`
 type ThemeMode = 'dark' | 'light'
 
@@ -118,6 +120,7 @@ const domainLabels: Record<string, string> = {
   Cost: '成本',
   Feedback: '反馈评估',
   DeveloperTools: '模型设置',
+  SystemAdmin: 'SystemAdmin',
   Finance: '财务核算',
   Costing: '成本核算',
   FinanceAccounting: '财务核算',
@@ -148,6 +151,7 @@ const domainIcons: Record<string, typeof Gauge> = {
   Cost: CircleDollarSign,
   Feedback: Activity,
   DeveloperTools: Code2,
+  SystemAdmin: SlidersHorizontal,
   Finance: WalletCards,
   Costing: CircleDollarSign,
   FinanceAccounting: WalletCards,
@@ -291,9 +295,10 @@ type WorkspaceLayoutWidths = {
 type WorkspaceLayoutPane = keyof WorkspaceLayoutWidths
 
 const lifecycleDomains = ['Requirement', 'Project', 'Delivery', 'Cost', 'Feedback']
-const virtualDomains = ['Costing', 'MetaResource']
+const virtualDomains = ['Costing', 'MetaResource', 'SystemAdmin']
 const dedicatedDomains = new Set([
   'MetaResource',
+  'SystemAdmin',
   'Organization',
   'Governance',
   'Evolution',
@@ -351,6 +356,7 @@ const defaultMenuGroups: MenuGroup[] = [
       'Verification',
       'MetaOrg',
       'Dashboard',
+      'SystemAdmin',
       'DeveloperTools',
       'Identity',
       'Layer',
@@ -1148,12 +1154,14 @@ export default function Home() {
   const { locale, setLocale, t } = useI18n()
   const [ready, setReady] = useState(false)
   const [mode, setMode] = useState<AuthMode>('login')
+  const [loginSurface, setLoginSurface] = useState<LoginSurface>('tenant')
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [token, setToken] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [userType, setUserType] = useState<string | null>(null)
+  const [platformRole, setPlatformRole] = useState<string | null>(null)
   const [onboardingRequired, setOnboardingRequired] = useState(false)
   const [organizations, setOrganizations] = useState<SessionOrganization[]>([])
   const [currentOrganizationID, setCurrentOrganizationID] = useState<string | null>(null)
@@ -1214,6 +1222,7 @@ export default function Home() {
     orderedOverviewFunctions.find((item) => item.id === overviewFunctionID) ?? orderedOverviewFunctions[0] ?? overviewBusinessFunctions[0]
   const selectedOverviewSkill = overviewSkills.find((skill) => skill.id === overviewSkillID)
   const selectedOverviewModel = overviewModels.find((model) => model.id === overviewModelID)
+  const isPlatformAdminSession = !!platformRole
 
   useEffect(() => {
     let cancelled = false
@@ -1222,12 +1231,20 @@ export default function Home() {
       if (cancelled) return
       const existingToken = getToken()
       const sessionUser = getSessionUser()
+      const sessionPlatformRole = sessionUser?.platform_role || null
       setToken(existingToken)
       setUserId(sessionUser?.id ?? null)
       setUserType(sessionUser?.type ?? null)
-      setOnboardingRequired(!!sessionUser?.onboarding_required)
+      setPlatformRole(sessionPlatformRole)
+      setOnboardingRequired(sessionPlatformRole ? false : !!sessionUser?.onboarding_required)
       setOrganizations(sessionUser?.organizations ?? [])
-      setCurrentOrganizationID(getCurrentOrganizationId())
+      if (sessionPlatformRole) {
+        setCurrentOrganizationId(null)
+        setCurrentOrganizationID(null)
+        setWorkspaceView('domain:SystemAdmin')
+      } else {
+        setCurrentOrganizationID(getCurrentOrganizationId())
+      }
       setMenuGroups(loadMenuGroups())
       setExpandedGroups(loadExpandedGroups())
       setThemeMode(loadThemeMode())
@@ -1259,6 +1276,7 @@ export default function Home() {
         setOnboardingRequired(false)
         setOrganizations([])
         setCurrentOrganizationID(null)
+        setPlatformRole(null)
         setSaaSModules([])
       })
       return
@@ -1271,8 +1289,16 @@ export default function Home() {
         setOnboardingModules(modules.filter((item) => item.enabled_default).map((item) => item.module_key))
       }
       if (!profile) return
-      setOnboardingRequired(profile.onboarding_required)
+      const nextPlatformRole = profile.platform_role || null
+      setPlatformRole(nextPlatformRole)
+      setOnboardingRequired(nextPlatformRole ? false : profile.onboarding_required)
       setOrganizations(profile.organizations ?? [])
+      if (nextPlatformRole) {
+        setCurrentOrganizationId(null)
+        setCurrentOrganizationID(null)
+        setWorkspaceView((current) => (current === 'overview' ? 'domain:SystemAdmin' : current))
+        return
+      }
       const storedOrgID = getCurrentOrganizationId()
       const storedOrgIsValid = !!storedOrgID && profile.organizations?.some((organization) => organization.id === storedOrgID)
       const nextOrgID = storedOrgIsValid ? storedOrgID : profile.default_organization_id || profile.organizations?.[0]?.id || null
@@ -1396,7 +1422,7 @@ export default function Home() {
   }, [token])
 
   useEffect(() => {
-    if (!token || onboardingRequired) return
+    if (!token || onboardingRequired || isPlatformAdminSession) return
     let cancelled = false
 
     Promise.all([getMetaOrgOverview(token), getMetaOrgInbox(token)])
@@ -1413,7 +1439,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [onboardingRequired, t, token])
+  }, [isPlatformAdminSession, onboardingRequired, t, token])
 
   const activeDomain = workspaceView === 'overview' ? 'MetaOrg' : workspaceView.replace('domain:', '')
 
@@ -1471,7 +1497,7 @@ export default function Home() {
   }
 
   async function loadOverview(activeToken = token) {
-    if (!activeToken) return
+    if (!activeToken || isPlatformAdminSession) return
     setOverviewLoading(true)
     setError(null)
     try {
@@ -1485,6 +1511,15 @@ export default function Home() {
     }
   }
 
+  function handleLoginSurfaceChange(surface: LoginSurface) {
+    setLoginSurface(surface)
+    setError(null)
+    setNotice(null)
+    if (surface === 'platform') {
+      setMode('login')
+    }
+  }
+
   async function handleAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setLoading(true)
@@ -1494,6 +1529,13 @@ export default function Home() {
     try {
       const response =
         mode === 'register' ? await registerUser({ name, email, password }) : await login(email, password)
+      const nextPlatformRole = response.platform_role || null
+      if (loginSurface === 'platform' && !nextPlatformRole) {
+        throw new Error(t('auth.platformRoleRequired'))
+      }
+      if (loginSurface === 'tenant' && nextPlatformRole) {
+        throw new Error(t('auth.usePlatformLogin'))
+      }
       setSession(response.token, response.user_id, response.user_type, {
         onboarding_required: response.onboarding_required,
         default_organization_id: response.default_organization_id,
@@ -1505,9 +1547,19 @@ export default function Home() {
       setToken(response.token)
       setUserId(response.user_id)
       setUserType(response.user_type)
-      setOnboardingRequired(!!response.onboarding_required)
+      setPlatformRole(nextPlatformRole)
+      setOnboardingRequired(nextPlatformRole ? false : !!response.onboarding_required)
       setOrganizations(response.organizations ?? [])
-      setCurrentOrganizationID(response.default_organization_id || response.organizations?.[0]?.id || null)
+      const nextOrgID = nextPlatformRole ? null : response.default_organization_id || response.organizations?.[0]?.id || null
+      if (nextPlatformRole) {
+        setCurrentOrganizationId(null)
+        setCurrentOrganizationID(null)
+        setBusinessNodesByDomain({})
+        setBusinessSelection(null)
+        setWorkspaceView('domain:SystemAdmin')
+      } else {
+        setCurrentOrganizationID(nextOrgID)
+      }
       if (mode === 'register') {
         setNotice(t('auth.accountCreated'))
       }
@@ -1553,6 +1605,7 @@ export default function Home() {
       const nextOrgID = result.profile.default_organization_id || result.organization.id
       setCurrentOrganizationId(nextOrgID)
       setCurrentOrganizationID(nextOrgID)
+      setPlatformRole(result.profile.platform_role || null)
       setOrganizations(result.profile.organizations ?? [])
       setOnboardingRequired(false)
       setBusinessNodesByDomain({})
@@ -1571,6 +1624,7 @@ export default function Home() {
     setToken(null)
     setUserId(null)
     setUserType(null)
+    setPlatformRole(null)
     setOnboardingRequired(false)
     setOrganizations([])
     setCurrentOrganizationID(null)
@@ -1583,6 +1637,11 @@ export default function Home() {
   }
 
   function handleOrganizationChange(organizationID: string) {
+    if (isPlatformAdminSession) {
+      setCurrentOrganizationId(null)
+      setCurrentOrganizationID(null)
+      return
+    }
     setCurrentOrganizationId(organizationID)
     setCurrentOrganizationID(organizationID)
     setBusinessNodesByDomain({})
@@ -1860,7 +1919,35 @@ export default function Home() {
                 <h1 className="text-2xl font-semibold text-white">{t('app.title')}</h1>
               </div>
             </div>
-            <div className="flex rounded-lg bg-slate-100 p-1">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleLoginSurfaceChange('tenant')}
+                title={t('auth.organizationLogin')}
+                className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition ${
+                  loginSurface === 'tenant'
+                    ? 'border-[#DF6A24] bg-[#DF6A24]/15 text-[#fffaf5]'
+                    : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-slate-500'
+                }`}
+              >
+                <Users className="h-4 w-4" />
+                {t('auth.tenantConsole')}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleLoginSurfaceChange('platform')}
+                title={t('auth.platformLogin')}
+                className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition ${
+                  loginSurface === 'platform'
+                    ? 'border-[#DF6A24] bg-[#DF6A24]/15 text-[#fffaf5]'
+                    : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-slate-500'
+                }`}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                {t('auth.platformAdmin')}
+              </button>
+            </div>
+            <div className="mt-3 flex rounded-lg bg-slate-100 p-1">
               <button
                 type="button"
                 onClick={() => setMode('login')}
@@ -1870,19 +1957,21 @@ export default function Home() {
               >
                 {t('auth.login')}
               </button>
-              <button
-                type="button"
-                onClick={() => setMode('register')}
-                className={`h-9 flex-1 rounded-md text-sm font-medium transition ${
-                  mode === 'register' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                {t('auth.register')}
-              </button>
+              {loginSurface === 'tenant' && (
+                <button
+                  type="button"
+                  onClick={() => setMode('register')}
+                  className={`h-9 flex-1 rounded-md text-sm font-medium transition ${
+                    mode === 'register' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  {t('auth.register')}
+                </button>
+              )}
             </div>
 
             <form className="mt-5 space-y-4" onSubmit={handleAuth}>
-              {mode === 'register' && (
+              {loginSurface === 'tenant' && mode === 'register' && (
                 <label className="block">
                   <span className="text-sm font-medium text-slate-700">{t('auth.name')}</span>
                   <input
@@ -2073,6 +2162,7 @@ export default function Home() {
               themeMode={themeMode}
               setThemeMode={setThemeMode}
               userType={userType}
+              platformRole={platformRole}
               organizations={organizations}
               currentOrganizationID={currentOrganizationID}
               onOrganizationChange={handleOrganizationChange}
@@ -2203,6 +2293,8 @@ export default function Home() {
                 />
               ) : workspaceView === 'domain:DeveloperTools' ? (
                 <DeveloperToolsWorkspace token={token} />
+              ) : workspaceView === 'domain:SystemAdmin' ? (
+                <SystemAdminWorkspace token={token} organizations={organizations} currentOrganizationID={currentOrganizationID} />
               ) : workspaceView === 'domain:Costing' || workspaceView === 'domain:FinanceCostAccounting' ? (
                 <CostingWorkspace token={token} />
               ) : workspaceView === 'domain:Inventory' ? (
@@ -2367,6 +2459,7 @@ function Topbar({
   themeMode,
   setThemeMode,
   userType,
+  platformRole,
   organizations,
   currentOrganizationID,
   onOrganizationChange,
@@ -2386,6 +2479,7 @@ function Topbar({
   themeMode: ThemeMode
   setThemeMode: (mode: ThemeMode) => void
   userType: string | null
+  platformRole: string | null
   organizations: SessionOrganization[]
   currentOrganizationID: string | null
   onOrganizationChange: (organizationID: string) => void
@@ -2438,7 +2532,7 @@ function Topbar({
             <span className="text-slate-600">·</span>
             <span>{activeDomain}</span>
           </div>
-          {organizations.length > 0 && (
+          {!platformRole && organizations.length > 0 && (
             <label className="hidden items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2 text-xs font-semibold text-slate-400 md:flex">
               <span>{t('organization.current')}</span>
               <select
@@ -2454,6 +2548,7 @@ function Topbar({
               </select>
             </label>
           )}
+          {platformRole && <StatusPill label={platformRole} tone="green" />}
           {userType && <StatusPill label={userType === 'ai' ? 'AI Agent' : 'Human'} tone="blue" />}
           <button
             type="button"

@@ -28,6 +28,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
@@ -71,6 +72,10 @@ func main() {
 		log.Fatalf("platform admin bootstrap failed: %v", err)
 	}
 	saasHandler := saas.NewHandler(saasSvc)
+
+	systemAdminRepo := systemadmin.NewRepository(db)
+	systemAdminSvc := systemadmin.NewService(systemAdminRepo)
+	systemAdminHandler := systemadmin.NewHandler(systemAdminSvc)
 
 	identRepo := identity.NewRepository(db)
 	identSvc := identity.NewService(identRepo, cfg.JWTSecret, identity.WithSessionProfileProvider(saasSvc))
@@ -219,6 +224,7 @@ func main() {
 		SalesHandler:         salesHandler,
 		ToolRuntimeHandler:   toolHandler,
 		SaaSHandler:          saasHandler,
+		SystemAdminHandler:   systemAdminHandler,
 		TenantResolver:       saasSvc,
 		ObservabilityHandler: obsHandler,
 		VerificationHandler:  verHandler,

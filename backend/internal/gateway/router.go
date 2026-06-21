@@ -24,6 +24,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
@@ -50,6 +51,7 @@ type Dependencies struct {
 	SalesHandler         *sales.Handler
 	ToolRuntimeHandler   *toolruntime.Handler
 	SaaSHandler          *saas.Handler
+	SystemAdminHandler   *systemadmin.Handler
 	TenantResolver       middleware.TenantResolver
 	ObservabilityHandler *observability.Handler
 	VerificationHandler  *verification.Handler
@@ -76,6 +78,9 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			r.Use(middleware.AuthMiddleware(deps.JWTSecret))
 			if deps.SaaSHandler != nil {
 				deps.SaaSHandler.RegisterAuthenticatedRoutes(r)
+			}
+			if deps.SystemAdminHandler != nil {
+				deps.SystemAdminHandler.RegisterAuthenticatedRoutes(r)
 			}
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.TenantMiddleware(deps.TenantResolver))
