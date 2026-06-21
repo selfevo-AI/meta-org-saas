@@ -375,6 +375,14 @@ const defaultMenuGroups: MenuGroup[] = [
   },
 ]
 
+const platformMenuGroups: MenuGroup[] = [
+  {
+    id: 'system',
+    label: 'SystemAdmin',
+    domains: ['SystemAdmin'],
+  },
+]
+
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const compactFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact' })
 const percentFormatter = new Intl.NumberFormat('zh-CN', {
@@ -1223,6 +1231,7 @@ export default function Home() {
   const selectedOverviewSkill = overviewSkills.find((skill) => skill.id === overviewSkillID)
   const selectedOverviewModel = overviewModels.find((model) => model.id === overviewModelID)
   const isPlatformAdminSession = !!platformRole
+  const visibleMenuGroups = isPlatformAdminSession ? platformMenuGroups : menuGroups
 
   useEffect(() => {
     let cancelled = false
@@ -1322,7 +1331,7 @@ export default function Home() {
   }, [orderedOverviewFunctions, overviewFunctionID])
 
   useEffect(() => {
-    if (!token) {
+    if (!token || isPlatformAdminSession) {
       return deferStateUpdate(() => {
         setOverviewModels([])
         setOverviewModelID('')
@@ -1343,7 +1352,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [isPlatformAdminSession, token])
 
   useEffect(() => {
     return deferStateUpdate(() => {
@@ -1358,10 +1367,12 @@ export default function Home() {
   }, [overviewModels, selectedOverviewFunction.moduleKey])
 
   useEffect(() => {
-    if (!token) {
+    if (!token || isPlatformAdminSession) {
       return deferStateUpdate(() => {
         setOverviewSkills([])
         setOverviewSkillID('')
+        setOverviewControlLoading(false)
+        setOverviewControlError('')
       })
     }
     let cancelled = false
@@ -1390,7 +1401,7 @@ export default function Home() {
       cancelled = true
       cancelDeferred()
     }
-  }, [selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType, t, token])
+  }, [isPlatformAdminSession, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType, t, token])
 
   useEffect(() => {
     if (!menuReady || typeof window === 'undefined') return
@@ -1403,7 +1414,7 @@ export default function Home() {
   }, [menuReady, themeMode])
 
   useEffect(() => {
-    if (!token) {
+    if (!token || isPlatformAdminSession) {
       return deferStateUpdate(() => setWorkspaceLayoutWidths(defaultWorkspaceLayoutWidths))
     }
     let cancelled = false
@@ -1419,7 +1430,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [isPlatformAdminSession, token])
 
   useEffect(() => {
     if (!token || onboardingRequired || isPlatformAdminSession) return
@@ -1673,6 +1684,7 @@ export default function Home() {
 
   function handleDomainDrop(event: DragEvent<HTMLElement>, groupID: string) {
     event.preventDefault()
+    if (isPlatformAdminSession) return
     const domain = event.dataTransfer.getData('text/plain') || draggedDomain
     if (!domain || ![...operationDomains, ...virtualDomains].includes(domain)) return
     setMenuGroups((current) =>
@@ -1687,11 +1699,13 @@ export default function Home() {
   }
 
   function resetMenuLayout() {
+    if (isPlatformAdminSession) return
     setMenuGroups(normalizeMenuGroups())
     setExpandedGroups(defaultExpandedGroups())
   }
 
   function persistWorkspaceLayout(widths: WorkspaceLayoutWidths) {
+    if (isPlatformAdminSession) return
     if (!token) return
     saveUserPreference(token, workspaceLayoutPreferenceKey, widths).catch(() => undefined)
   }
@@ -1784,6 +1798,7 @@ export default function Home() {
   }
 
   function openSkillImport() {
+    if (isPlatformAdminSession) return
     if (!token) return
     setSkillImportOpen(true)
     setOverviewControlError('')
@@ -1853,7 +1868,14 @@ export default function Home() {
   }
 
   function handleViewChange(view: WorkspaceView) {
-    setWorkspaceView(isPlatformAdminSession && view === 'overview' ? 'domain:SystemAdmin' : view)
+    if (isPlatformAdminSession) {
+      setWorkspaceView('domain:SystemAdmin')
+      setBusinessSelection(null)
+      setMobileMenuOpen(false)
+      setMobileBusinessOpen(false)
+      return
+    }
+    setWorkspaceView(view)
     setBusinessSelection(null)
     setMobileMenuOpen(false)
     setMobileBusinessOpen(false)
@@ -1900,7 +1922,7 @@ export default function Home() {
     }
   }
 
-  const activeGroup = menuGroups.find((group) => group.domains.includes(activeDomain))
+  const activeGroup = visibleMenuGroups.find((group) => group.domains.includes(activeDomain))
   const isOverview = effectiveWorkspaceView === 'overview'
   const showBusinessChrome = !isOverview && !isPlatformAdminSession
   const shellUsesOverviewLayout = isOverview || isPlatformAdminSession
@@ -2143,7 +2165,7 @@ export default function Home() {
           >
             <NavigationSidebar
               workspaceView={effectiveWorkspaceView}
-              groups={menuGroups}
+              groups={visibleMenuGroups}
               expandedGroups={expandedGroups}
               onViewChange={handleViewChange}
               onToggleGroup={toggleMenuGroup}
@@ -2323,14 +2345,18 @@ export default function Home() {
                 <AgentOnlyWorkspace domain={effectiveWorkspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
               )}
               <div className="xl:hidden">
-                <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />
+                {!isPlatformAdminSession && <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />}
               </div>
             </div>
           </section>
-          <WorkspaceLayoutResizer pane="status" label={t('layout.resizeStatus')} onResizeStart={handleLayoutResizeStart} className="workspace-status-resizer xl:flex" />
-          <aside className="workspace-status-pane hidden min-w-0 border-l border-slate-800 bg-[#121317] xl:block">
-            <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />
-          </aside>
+          {!isPlatformAdminSession && (
+            <>
+              <WorkspaceLayoutResizer pane="status" label={t('layout.resizeStatus')} onResizeStart={handleLayoutResizeStart} className="workspace-status-resizer xl:flex" />
+              <aside className="workspace-status-pane hidden min-w-0 border-l border-slate-800 bg-[#121317] xl:block">
+                <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />
+              </aside>
+            </>
+          )}
           {skillImportOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
               <button
