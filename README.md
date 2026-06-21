@@ -372,6 +372,15 @@ AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必�
 | `SECURITY_KERNEL_SHARED_SECRET` | 空 | 调用外部安全内核的共享密钥。 |
 | `SECURITY_KERNEL_ENFORCEMENT_MODE` | `blocking` | 安全内核执行模式；支持 `blocking` 和 `audit`。 |
 
+SaaS 模式下可通过 `META_ORG_PLATFORM_ADMIN_EMAIL` 和 `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH` 初始化平台管理员。密码哈希可在 `backend/` 下生成：
+
+```powershell
+$env:BCRYPT_PASSWORD = '<your-admin-password>'
+go run ./cmd/bcrypt-hash
+```
+
+也可以使用管道输入：`'<your-admin-password>' | go run ./cmd/bcrypt-hash -stdin`。不要提交明文密码或生产环境 hash。
+
 前端配置：
 
 | 环境变量 | 默认值 | 说明 |

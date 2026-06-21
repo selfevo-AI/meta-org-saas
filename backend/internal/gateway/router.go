@@ -22,6 +22,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/procurement"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
@@ -49,6 +50,7 @@ type Dependencies struct {
 	InventoryHandler     *inventory.Handler
 	ProcurementHandler   *procurement.Handler
 	SalesHandler         *sales.Handler
+	RuntimeHandler       *runtime.Handler
 	ToolRuntimeHandler   *toolruntime.Handler
 	SaaSHandler          *saas.Handler
 	SystemAdminHandler   *systemadmin.Handler
@@ -134,6 +136,9 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 				}
 				if deps.SalesHandler != nil {
 					deps.SalesHandler.RegisterRoutes(r)
+				}
+				if deps.RuntimeHandler != nil {
+					deps.RuntimeHandler.RegisterRoutes(r)
 				}
 				if deps.ToolRuntimeHandler != nil {
 					deps.ToolRuntimeHandler.RegisterRoutes(r)

@@ -26,6 +26,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/procurement"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
+	domainruntime "github.com/selfevo-AI/meta-org/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
@@ -170,6 +171,10 @@ func main() {
 	)
 	salesHandler := sales.NewHandler(salesSvc)
 
+	runtimeRepo := domainruntime.NewRepository(db)
+	runtimeSvc := domainruntime.NewService(runtimeRepo)
+	runtimeHandler := domainruntime.NewHandler(runtimeSvc)
+
 	toolRepo := toolruntime.NewRepository(db)
 	toolSvc := toolruntime.NewService(toolRepo, govSvc, toolruntime.InternalTools(projectSvc, financeSvc, evoSvc), toolruntime.WithObservability(obsSvc), toolruntime.WithSecurityKernel(securityKernel))
 	toolHandler := toolruntime.NewHandler(toolSvc)
@@ -222,6 +227,7 @@ func main() {
 		InventoryHandler:     inventoryHandler,
 		ProcurementHandler:   procurementHandler,
 		SalesHandler:         salesHandler,
+		RuntimeHandler:       runtimeHandler,
 		ToolRuntimeHandler:   toolHandler,
 		SaaSHandler:          saasHandler,
 		SystemAdminHandler:   systemAdminHandler,
