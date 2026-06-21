@@ -14,6 +14,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/industry"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/inventory"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaorg"
@@ -49,6 +50,7 @@ type Dependencies struct {
 	ProjectHandler       *project.Handler
 	FinanceHandler       *finance.Handler
 	InventoryHandler     *inventory.Handler
+	IndustryHandler      *industry.Handler
 	ProcurementHandler   *procurement.Handler
 	SalesHandler         *sales.Handler
 	RuntimeHandler       *runtime.Handler
@@ -85,6 +87,9 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			}
 			if deps.SystemAdminHandler != nil {
 				deps.SystemAdminHandler.RegisterAuthenticatedRoutes(r)
+			}
+			if deps.IndustryHandler != nil {
+				deps.IndustryHandler.RegisterAuthenticatedRoutes(r)
 			}
 			registerPlatformAssistantRoutes(r, deps)
 			registerPlatformAdminRoutes(r, deps)

@@ -49,6 +49,26 @@ func TestUpdateOrganizationModulesRequiresSecurityKernelAuthorization(t *testing
 	}
 }
 
+func TestUpdateOrganizationModulesRequiresIndustryPolicy(t *testing.T) {
+	userID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{membership: &membershipRecord{ID: uuid.New(), OrganizationID: orgID, AuthorityTier: AuthorityOwner}}
+	policy := &fakeIndustryPolicy{err: ErrValidation}
+	svc := NewService(repo, ModeSaaS, WithIndustryPolicy(policy))
+
+	_, err := svc.UpdateOrganizationModules(context.Background(), userID, orgID, UpdateOrganizationModulesInput{EnabledModules: []string{"finance"}})
+
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("UpdateOrganizationModules error = %v, want ErrValidation", err)
+	}
+	if repo.updatedModules {
+		t.Fatalf("modules updated after industry policy denial")
+	}
+	if len(policy.modules) != 1 || policy.modules[0] != "finance" {
+		t.Fatalf("industry policy modules = %#v, want [finance]", policy.modules)
+	}
+}
+
 func TestCloseOrganizationRequiresPlatformAdmin(t *testing.T) {
 	actorID := uuid.New()
 	orgID := uuid.New()
@@ -216,4 +236,14 @@ type fakeSecurityKernel struct {
 func (f *fakeSecurityKernel) Authorize(_ context.Context, request securitykernel.Request) (securitykernel.Decision, error) {
 	f.lastRequest = request
 	return f.decision, f.err
+}
+
+type fakeIndustryPolicy struct {
+	modules []string
+	err     error
+}
+
+func (f *fakeIndustryPolicy) ValidateOrganizationModules(_ context.Context, _ uuid.UUID, modules []string) error {
+	f.modules = modules
+	return f.err
 }

@@ -62,6 +62,85 @@ export async function listSaaSModules(token: string): Promise<SaaSModule[]> {
   return apiRequest<SaaSModule[]>('/modules', { token })
 }
 
+export async function listIndustries(token: string): Promise<Industry[]> {
+  return apiRequest<Industry[]>('/industries/catalog', { token })
+}
+
+export async function listIndustryPackages(token: string, industryKey: string, limit = 100): Promise<IndustryPackage[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<IndustryPackage[]>(`/platform/admin/industries/${encodeURIComponent(industryKey)}/packages${query}`, { token })
+}
+
+export async function applyIndustryPackageToOrganization(
+  token: string,
+  packageID: string,
+  organizationID: string,
+  moduleKeys: string[],
+): Promise<OrganizationIndustryAdoption> {
+  return apiRequest<OrganizationIndustryAdoption>(
+    `/platform/admin/industry-packages/${encodeURIComponent(packageID)}/apply-to-organization/${encodeURIComponent(organizationID)}`,
+    {
+      method: 'POST',
+      token,
+      body: { module_keys: moduleKeys },
+    },
+  )
+}
+
+export async function getOrganizationIndustry(token: string, organizationID: string): Promise<OrganizationIndustryAdoption> {
+  return apiRequest<OrganizationIndustryAdoption>(`/organizations/${encodeURIComponent(organizationID)}/industry`, {
+    token,
+    organizationId: organizationID,
+  })
+}
+
+export async function listIndustryExtensions(token: string, organizationID: string, limit = 100): Promise<IndustryExtension[]> {
+  const params = new URLSearchParams({ organization_id: organizationID })
+  if (limit > 0) params.set('limit', String(limit))
+  return apiRequest<IndustryExtension[]>(`/industry/extensions?${params.toString()}`, {
+    token,
+    organizationId: organizationID,
+  })
+}
+
+export async function createIndustryExtension(token: string, input: CreateIndustryExtensionInput): Promise<IndustryExtension> {
+  return apiRequest<IndustryExtension>('/industry/extensions', {
+    method: 'POST',
+    token,
+    organizationId: input.organization_id,
+    body: input,
+  })
+}
+
+export async function submitIndustryExtensionPublication(token: string, extensionID: string, reason = ''): Promise<IndustryPublicationRequest> {
+  return apiRequest<IndustryPublicationRequest>(`/industry/extensions/${encodeURIComponent(extensionID)}/submit-publication`, {
+    method: 'POST',
+    token,
+    body: { reason },
+  })
+}
+
+export async function listIndustryPublicationRequests(token: string, limit = 100): Promise<IndustryPublicationRequest[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<IndustryPublicationRequest[]>(`/platform/admin/industry-publication-requests${query}`, { token })
+}
+
+export async function reviewIndustryPublicationRequest(
+  token: string,
+  requestID: string,
+  action: 'approve' | 'reject',
+  reason = '',
+): Promise<IndustryPublicationRequest> {
+  return apiRequest<IndustryPublicationRequest>(
+    `/platform/admin/industry-publication-requests/${encodeURIComponent(requestID)}/${action}`,
+    {
+      method: 'POST',
+      token,
+      body: { reason },
+    },
+  )
+}
+
 export async function listRuntimeOperations(token: string): Promise<ApiOperation[]> {
   return apiRequest<ApiOperation[]>('/runtime/operations', { token })
 }
@@ -1004,6 +1083,96 @@ export interface SaaSModule {
   enabled_default: boolean
   license_scope: 'mit' | 'commercial'
   metadata: Record<string, unknown>
+}
+
+export interface Industry {
+  industry_key: string
+  name: string
+  description?: string
+  status: string
+  metadata: Record<string, unknown>
+  created_by?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface IndustryPackageAsset {
+  id?: string
+  package_id?: string
+  asset_key: string
+  asset_type: string
+  payload: Record<string, unknown>
+  metadata?: Record<string, unknown>
+}
+
+export interface IndustryPackage {
+  id: string
+  industry_key: string
+  package_key: string
+  version: number
+  name: string
+  description?: string
+  status: string
+  assets: IndustryPackageAsset[]
+  metadata: Record<string, unknown>
+  created_by?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface OrganizationIndustryAdoption {
+  organization_id: string
+  industry_key: string
+  package_id: string
+  primary: boolean
+  enabled_modules: string[]
+  status: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface IndustryExtension {
+  id: string
+  organization_id: string
+  industry_key: string
+  package_id?: string
+  extension_key: string
+  name: string
+  description?: string
+  status: string
+  assets: IndustryPackageAsset[]
+  metadata: Record<string, unknown>
+  created_by?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateIndustryExtensionInput {
+  organization_id: string
+  industry_key: string
+  package_id?: string
+  extension_key: string
+  name: string
+  description?: string
+  assets: IndustryPackageAsset[]
+  metadata?: Record<string, unknown>
+}
+
+export interface IndustryPublicationRequest {
+  id: string
+  extension_id: string
+  source_organization_id: string
+  industry_key: string
+  status: string
+  reason?: string
+  review_reason?: string
+  requested_by?: string
+  reviewed_by?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  reviewed_at?: string
 }
 
 export interface OrganizationSubscription {

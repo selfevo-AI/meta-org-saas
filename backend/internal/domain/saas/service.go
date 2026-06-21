@@ -26,9 +26,14 @@ type Service struct {
 	repo           repository
 	mode           string
 	securityKernel securitykernel.Client
+	industryPolicy industryPolicy
 }
 
 type ServiceOption func(*Service)
+
+type industryPolicy interface {
+	ValidateOrganizationModules(context.Context, uuid.UUID, []string) error
+}
 
 type repository interface {
 	BootstrapPlatformAdmin(context.Context, string, string) error
@@ -54,6 +59,12 @@ type repository interface {
 func WithSecurityKernel(client securitykernel.Client) ServiceOption {
 	return func(s *Service) {
 		s.securityKernel = client
+	}
+}
+
+func WithIndustryPolicy(policy industryPolicy) ServiceOption {
+	return func(s *Service) {
+		s.industryPolicy = policy
 	}
 }
 
@@ -205,6 +216,11 @@ func (s *Service) UpdateOrganizationModules(ctx context.Context, actorID uuid.UU
 		return nil, err
 	}
 	modules := normalizeModuleKeys(input.EnabledModules)
+	if s.industryPolicy != nil {
+		if err := s.industryPolicy.ValidateOrganizationModules(ctx, orgID, modules); err != nil {
+			return nil, fmt.Errorf("%w: industry module policy denied update: %v", ErrValidation, err)
+		}
+	}
 	authorityTier, isPlatformAdmin := s.actorAuthority(ctx, actorID, orgID)
 	if err := s.authorizeWithKernel(ctx, securitykernel.Request{
 		Actor: securitykernel.Actor{

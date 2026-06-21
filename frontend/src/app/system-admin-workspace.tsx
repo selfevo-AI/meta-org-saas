@@ -21,20 +21,34 @@ import { AIAssistant } from './ai-assistant'
 import { ApiWorkbench } from './api-workbench'
 import {
   applySchemaChange,
+  applyIndustryPackageToOrganization,
   approveSchemaChange,
   closePlatformOrganization,
+  createIndustryExtension,
   createOrganizationSchemaChange,
   createOrganizationInvitation,
   getPlatformPermissionProfile,
   exportOrganizationSchema,
+  getOrganizationIndustry,
   getOrganizationEntitlements,
   getOrganizationSubscription,
+  listIndustries,
+  listIndustryExtensions,
+  listIndustryPackages,
+  listIndustryPublicationRequests,
   listOrganizationInvitations,
   listOrganizationSchemaTargets,
   listPlatformDetails,
   listPlatformMasters,
   listPlatformOrganizations,
   listSaaSModules,
+  reviewIndustryPublicationRequest,
+  submitIndustryExtensionPublication,
+  type Industry,
+  type IndustryExtension,
+  type IndustryPackage,
+  type IndustryPublicationRequest,
+  type OrganizationIndustryAdoption,
   updateOrganizationModules,
   type OrganizationInvitation,
   type OrganizationSubscription,
@@ -56,11 +70,12 @@ interface SystemAdminWorkspaceProps {
   currentOrganizationID?: string | null
 }
 
-type TabID = 'assistant' | 'saas' | 'features' | 'permissions' | 'runtime' | 'catalog' | 'targets' | 'schema'
+type TabID = 'assistant' | 'saas' | 'industry' | 'features' | 'permissions' | 'runtime' | 'catalog' | 'targets' | 'schema'
 
 const tabs: Array<{ id: TabID; label: string; icon: typeof Database; permission?: string }> = [
   { id: 'assistant', label: 'systemAdmin.platformAssistant', icon: Bot, permission: 'assistant.platform.run' },
   { id: 'saas', label: 'systemAdmin.saasOrganizations', icon: Users, permission: 'platform.read' },
+  { id: 'industry', label: 'systemAdmin.industries', icon: Layers3, permission: 'platform.read' },
   { id: 'features', label: 'systemAdmin.platformFeatures', icon: ShieldCheck, permission: 'platform.read' },
   { id: 'permissions', label: 'systemAdmin.permissions', icon: ShieldCheck, permission: 'platform.read' },
   { id: 'runtime', label: 'systemAdmin.apiWorkbench', icon: Table2, permission: 'runtime.manage' },
@@ -127,6 +142,18 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [platformPermissions, setPlatformPermissions] = useState<PlatformPermissionProfile | null>(null)
   const [platformOrganizations, setPlatformOrganizations] = useState<SessionOrganization[]>([])
   const [saasModules, setSaaSModules] = useState<SaaSModule[]>([])
+  const [industries, setIndustries] = useState<Industry[]>([])
+  const [industryPackages, setIndustryPackages] = useState<IndustryPackage[]>([])
+  const [industryAdoption, setIndustryAdoption] = useState<OrganizationIndustryAdoption | null>(null)
+  const [industryExtensions, setIndustryExtensions] = useState<IndustryExtension[]>([])
+  const [publicationRequests, setPublicationRequests] = useState<IndustryPublicationRequest[]>([])
+  const [selectedIndustryKey, setSelectedIndustryKey] = useState('general')
+  const [selectedPackageID, setSelectedPackageID] = useState('')
+  const [industryModuleDraft, setIndustryModuleDraft] = useState<string[]>([])
+  const [extensionKey, setExtensionKey] = useState('')
+  const [extensionName, setExtensionName] = useState('')
+  const [extensionModuleKey, setExtensionModuleKey] = useState('')
+  const [publicationReason, setPublicationReason] = useState('')
   const [subscription, setSubscription] = useState<OrganizationSubscription | null>(null)
   const [entitlements, setEntitlements] = useState<Record<string, boolean>>({})
   const [moduleDraft, setModuleDraft] = useState<string[]>([])
@@ -179,6 +206,18 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     () => targets.find((item) => item.organization_id === activeOrganizationID) ?? null,
     [activeOrganizationID, targets],
   )
+  const selectedIndustryPackage = useMemo(
+    () => industryPackages.find((item) => item.id === selectedPackageID) ?? industryPackages[0] ?? null,
+    [industryPackages, selectedPackageID],
+  )
+  const selectedIndustryPackageModules = useMemo(
+    () =>
+      selectedIndustryPackage?.assets
+        .filter((asset) => asset.asset_type === 'module')
+        .map((asset) => String(asset.payload.module_key || ''))
+        .filter(Boolean) ?? [],
+    [selectedIndustryPackage],
+  )
   const canPlatform = useCallback(
     (permission: string) => !platformPermissions || !!platformPermissions.permissions[permission],
     [platformPermissions],
@@ -194,6 +233,12 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
 
   function toggleModuleDraft(moduleKeyValue: string) {
     setModuleDraft((current) =>
+      current.includes(moduleKeyValue) ? current.filter((item) => item !== moduleKeyValue) : [...current, moduleKeyValue],
+    )
+  }
+
+  function toggleIndustryModuleDraft(moduleKeyValue: string) {
+    setIndustryModuleDraft((current) =>
       current.includes(moduleKeyValue) ? current.filter((item) => item !== moduleKeyValue) : [...current, moduleKeyValue],
     )
   }
@@ -255,6 +300,44 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }
   }, [activeOrganizationID, canPlatform, selectedOrganization?.status, t, token])
 
+  const loadIndustryManagement = useCallback(async () => {
+    if (!canPlatform('platform.read')) return
+    setLoading(true)
+    setError('')
+    try {
+      const industryItems = await listIndustries(token)
+      setIndustries(industryItems)
+      const nextIndustryKey = selectedIndustryKey || industryItems[0]?.industry_key || 'general'
+      setSelectedIndustryKey(nextIndustryKey)
+      const [packageItems, requestItems] = await Promise.all([
+        listIndustryPackages(token, nextIndustryKey, 100),
+        listIndustryPublicationRequests(token, 100),
+      ])
+      setIndustryPackages(packageItems)
+      const nextPackage = packageItems.find((item) => item.id === selectedPackageID) ?? packageItems[0] ?? null
+      setSelectedPackageID(nextPackage?.id || '')
+      const packageModules =
+        nextPackage?.assets
+          .filter((asset) => asset.asset_type === 'module')
+          .map((asset) => String(asset.payload.module_key || ''))
+          .filter(Boolean) ?? []
+      setIndustryModuleDraft(packageModules)
+      setPublicationRequests(requestItems)
+      if (activeOrganizationID) {
+        const [adoptionResult, extensionItems] = await Promise.allSettled([
+          getOrganizationIndustry(token, activeOrganizationID),
+          listIndustryExtensions(token, activeOrganizationID, 100),
+        ])
+        setIndustryAdoption(adoptionResult.status === 'fulfilled' ? adoptionResult.value : null)
+        setIndustryExtensions(extensionItems.status === 'fulfilled' ? extensionItems.value : [])
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }, [activeOrganizationID, canPlatform, selectedIndustryKey, selectedPackageID, t, token])
+
   const loadCatalog = useCallback(async () => {
     if (!canPlatform('platform.read')) return
     setLoading(true)
@@ -294,12 +377,20 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }, [loadPlatformPermissions])
 
   useEffect(() => {
-    if (!effectiveActiveTab || !['saas', 'features', 'schema', 'targets'].includes(effectiveActiveTab)) return
+    if (!effectiveActiveTab || !['saas', 'industry', 'features', 'schema', 'targets'].includes(effectiveActiveTab)) return
     const timer = window.setTimeout(() => {
       void loadSaaSManagement()
     }, 0)
     return () => window.clearTimeout(timer)
   }, [effectiveActiveTab, loadSaaSManagement])
+
+  useEffect(() => {
+    if (effectiveActiveTab !== 'industry') return
+    const timer = window.setTimeout(() => {
+      void loadIndustryManagement()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadIndustryManagement])
 
   useEffect(() => {
     if (!effectiveActiveTab || !['saas', 'features'].includes(effectiveActiveTab)) return
@@ -377,6 +468,58 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setEntitlements(updated)
       setModuleDraft(Object.entries(updated).filter(([, enabled]) => enabled).map(([key]) => key))
     }, 'systemAdmin.modulesUpdated')
+  }
+
+  async function applySelectedIndustryPackage() {
+    if (!activeOrganizationID || !selectedIndustryPackage) return
+    await run(async () => {
+      const adoption = await applyIndustryPackageToOrganization(token, selectedIndustryPackage.id, activeOrganizationID, industryModuleDraft)
+      setIndustryAdoption(adoption)
+      await loadIndustryManagement()
+    }, 'systemAdmin.industryApplied')
+  }
+
+  async function createPrivateIndustryExtension() {
+    if (!activeOrganizationID || !selectedIndustryPackage || !extensionKey.trim() || !extensionName.trim() || !extensionModuleKey.trim()) return
+    await run(async () => {
+      await createIndustryExtension(token, {
+        organization_id: activeOrganizationID,
+        industry_key: selectedIndustryKey,
+        package_id: selectedIndustryPackage.id,
+        extension_key: extensionKey.trim(),
+        name: extensionName.trim(),
+        assets: [
+          {
+            asset_key: `${extensionModuleKey.trim()}-module`,
+            asset_type: 'module',
+            payload: {
+              module_key: extensionModuleKey.trim(),
+              display_name: extensionName.trim(),
+            },
+          },
+        ],
+      })
+      setExtensionKey('')
+      setExtensionName('')
+      setExtensionModuleKey('')
+      await loadIndustryManagement()
+    }, 'systemAdmin.extensionCreated')
+  }
+
+  async function submitExtensionPublication(extensionID: string) {
+    await run(async () => {
+      await submitIndustryExtensionPublication(token, extensionID, publicationReason)
+      setPublicationReason('')
+      await loadIndustryManagement()
+    }, 'systemAdmin.publicationSubmitted')
+  }
+
+  async function reviewPublication(requestID: string, action: 'approve' | 'reject') {
+    await run(async () => {
+      await reviewIndustryPublicationRequest(token, requestID, action, publicationReason)
+      setPublicationReason('')
+      await loadIndustryManagement()
+    }, action === 'approve' ? 'systemAdmin.publicationApproved' : 'systemAdmin.publicationRejected')
   }
 
   async function submitInvitation() {
@@ -514,6 +657,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             void loadPlatformPermissions()
             void loadSaaSManagement()
             void loadOrganizationSaaSDetails()
+            void loadIndustryManagement()
             void loadCatalog()
             void loadTargets()
           }}
@@ -753,6 +897,244 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               </div>
             </div>
           </section>
+        </div>
+      )}
+
+      {effectiveActiveTab === 'industry' && (
+        <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.industries')}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.industrySummary')}</p>
+              </div>
+              <Layers3 className="h-5 w-5 text-slate-500" />
+            </div>
+            <div className="mt-4 space-y-3">
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.industry')}</span>
+                <select
+                  value={selectedIndustryKey}
+                  onChange={(event) => {
+                    setSelectedIndustryKey(event.target.value)
+                    setSelectedPackageID('')
+                  }}
+                  className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                >
+                  {industries.map((item) => (
+                    <option key={item.industry_key} value={item.industry_key}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.industryPackage')}</span>
+                <select
+                  value={selectedPackageID}
+                  onChange={(event) => {
+                    const nextID = event.target.value
+                    setSelectedPackageID(nextID)
+                    const nextPackage = industryPackages.find((item) => item.id === nextID)
+                    setIndustryModuleDraft(
+                      nextPackage?.assets
+                        .filter((asset) => asset.asset_type === 'module')
+                        .map((asset) => String(asset.payload.module_key || ''))
+                        .filter(Boolean) ?? [],
+                    )
+                  }}
+                  className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
+                >
+                  {industryPackages.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} v{item.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <Metric label={t('systemAdmin.packageAssets')} value={String(selectedIndustryPackage?.assets.length ?? 0)} />
+                <Metric label={t('systemAdmin.packageModules')} value={String(selectedIndustryPackageModules.length)} />
+              </div>
+              <div className="space-y-2">
+                <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.enabledModules')}</span>
+                {selectedIndustryPackageModules.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">{t('systemAdmin.noPackages')}</p>
+                ) : (
+                  selectedIndustryPackageModules.map((moduleKeyValue) => (
+                    <label key={moduleKeyValue} className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={industryModuleDraft.includes(moduleKeyValue)}
+                        onChange={() => toggleIndustryModuleDraft(moduleKeyValue)}
+                      />
+                      <span className="font-medium text-slate-800">{t(`saas.module.${moduleKeyValue}`)}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void applySelectedIndustryPackage()}
+                disabled={!activeOrganizationID || !selectedIndustryPackage || loading}
+                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Check className="h-4 w-4" />
+                {t('systemAdmin.applyIndustry')}
+              </button>
+            </div>
+          </section>
+
+          <div className="space-y-5">
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.currentIndustry')}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{selectedOrganization?.name || t('common.notSelected')}</p>
+                </div>
+                <StatusBadge label={industryAdoption?.status || 'inactive'} />
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <Metric label={t('systemAdmin.industry')} value={industryAdoption?.industry_key || t('common.notSelected')} />
+                <Metric label={t('systemAdmin.packageId')} value={industryAdoption?.package_id || t('common.notSelected')} />
+                <Metric label={t('systemAdmin.enabledModules')} value={String(industryAdoption?.enabled_modules?.length ?? 0)} />
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.privateExtensions')}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.privateExtensionsSummary')}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void createPrivateIndustryExtension()}
+                  disabled={!extensionKey.trim() || !extensionName.trim() || !extensionModuleKey.trim() || loading}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Send className="h-4 w-4" />
+                  {t('systemAdmin.createExtension')}
+                </button>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <input
+                  value={extensionKey}
+                  onChange={(event) => setExtensionKey(event.target.value)}
+                  placeholder={t('systemAdmin.extensionKey')}
+                  className="h-10 rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <input
+                  value={extensionName}
+                  onChange={(event) => setExtensionName(event.target.value)}
+                  placeholder={t('systemAdmin.extensionName')}
+                  className="h-10 rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <input
+                  value={extensionModuleKey}
+                  onChange={(event) => setExtensionModuleKey(event.target.value)}
+                  placeholder={t('systemAdmin.extensionModuleKey')}
+                  className="h-10 rounded-md border border-slate-300 px-3 text-sm"
+                />
+              </div>
+              <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">{t('common.name')}</th>
+                      <th className="px-3 py-2">{t('systemAdmin.industry')}</th>
+                      <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                      <th className="px-3 py-2">{t('table.actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {industryExtensions.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-3 py-3 font-medium text-slate-900">{item.name}</td>
+                        <td className="px-3 py-3 font-mono text-xs text-slate-600">{item.industry_key}</td>
+                        <td className="px-3 py-3"><StatusBadge label={item.status} /></td>
+                        <td className="px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={() => void submitExtensionPublication(item.id)}
+                            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            {t('systemAdmin.submitPublication')}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {industryExtensions.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-500">{t('systemAdmin.noExtensions')}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.publicationRequests')}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.publicationRequestsSummary')}</p>
+                </div>
+                <input
+                  value={publicationReason}
+                  onChange={(event) => setPublicationReason(event.target.value)}
+                  placeholder={t('systemAdmin.reasonPlaceholder')}
+                  className="h-10 w-full rounded-md border border-slate-300 px-3 text-sm md:w-80"
+                />
+              </div>
+              <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">{t('systemAdmin.industry')}</th>
+                      <th className="px-3 py-2">{t('systemAdmin.organization')}</th>
+                      <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                      <th className="px-3 py-2">{t('table.actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {publicationRequests.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-3 py-3 font-medium text-slate-900">{item.industry_key}</td>
+                        <td className="px-3 py-3 font-mono text-xs text-slate-600">{organizationByID[item.source_organization_id] || item.source_organization_id}</td>
+                        <td className="px-3 py-3"><StatusBadge label={item.status} /></td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void reviewPublication(item.id, 'approve')}
+                              disabled={item.status !== 'pending'}
+                              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {t('systemAdmin.approve')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void reviewPublication(item.id, 'reject')}
+                              disabled={item.status !== 'pending'}
+                              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {t('systemAdmin.reject')}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {publicationRequests.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-6 text-center text-sm text-slate-500">{t('systemAdmin.noPublicationRequests')}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
         </div>
       )}
 
