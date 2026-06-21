@@ -1572,7 +1572,8 @@ export default function Home() {
       }
       setPassword('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('auth.failed'))
+      const message = err instanceof Error ? err.message : ''
+      setError(message === 'email already registered' ? t('auth.emailAlreadyRegistered') : message || t('auth.failed'))
     } finally {
       setLoading(false)
     }

@@ -78,12 +78,14 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		status := http.StatusInternalServerError
+		message := err.Error()
 		if errors.Is(err, ErrValidation) {
 			status = http.StatusBadRequest
-		} else if dberrors.IsUniqueViolation(err) {
+		} else if errors.Is(err, ErrEmailAlreadyRegistered) || dberrors.IsUniqueViolation(err) {
 			status = http.StatusConflict
+			message = ErrEmailAlreadyRegistered.Error()
 		}
-		writeJSON(w, status, map[string]string{"error": err.Error()})
+		writeJSON(w, status, map[string]string{"error": message})
 		return
 	}
 

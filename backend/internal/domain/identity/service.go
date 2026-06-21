@@ -13,15 +13,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/dberrors"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrUserNotFound       = errors.New("user not found")
-	ErrAgentNotFound      = errors.New("agent not found")
-	ErrValidation         = errors.New("validation error")
+	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrAgentNotFound          = errors.New("agent not found")
+	ErrValidation             = errors.New("validation error")
+	ErrEmailAlreadyRegistered = errors.New("email already registered")
 )
 
 type UserRepository interface {
@@ -175,6 +177,9 @@ func (s *Service) RegisterUser(ctx context.Context, input CreateUserInput) (*Aut
 	}
 	user, err := s.repo.CreateUser(ctx, input)
 	if err != nil {
+		if dberrors.IsUniqueViolation(err) {
+			return nil, ErrEmailAlreadyRegistered
+		}
 		return nil, err
 	}
 	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name)

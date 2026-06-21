@@ -47,6 +47,7 @@ const requiredI18nKeys = [
   'auth.platformLogin',
   'auth.platformRoleRequired',
   'auth.usePlatformLogin',
+  'auth.emailAlreadyRegistered',
   'SystemAdmin',
   'systemAdmin.title',
   'systemAdmin.platformCatalog',
@@ -95,6 +96,7 @@ const requiredPageSnippets = [
   "setWorkspaceView('domain:SystemAdmin')",
   "setCurrentOrganizationId(null)",
   "t('auth.platformAdmin')",
+  "t('auth.emailAlreadyRegistered')",
 ]
 
 const requiredWorkspaceSnippets = [
