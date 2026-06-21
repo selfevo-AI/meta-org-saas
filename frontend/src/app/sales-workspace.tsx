@@ -34,13 +34,18 @@ import {
   SelectInput,
   StatusPill,
   SubmitButton,
+  SupplyChainDocumentDetail,
   TextInput,
   documentKey,
   money,
+  quantity,
+  type SupplyChainSelection,
 } from './supply-chain-ui'
 
 interface SalesWorkspaceProps {
   token: string
+  currentSupplyChainFunctionID?: string
+  externalSelection?: SupplyChainSelection | null
 }
 
 type TabID = 'quotations' | 'orders' | 'shipments' | 'returns'
@@ -52,7 +57,7 @@ const tabs: Array<{ id: TabID; label: string; icon: typeof FileText }> = [
   { id: 'returns', label: 'sales.returns', icon: RotateCcw },
 ]
 
-export function SalesWorkspace({ token }: SalesWorkspaceProps) {
+export function SalesWorkspace({ token, currentSupplyChainFunctionID, externalSelection }: SalesWorkspaceProps) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<TabID>('quotations')
   const [partners, setPartners] = useState<BusinessPartner[]>([])
@@ -120,6 +125,14 @@ export function SalesWorkspace({ token }: SalesWorkspaceProps) {
   const quotationLabels = useMemo(() => Object.fromEntries(quotations.map((item) => [item.id, item.quotation_number || documentKey(item)])), [quotations])
   const orderLabels = useMemo(() => Object.fromEntries(orders.map((item) => [item.id, item.order_number || documentKey(item)])), [orders])
   const shipmentLabels = useMemo(() => Object.fromEntries(shipments.map((item) => [item.id, item.shipment_number || documentKey(item)])), [shipments])
+  const selectedDocument = useMemo(
+    () => selectedSalesDocument(externalSelection, { quotations, orders, shipments, returns }),
+    [externalSelection, orders, quotations, returns, shipments],
+  )
+  const detailTitle = selectedDocument ? salesDocumentTitle(selectedDocument) : ''
+  const detailActions = selectedDocument ? salesDetailActions(selectedDocument, token, run) : null
+  const lineColumns = salesLineColumns()
+  const lineRows = salesLineRows(selectedDocument?.document, itemLabels, warehouseLabels)
 
   const loadSales = useCallback(async () => {
     setLoading(true)
@@ -187,6 +200,13 @@ export function SalesWorkspace({ token }: SalesWorkspaceProps) {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [loadSales])
+
+  useEffect(() => {
+    const nextTab = salesTabForSelection(externalSelection?.targetType) ?? salesTabForFunction(currentSupplyChainFunctionID)
+    if (!nextTab) return
+    const timer = window.setTimeout(() => setActiveTab(nextTab), 0)
+    return () => window.clearTimeout(timer)
+  }, [currentSupplyChainFunctionID, externalSelection?.targetType])
 
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true)
@@ -339,6 +359,20 @@ export function SalesWorkspace({ token }: SalesWorkspaceProps) {
         </p>
       )}
 
+      {selectedDocument && (
+        <SupplyChainDocumentDetail
+          title={detailTitle}
+          subtitle={t('supplyChain.selectedDocument')}
+          mainFields={salesMainFields(selectedDocument.document, selectedDocument.targetType)}
+          lineColumns={lineColumns}
+          lineRows={lineRows}
+          actions={detailActions}
+        />
+      )}
+
+      {!selectedDocument && (
+        <>
+
       {activeTab === 'quotations' && (
         <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
           <Panel title="sales.quotations">
@@ -452,6 +486,108 @@ export function SalesWorkspace({ token }: SalesWorkspaceProps) {
           </Panel>
         </div>
       )}
+        </>
+      )}
     </div>
   )
+}
+
+type SalesDocumentSelection = {
+  targetType: string
+  document: Record<string, any>
+}
+
+function salesTabForSelection(targetType?: string): TabID | null {
+  const tabsByType: Record<string, TabID> = {
+    sales_quotation: 'quotations',
+    sales_order: 'orders',
+    sales_shipment: 'shipments',
+    sales_return: 'returns',
+  }
+  return targetType ? tabsByType[targetType] ?? null : null
+}
+
+function salesTabForFunction(functionID?: string): TabID | null {
+  const tabsByFunction: Record<string, TabID> = {
+    'sales:quotations': 'quotations',
+    'sales:orders': 'orders',
+    'sales:shipments': 'shipments',
+    'sales:returns': 'returns',
+  }
+  return functionID ? tabsByFunction[functionID] ?? null : null
+}
+
+function selectedSalesDocument(
+  selection: SupplyChainSelection | null | undefined,
+  data: {
+    quotations: SalesQuotation[]
+    orders: SalesOrder[]
+    shipments: SalesShipment[]
+    returns: SalesReturn[]
+  },
+): SalesDocumentSelection | null {
+  if (!selection) return null
+  const byType: Record<string, Array<Record<string, any>>> = {
+    sales_quotation: data.quotations,
+    sales_order: data.orders,
+    sales_shipment: data.shipments,
+    sales_return: data.returns,
+  }
+  const document = byType[selection.targetType]?.find((item) => item.id === selection.targetID) ?? selection.record
+  return document ? { targetType: selection.targetType, document: document as Record<string, any> } : null
+}
+
+function salesDocumentTitle(selection: SalesDocumentSelection): string {
+  const document = selection.document
+  return String(document.quotation_number || document.order_number || document.shipment_number || document.return_number || document.master_key || document.id || '')
+}
+
+function salesMainFields(document: Record<string, any>, targetType: string): Array<{ label: string; value: any }> {
+  return [
+    { label: 'sales.documentNumber', value: document.quotation_number || document.order_number || document.shipment_number || document.return_number || document.master_key },
+    { label: 'finance.customer', value: document.customer_name || document.customer_id },
+    { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+    { label: 'sales.approvalStatus', value: <StatusPill label={document.approval_status || (targetType === 'sales_quotation' ? 'not_required' : '')} /> },
+    { label: 'finance.amount', value: money(document.total_amount, document.currency) },
+    { label: 'finance.currency', value: document.currency },
+    { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+    { label: 'businessStatus.code', value: document.id },
+  ]
+}
+
+function salesLineColumns(): string[] {
+  return ['inventory.item', 'inventory.warehouse', 'inventory.quantity', 'sales.unitPrice', 'finance.taxAmount', 'finance.amount']
+}
+
+function salesLineRows(document: Record<string, any> | undefined, itemLabels: Record<string, string>, warehouseLabels: Record<string, string>): any[][] {
+  const lines = Array.isArray(document?.lines) ? document.lines : []
+  return lines.map((line: Record<string, any>) => [
+    itemLabels[line.item_id] ?? line.item_id,
+    warehouseLabels[line.warehouse_id] ?? line.warehouse_id,
+    quantity(line.quantity),
+    money(line.unit_price, document?.currency),
+    money(line.tax_amount, document?.currency),
+    money(line.total_amount ?? line.amount, document?.currency),
+  ])
+}
+
+function salesDetailActions(
+  selection: SalesDocumentSelection,
+  token: string,
+  run: (action: () => Promise<void>, success: string) => Promise<void>,
+) {
+  const document = selection.document
+  if (!document.id) return null
+  if (selection.targetType === 'sales_order') {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton label="sales.confirm" onClick={() => void run(() => confirmSalesOrder(token, document.id).then(() => undefined), 'sales.orderConfirmed')} disabled={document.status === 'confirmed' || document.status === 'posted'} icon={<Send className="h-3.5 w-3.5" />} />
+        <ActionButton label="sales.approve" onClick={() => void run(() => approveSalesOrder(token, document.id).then(() => undefined), 'sales.orderApproved')} disabled={document.status === 'approved'} tone="green" icon={<CheckCircle2 className="h-3.5 w-3.5" />} />
+      </div>
+    )
+  }
+  if (selection.targetType === 'sales_shipment') {
+    return <ActionButton label="sales.postShipment" onClick={() => void run(() => postSalesShipment(token, document.id).then(() => undefined), 'sales.shipmentPosted')} disabled={document.status === 'posted'} tone="primary" icon={<PackageMinus className="h-3.5 w-3.5" />} />
+  }
+  return null
 }

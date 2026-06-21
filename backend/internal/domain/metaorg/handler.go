@@ -22,6 +22,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/meta-org/inbox", h.getInbox)
 }
 
+func (h *Handler) RegisterPlatformRoutes(r chi.Router) {
+	r.Get("/meta-org/overview", h.getOverview)
+	r.Get("/meta-org/inbox", h.getInbox)
+}
+
 func (h *Handler) getOverview(w http.ResponseWriter, r *http.Request) {
 	overview, err := h.service.GetOverview(r.Context())
 	if err != nil {

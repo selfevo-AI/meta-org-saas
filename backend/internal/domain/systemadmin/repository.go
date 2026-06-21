@@ -130,19 +130,20 @@ func (r *Repository) GetSchemaTarget(ctx context.Context, orgID uuid.UUID) (*Org
 func (r *Repository) CreateSchemaChangeRequest(ctx context.Context, record CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error) {
 	pkgJSON, _ := json.Marshal(record.SchemaPackage)
 	statementsJSON, _ := json.Marshal(record.Statements)
+	diffJSON, _ := json.Marshal(record.Diff)
 	return scanSchemaChangeRequest(r.db.QueryRow(ctx, `
 		INSERT INTO platform.schema_change_requests(
-		    organization_id, schema_name, request_type, status, reason, schema_package, statements, requested_by
+		    organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff, requested_by
 		)
-		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7)
-		RETURNING id, organization_id, schema_name, request_type, status, reason, schema_package, statements,
+		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9)
+		RETURNING id, organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff,
 		          requested_by, reviewed_by, applied_by, review_reason, created_at, reviewed_at, applied_at, updated_at
-	`, record.OrganizationID, record.SchemaName, record.RequestType, record.Reason, pkgJSON, statementsJSON, record.RequestedBy))
+	`, record.OrganizationID, record.SchemaName, record.RequestType, record.Reason, pkgJSON, statementsJSON, record.RiskLevel, diffJSON, record.RequestedBy))
 }
 
 func (r *Repository) GetSchemaChangeRequest(ctx context.Context, id uuid.UUID) (*SchemaChangeRequest, error) {
 	return scanSchemaChangeRequest(r.db.QueryRow(ctx, `
-		SELECT id, organization_id, schema_name, request_type, status, reason, schema_package, statements,
+		SELECT id, organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff,
 		       requested_by, reviewed_by, applied_by, review_reason, created_at, reviewed_at, applied_at, updated_at
 		FROM platform.schema_change_requests
 		WHERE id = $1
@@ -158,7 +159,7 @@ func (r *Repository) UpdateSchemaChangeRequestStatus(ctx context.Context, id uui
 		    reviewed_at = NOW(),
 		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, organization_id, schema_name, request_type, status, reason, schema_package, statements,
+		RETURNING id, organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff,
 		          requested_by, reviewed_by, applied_by, review_reason, created_at, reviewed_at, applied_at, updated_at
 	`, id, status, reviewerID, reason))
 }
@@ -292,7 +293,7 @@ func scanSchemaTarget(row interface{ Scan(dest ...any) error }) (*OrganizationSc
 
 func scanSchemaChangeRequest(row interface{ Scan(dest ...any) error }) (*SchemaChangeRequest, error) {
 	var item SchemaChangeRequest
-	var pkgJSON, statementsJSON []byte
+	var pkgJSON, statementsJSON, diffJSON []byte
 	if err := row.Scan(
 		&item.ID,
 		&item.OrganizationID,
@@ -302,6 +303,8 @@ func scanSchemaChangeRequest(row interface{ Scan(dest ...any) error }) (*SchemaC
 		&item.Reason,
 		&pkgJSON,
 		&statementsJSON,
+		&item.RiskLevel,
+		&diffJSON,
 		&item.RequestedBy,
 		&item.ReviewedBy,
 		&item.AppliedBy,
@@ -315,6 +318,10 @@ func scanSchemaChangeRequest(row interface{ Scan(dest ...any) error }) (*SchemaC
 	}
 	_ = json.Unmarshal(pkgJSON, &item.SchemaPackage)
 	_ = json.Unmarshal(statementsJSON, &item.Statements)
+	_ = json.Unmarshal(diffJSON, &item.Diff)
+	if item.RiskLevel == "" {
+		item.RiskLevel = SchemaRiskSafe
+	}
 	return &item, nil
 }
 

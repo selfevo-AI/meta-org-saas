@@ -232,6 +232,7 @@ func main() {
 		SaaSHandler:          saasHandler,
 		SystemAdminHandler:   systemAdminHandler,
 		TenantResolver:       saasSvc,
+		PlatformRoleResolver: systemAdminRepo,
 		ObservabilityHandler: obsHandler,
 		VerificationHandler:  verHandler,
 		GovernanceHandler:    govHandler,

@@ -42,6 +42,23 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/assistant/proposals/{id}/reject", h.rejectProposal)
 }
 
+func (h *Handler) RegisterPlatformRoutes(r chi.Router) {
+	r.Get("/platform/admin/assistant/context-targets", h.listContextTargets)
+	r.Post("/platform/admin/assistant/sessions", h.createSession)
+	r.Get("/platform/admin/assistant/sessions", h.listSessions)
+	r.Get("/platform/admin/assistant/sessions/{id}", h.getSession)
+	r.Get("/platform/admin/assistant/sessions/{id}/steps", h.listSteps)
+	r.Get("/platform/admin/assistant/sessions/{id}/proposals", h.listProposals)
+	r.Post("/platform/admin/assistant/sessions/{id}/runs", h.runSession)
+	r.Post("/platform/admin/assistant/sessions/{id}/resume", h.resumeSession)
+	r.Get("/platform/admin/assistant/skills", h.listBusinessSkills)
+	r.Post("/platform/admin/assistant/skills", h.createBusinessSkill)
+	r.Post("/platform/admin/assistant/skills/{id}/activate", h.activateBusinessSkill)
+	r.Post("/platform/admin/assistant/skills/{id}/run", h.runBusinessSkill)
+	r.Post("/platform/admin/assistant/proposals/{id}/confirm", h.confirmProposal)
+	r.Post("/platform/admin/assistant/proposals/{id}/reject", h.rejectProposal)
+}
+
 func (h *Handler) listContextTargets(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := authenticatedActor(w, r); !ok {
 		return

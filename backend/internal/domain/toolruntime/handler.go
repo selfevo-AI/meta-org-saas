@@ -38,6 +38,11 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/tool-approvals/{id}/reject", h.reject)
 }
 
+func (h *Handler) RegisterPlatformRoutes(r chi.Router) {
+	r.Post("/platform/admin/tool-approvals/{id}/approve", h.approve)
+	r.Post("/platform/admin/tool-approvals/{id}/reject", h.reject)
+}
+
 func (h *Handler) createTool(w http.ResponseWriter, r *http.Request) {
 	var input CreateToolInput
 	if !decodeJSON(w, r, &input) {

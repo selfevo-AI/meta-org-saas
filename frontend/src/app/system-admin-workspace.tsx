@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Bot,
   Braces,
   Check,
   Database,
@@ -16,11 +17,15 @@ import {
   Users,
 } from 'lucide-react'
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { AIAssistant } from './ai-assistant'
+import { ApiWorkbench } from './api-workbench'
 import {
   applySchemaChange,
   approveSchemaChange,
+  closePlatformOrganization,
   createOrganizationSchemaChange,
   createOrganizationInvitation,
+  getPlatformPermissionProfile,
   exportOrganizationSchema,
   getOrganizationEntitlements,
   getOrganizationSubscription,
@@ -36,6 +41,7 @@ import {
   type OrganizationSchemaTarget,
   type PlatformDetail,
   type PlatformMaster,
+  type PlatformPermissionProfile,
   type SaaSModule,
   type SchemaApplyJob,
   type SchemaChangeRequest,
@@ -50,16 +56,43 @@ interface SystemAdminWorkspaceProps {
   currentOrganizationID?: string | null
 }
 
-type TabID = 'saas' | 'catalog' | 'targets' | 'schema'
+type TabID = 'assistant' | 'saas' | 'features' | 'permissions' | 'runtime' | 'catalog' | 'targets' | 'schema'
 
-const tabs: Array<{ id: TabID; label: string; icon: typeof Database }> = [
-  { id: 'saas', label: 'systemAdmin.saasOrganizations', icon: Users },
-  { id: 'catalog', label: 'systemAdmin.platformCatalog', icon: Layers3 },
-  { id: 'targets', label: 'systemAdmin.schemaTargets', icon: Database },
-  { id: 'schema', label: 'systemAdmin.schemaPackage', icon: FileJson },
+const tabs: Array<{ id: TabID; label: string; icon: typeof Database; permission?: string }> = [
+  { id: 'assistant', label: 'systemAdmin.platformAssistant', icon: Bot, permission: 'assistant.platform.run' },
+  { id: 'saas', label: 'systemAdmin.saasOrganizations', icon: Users, permission: 'platform.read' },
+  { id: 'features', label: 'systemAdmin.platformFeatures', icon: ShieldCheck, permission: 'platform.read' },
+  { id: 'permissions', label: 'systemAdmin.permissions', icon: ShieldCheck, permission: 'platform.read' },
+  { id: 'runtime', label: 'systemAdmin.apiWorkbench', icon: Table2, permission: 'runtime.manage' },
+  { id: 'catalog', label: 'systemAdmin.platformCatalog', icon: Layers3, permission: 'platform.read' },
+  { id: 'targets', label: 'systemAdmin.schemaTargets', icon: Database, permission: 'schema.manage' },
+  { id: 'schema', label: 'systemAdmin.schemaPackage', icon: FileJson, permission: 'schema.manage' },
 ]
 
 const moduleOptions = ['data_catalog', 'saas', 'security', 'assistant', 'organization', 'skill', 'finance', 'system']
+const platformPermissionCatalog = [
+  'platform.read',
+  'organization.manage',
+  'organization.close',
+  'schema.manage',
+  'schema.approve',
+  'schema.apply',
+  'model.manage',
+  'runtime.manage',
+  'assistant.platform.run',
+]
+const platformFeatureTabs = [
+  { id: 'capability', label: 'systemAdmin.feature.capability', permission: 'platform.read', moduleKey: 'capability' },
+  { id: 'governance', label: 'systemAdmin.feature.governance', permission: 'platform.read', moduleKey: 'governance' },
+  { id: 'evolution', label: 'systemAdmin.feature.evolution', permission: 'platform.read', moduleKey: 'evolution' },
+  { id: 'verification', label: 'systemAdmin.feature.verification', permission: 'platform.read', moduleKey: 'verification' },
+  { id: 'system', label: 'systemAdmin.feature.system', permission: 'runtime.manage', moduleKey: 'system' },
+  { id: 'systemAdmin', label: 'systemAdmin.feature.systemAdmin', permission: 'platform.read', moduleKey: 'saas' },
+  { id: 'modelSettings', label: 'systemAdmin.feature.modelSettings', permission: 'model.manage', moduleKey: 'developer_tools' },
+  { id: 'identity', label: 'systemAdmin.feature.identity', permission: 'platform.read', moduleKey: 'identity' },
+  { id: 'layer', label: 'systemAdmin.feature.layer', permission: 'platform.read', moduleKey: 'layer' },
+  { id: 'observability', label: 'systemAdmin.feature.observability', permission: 'platform.read', moduleKey: 'observability' },
+]
 
 function jsonText(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
@@ -89,8 +122,9 @@ function parseSchemaPackage(source: string): SchemaPackage {
 
 export function SystemAdminWorkspace({ token, organizations, currentOrganizationID }: SystemAdminWorkspaceProps) {
   const { t } = useI18n()
-  const [activeTab, setActiveTab] = useState<TabID>('saas')
+  const [activeTab, setActiveTab] = useState<TabID>('assistant')
   const [moduleKey, setModuleKey] = useState('data_catalog')
+  const [platformPermissions, setPlatformPermissions] = useState<PlatformPermissionProfile | null>(null)
   const [platformOrganizations, setPlatformOrganizations] = useState<SessionOrganization[]>([])
   const [saasModules, setSaaSModules] = useState<SaaSModule[]>([])
   const [subscription, setSubscription] = useState<OrganizationSubscription | null>(null)
@@ -100,6 +134,8 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
   const [inviteAuthority, setInviteAuthority] = useState('organization_admin')
+  const [showClosedOrganizations, setShowClosedOrganizations] = useState(false)
+  const [closeReason, setCloseReason] = useState('')
   const [masters, setMasters] = useState<PlatformMaster[]>([])
   const [details, setDetails] = useState<PlatformDetail[]>([])
   const [targets, setTargets] = useState<OrganizationSchemaTarget[]>([])
@@ -121,15 +157,19 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }
     return Array.from(byID.values())
   }, [organizations, platformOrganizations])
+  const visibleManagementOrganizations = useMemo(
+    () => managementOrganizations.filter((item) => showClosedOrganizations || item.status !== 'closed'),
+    [managementOrganizations, showClosedOrganizations],
+  )
   const organizationByID = useMemo(
     () => Object.fromEntries(managementOrganizations.map((item) => [item.id, item.name])),
     [managementOrganizations],
   )
   const activeOrganizationID = useMemo(() => {
-    if (selectedOrganizationID && managementOrganizations.some((item) => item.id === selectedOrganizationID)) return selectedOrganizationID
-    if (currentOrganizationID && managementOrganizations.some((item) => item.id === currentOrganizationID)) return currentOrganizationID
-    return managementOrganizations[0]?.id || ''
-  }, [currentOrganizationID, managementOrganizations, selectedOrganizationID])
+    if (selectedOrganizationID && visibleManagementOrganizations.some((item) => item.id === selectedOrganizationID)) return selectedOrganizationID
+    if (currentOrganizationID && visibleManagementOrganizations.some((item) => item.id === currentOrganizationID)) return currentOrganizationID
+    return visibleManagementOrganizations[0]?.id || ''
+  }, [currentOrganizationID, selectedOrganizationID, visibleManagementOrganizations])
   const selectedOrganization = useMemo(
     () => managementOrganizations.find((item) => item.id === activeOrganizationID) ?? null,
     [activeOrganizationID, managementOrganizations],
@@ -139,6 +179,12 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     () => targets.find((item) => item.organization_id === activeOrganizationID) ?? null,
     [activeOrganizationID, targets],
   )
+  const canPlatform = useCallback(
+    (permission: string) => !platformPermissions || !!platformPermissions.permissions[permission],
+    [platformPermissions],
+  )
+  const visibleTabs = useMemo(() => tabs.filter((tab) => !tab.permission || canPlatform(tab.permission)), [canPlatform])
+  const effectiveActiveTab = visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : visibleTabs[0]?.id
 
   function saasModuleLabel(item: SaaSModule): string {
     const key = `saas.module.${item.module_key}`
@@ -152,7 +198,16 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     )
   }
 
+  const loadPlatformPermissions = useCallback(async () => {
+    try {
+      setPlatformPermissions(await getPlatformPermissionProfile(token))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    }
+  }, [t, token])
+
   const loadSaaSManagement = useCallback(async () => {
+    if (!canPlatform('platform.read')) return
     setLoading(true)
     setError('')
     try {
@@ -162,16 +217,19 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       ])
       setPlatformOrganizations(orgItems)
       setSaaSModules(moduleItems)
-      setSelectedOrganizationID((current) => (current && orgItems.some((item) => item.id === current) ? current : orgItems[0]?.id || ''))
+      const selectableItems = showClosedOrganizations ? orgItems : orgItems.filter((item) => item.status !== 'closed')
+      setSelectedOrganizationID((current) =>
+        current && selectableItems.some((item) => item.id === current) ? current : selectableItems[0]?.id || '',
+      )
     } catch (err) {
       setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
     } finally {
       setLoading(false)
     }
-  }, [t, token])
+  }, [canPlatform, showClosedOrganizations, t, token])
 
   const loadOrganizationSaaSDetails = useCallback(async () => {
-    if (!activeOrganizationID) {
+    if (!activeOrganizationID || selectedOrganization?.status === 'closed' || !canPlatform('organization.manage')) {
       setSubscription(null)
       setEntitlements({})
       setModuleDraft([])
@@ -195,9 +253,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     } finally {
       setLoading(false)
     }
-  }, [activeOrganizationID, t, token])
+  }, [activeOrganizationID, canPlatform, selectedOrganization?.status, t, token])
 
   const loadCatalog = useCallback(async () => {
+    if (!canPlatform('platform.read')) return
     setLoading(true)
     setError('')
     try {
@@ -212,9 +271,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     } finally {
       setLoading(false)
     }
-  }, [moduleKey, t, token])
+  }, [canPlatform, moduleKey, t, token])
 
   const loadTargets = useCallback(async () => {
+    if (!canPlatform('schema.manage')) return
     setLoading(true)
     setError('')
     try {
@@ -224,23 +284,30 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     } finally {
       setLoading(false)
     }
-  }, [t, token])
+  }, [canPlatform, t, token])
 
   useEffect(() => {
-    if (activeTab !== 'saas') return
+    const timer = window.setTimeout(() => {
+      void loadPlatformPermissions()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadPlatformPermissions])
+
+  useEffect(() => {
+    if (!effectiveActiveTab || !['saas', 'features', 'schema', 'targets'].includes(effectiveActiveTab)) return
     const timer = window.setTimeout(() => {
       void loadSaaSManagement()
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeTab, loadSaaSManagement])
+  }, [effectiveActiveTab, loadSaaSManagement])
 
   useEffect(() => {
-    if (activeTab !== 'saas') return
+    if (!effectiveActiveTab || !['saas', 'features'].includes(effectiveActiveTab)) return
     const timer = window.setTimeout(() => {
       void loadOrganizationSaaSDetails()
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeTab, loadOrganizationSaaSDetails])
+  }, [effectiveActiveTab, loadOrganizationSaaSDetails])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -257,7 +324,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }, [loadTargets])
 
   useEffect(() => {
-    if (!selectedMasterKey) {
+    if (!selectedMasterKey || !canPlatform('platform.read')) {
       return
     }
     let cancelled = false
@@ -271,7 +338,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     return () => {
       cancelled = true
     }
-  }, [selectedMasterKey, t, token])
+  }, [canPlatform, selectedMasterKey, t, token])
 
   async function run(action: () => Promise<void>, successKey: string) {
     setLoading(true)
@@ -304,7 +371,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function saveOrganizationModules() {
-    if (!activeOrganizationID) return
+    if (!activeOrganizationID || !canPlatform('organization.manage')) return
     await runSaaS(async () => {
       const updated = await updateOrganizationModules(token, activeOrganizationID, moduleDraft)
       setEntitlements(updated)
@@ -313,7 +380,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function submitInvitation() {
-    if (!activeOrganizationID || !inviteEmail.trim()) return
+    if (!activeOrganizationID || !inviteEmail.trim() || !canPlatform('organization.manage')) return
     await runSaaS(async () => {
       await createOrganizationInvitation(token, activeOrganizationID, {
         email: inviteEmail.trim(),
@@ -325,8 +392,32 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }, 'systemAdmin.invitationCreated')
   }
 
+  async function closeOrganization() {
+    if (!activeOrganizationID || !canPlatform('organization.close')) return
+    setLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      const closed = await closePlatformOrganization(token, activeOrganizationID, closeReason)
+      const orgItems = await listPlatformOrganizations(token, 100)
+      setPlatformOrganizations(orgItems.map((item) => (item.id === closed.id ? closed : item)))
+      const selectableItems = orgItems.filter((item) => item.id !== closed.id && item.status !== 'closed')
+      setSelectedOrganizationID(selectableItems[0]?.id || '')
+      setSubscription(null)
+      setEntitlements({})
+      setModuleDraft([])
+      setInvitations([])
+      setCloseReason('')
+      setNotice(t('systemAdmin.organizationClosed'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function exportSchema() {
-    if (!activeOrganizationID) return
+    if (!activeOrganizationID || !canPlatform('schema.manage')) return
     await run(async () => {
       const pkg = await exportOrganizationSchema(token, activeOrganizationID)
       setSchemaPackage(pkg)
@@ -363,7 +454,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function createChange() {
-    if (!activeOrganizationID) return
+    if (!activeOrganizationID || !canPlatform('schema.manage')) return
     let pkg: SchemaPackage
     try {
       pkg = parseSchemaPackage(schemaJson)
@@ -384,14 +475,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function approveChange() {
-    if (!changeRequest) return
+    if (!changeRequest || !canPlatform('schema.approve')) return
     await run(async () => {
       setChangeRequest(await approveSchemaChange(token, changeRequest.id, reason))
     }, 'systemAdmin.changeApproved')
   }
 
   async function applyChange() {
-    if (!changeRequest) return
+    if (!changeRequest || !canPlatform('schema.apply')) return
     await run(async () => {
       const job = await applySchemaChange(token, changeRequest.id)
       setApplyJob(job)
@@ -401,7 +492,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
-        {tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const Icon = tab.icon
           return (
             <button
@@ -409,7 +500,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               type="button"
               onClick={() => setActiveTab(tab.id)}
               className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
-                activeTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
+                effectiveActiveTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -420,6 +511,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         <button
           type="button"
           onClick={() => {
+            void loadPlatformPermissions()
             void loadSaaSManagement()
             void loadOrganizationSaaSDetails()
             void loadCatalog()
@@ -439,7 +531,29 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </p>
       )}
 
-      {activeTab === 'saas' && (
+      {effectiveActiveTab === 'assistant' && (
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.platformAssistant')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.platformAssistantSummary')}</p>
+            </div>
+            <Bot className="h-5 w-5 text-slate-500" />
+          </div>
+          <div className="h-[680px] min-h-0 overflow-hidden">
+            <AIAssistant
+              token={token}
+              contextType="platform_admin"
+              autoModel
+              hideModelSelector
+              apiScope="platform"
+              className="h-full"
+            />
+          </div>
+        </section>
+      )}
+
+      {effectiveActiveTab === 'saas' && (
         <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
@@ -449,9 +563,18 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               </div>
               <Users className="h-5 w-5 text-slate-500" />
             </div>
+            <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-600">
+              <input
+                type="checkbox"
+                checked={showClosedOrganizations}
+                onChange={(event) => setShowClosedOrganizations(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-[#AD4714] focus:ring-[#DF6A24]"
+              />
+              {t('systemAdmin.showClosedOrganizations')}
+            </label>
             <div className="mt-4 space-y-2">
-              {managementOrganizations.length > 0 ? (
-                managementOrganizations.map((item) => (
+              {visibleManagementOrganizations.length > 0 ? (
+                visibleManagementOrganizations.map((item) => (
                   <button
                     key={item.id}
                     type="button"
@@ -462,7 +585,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                         : 'border-slate-200 bg-white text-slate-900 hover:border-slate-300 hover:bg-slate-50'
                     }`}
                   >
-                    <span className="block truncate text-sm font-semibold">{item.name}</span>
+                    <span className="flex min-w-0 items-center justify-between gap-2">
+                      <span className="block truncate text-sm font-semibold">{item.name}</span>
+                      {item.status && <StatusBadge label={item.status} />}
+                    </span>
                     <span className="mt-1 block truncate text-xs opacity-75">{item.authority_tier || item.id}</span>
                   </button>
                 ))
@@ -479,12 +605,30 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   <h2 className="text-base font-semibold text-slate-950">{selectedOrganization?.name || t('common.notSelected')}</h2>
                   <p className="mt-1 text-sm text-slate-500">{activeOrganizationID || t('common.notSelected')}</p>
                 </div>
-                {subscription?.status && <StatusBadge label={subscription.status} />}
+                {(selectedOrganization?.status || subscription?.status) && <StatusBadge label={selectedOrganization?.status || subscription?.status || ''} />}
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <Metric label={t('systemAdmin.subscription')} value={subscription?.plan_name || subscription?.plan_code || t('common.notSelected')} />
-                <Metric label={t('systemAdmin.status')} value={subscription?.status ? t(subscription.status) : t('common.notSelected')} />
+                <Metric label={t('systemAdmin.status')} value={selectedOrganization?.status ? t(selectedOrganization.status) : subscription?.status ? t(subscription.status) : t('common.notSelected')} />
                 <Metric label={t('systemAdmin.enabledModules')} value={String(Object.values(entitlements).filter(Boolean).length)} />
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+                <input
+                  value={closeReason}
+                  onChange={(event) => setCloseReason(event.target.value)}
+                  placeholder={t('systemAdmin.closeOrganizationReason')}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.close')}
+                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => void closeOrganization()}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.close')}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  {t('systemAdmin.closeOrganization')}
+                </button>
               </div>
             </div>
 
@@ -497,7 +641,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void saveOrganizationModules()}
-                  disabled={!activeOrganizationID || loading}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
                   className="inline-flex h-9 items-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Check className="h-4 w-4" />
@@ -512,6 +656,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                         type="checkbox"
                         checked={moduleDraft.includes(item.module_key)}
                         onChange={() => toggleModuleDraft(item.module_key)}
+                        disabled={selectedOrganization?.status === 'closed' || !canPlatform('organization.manage')}
                         className="mt-1 h-4 w-4 rounded border-slate-300 text-[#AD4714] focus:ring-[#DF6A24]"
                       />
                       <span className="min-w-0">
@@ -535,7 +680,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void submitInvitation()}
-                  disabled={!activeOrganizationID || !inviteEmail.trim() || loading}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || !inviteEmail.trim() || loading || !canPlatform('organization.manage')}
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Send className="h-4 w-4" />
@@ -548,18 +693,21 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   onChange={(event) => setInviteEmail(event.target.value)}
                   placeholder={t('systemAdmin.inviteEmail')}
                   type="email"
+                  disabled={selectedOrganization?.status === 'closed' || !canPlatform('organization.manage')}
                   className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20"
                 />
                 <input
                   value={inviteName}
                   onChange={(event) => setInviteName(event.target.value)}
                   placeholder={t('systemAdmin.inviteName')}
+                  disabled={selectedOrganization?.status === 'closed' || !canPlatform('organization.manage')}
                   className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20"
                 />
                 <select
                   value={inviteAuthority}
                   onChange={(event) => setInviteAuthority(event.target.value)}
                   aria-label={t('systemAdmin.inviteAuthority')}
+                  disabled={selectedOrganization?.status === 'closed' || !canPlatform('organization.manage')}
                   className="h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20"
                 >
                   {['organization_admin', 'reviewer', 'executor'].map((item) => (
@@ -608,7 +756,95 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </div>
       )}
 
-      {activeTab === 'catalog' && (
+      {effectiveActiveTab === 'features' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.platformFeatures')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.platformFeaturesSummary')}</p>
+            </div>
+            <ShieldCheck className="h-5 w-5 text-slate-500" />
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {platformFeatureTabs.map((feature) => {
+              const permissionAllowed = canPlatform(feature.permission)
+              const organizationEnabled = feature.moduleKey ? !!entitlements[feature.moduleKey] : false
+              return (
+                <div key={feature.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-sm font-semibold text-slate-950">{t(feature.label)}</h3>
+                      <p className="mt-1 truncate text-xs text-slate-500">{feature.moduleKey || feature.permission}</p>
+                    </div>
+                    <StatusBadge label={permissionAllowed ? 'active' : 'disabled'} />
+                  </div>
+                  <div className="mt-4 grid gap-2">
+                    <Metric label={t('systemAdmin.platformPermission')} value={t(`systemAdmin.permission.${feature.permission}`)} />
+                    <Metric label={t('systemAdmin.organizationEntitlement')} value={organizationEnabled ? t('active') : t('disabled')} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {effectiveActiveTab === 'permissions' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.permissions')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.permissionsSummary')}</p>
+            </div>
+            <ShieldCheck className="h-5 w-5 text-slate-500" />
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            <Metric label={t('systemAdmin.role')} value={platformPermissions?.role || t('common.notSelected')} />
+            <Metric label={t('systemAdmin.enabledPermissions')} value={String(Object.values(platformPermissions?.permissions ?? {}).filter(Boolean).length)} />
+            <Metric label={t('systemAdmin.menuItems')} value={String(platformPermissions?.menu_items?.length ?? 0)} />
+          </div>
+          <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200 text-sm">
+              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                <tr>
+                  <th className="px-3 py-2">{t('systemAdmin.permissions')}</th>
+                  <th className="px-3 py-2">{t('systemAdmin.permissionKey')}</th>
+                  <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {platformPermissionCatalog.map((permission) => {
+                  const enabled = !!platformPermissions?.permissions[permission]
+                  return (
+                    <tr key={permission}>
+                      <td className="px-3 py-3 font-medium text-slate-900">{t(`systemAdmin.permission.${permission}`)}</td>
+                      <td className="px-3 py-3 font-mono text-xs text-slate-600">{permission}</td>
+                      <td className="px-3 py-3">
+                        <StatusBadge label={enabled ? 'active' : 'disabled'} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {effectiveActiveTab === 'runtime' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.apiWorkbench')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.apiWorkbenchSummary')}</p>
+            </div>
+            <Table2 className="h-5 w-5 text-slate-500" />
+          </div>
+          <ApiWorkbench token={token} apiScope="platform" />
+        </section>
+      )}
+
+      {effectiveActiveTab === 'catalog' && (
         <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
@@ -702,7 +938,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </div>
       )}
 
-      {activeTab === 'targets' && (
+      {effectiveActiveTab === 'targets' && (
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -748,7 +984,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </section>
       )}
 
-      {activeTab === 'schema' && (
+      {effectiveActiveTab === 'schema' && (
         <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -760,7 +996,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void exportSchema()}
-                  disabled={!activeOrganizationID || loading}
+                  disabled={!activeOrganizationID || loading || !canPlatform('schema.manage')}
                   className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Download className="h-4 w-4" />
@@ -786,7 +1022,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   onChange={(event) => setSelectedOrganizationID(event.target.value)}
                   className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20"
                 >
-                  {managementOrganizations.map((item) => (
+                  {visibleManagementOrganizations.map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
                     </option>
@@ -839,7 +1075,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void createChange()}
-                  disabled={!activeOrganizationID || !schemaJson.trim() || loading}
+                  disabled={!activeOrganizationID || !schemaJson.trim() || loading || !canPlatform('schema.manage')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Braces className="h-4 w-4" />
@@ -848,7 +1084,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void approveChange()}
-                  disabled={!changeRequest || changeRequest.status !== 'pending' || loading}
+                  disabled={!changeRequest || changeRequest.status !== 'pending' || loading || !canPlatform('schema.approve')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Check className="h-4 w-4" />
@@ -857,7 +1093,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void applyChange()}
-                  disabled={!changeRequest || !['approved', 'applied'].includes(changeRequest.status) || loading}
+                  disabled={!changeRequest || !['approved', 'applied'].includes(changeRequest.status) || loading || !canPlatform('schema.apply')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play className="h-4 w-4" />

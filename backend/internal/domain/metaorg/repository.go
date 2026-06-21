@@ -389,28 +389,7 @@ func (r *PostgresRepository) risks(ctx context.Context, orgID *uuid.UUID, limit 
 }
 
 func (r *PostgresRepository) activity(ctx context.Context, orgID *uuid.UUID, limit int) ([]ActivityItem, error) {
-	query := `
-		SELECT id, type, title, status, created_at
-		FROM (
-			SELECT id::text, 'requirement' AS type, title, status::text, created_at FROM requirements WHERE $2::uuid IS NULL OR organization_id = $2
-			UNION ALL
-			SELECT id::text, 'project' AS type, name AS title, status::text, created_at FROM projects WHERE $2::uuid IS NULL OR organization_id = $2
-			UNION ALL
-			SELECT id::text, 'workflow' AS type, 'Workflow instance' AS title, status::text, created_at FROM workflow_instances WHERE $2::uuid IS NULL OR organization_id = $2
-			UNION ALL
-			SELECT id::text, 'signal' AS type, signal_type AS title, CASE WHEN acknowledged THEN 'acknowledged' ELSE 'open' END AS status, created_at FROM signals WHERE $2::uuid IS NULL OR data->>'organization_id' = $2::text
-			UNION ALL
-			SELECT id::text, 'ai_invocation' AS type, COALESCE(NULLIF(source_surface, ''), 'AI') || ' model call' AS title, status::text, created_at FROM ai_invocations WHERE $2::uuid IS NULL OR organization_id = $2
-			UNION ALL
-			SELECT id::text, 'tool_execution' AS type, 'Tool execution' AS title, status::text, created_at FROM tool_executions WHERE $2::uuid IS NULL OR organization_id = $2
-			UNION ALL
-			SELECT id::text, 'finance_export' AS type, 'Finance export batch' AS title, status::text, updated_at AS created_at FROM finance_export_batches WHERE $2::uuid IS NULL OR organization_id = $2
-			UNION ALL
-			SELECT id::text, 'finance_webhook' AS type, event_type AS title, CASE WHEN processed THEN 'processed' ELSE 'failed' END AS status, created_at FROM finance_webhook_events WHERE $2::uuid IS NULL
-		) events
-		ORDER BY created_at DESC
-		LIMIT $1
-	`
+	query := activityQuery()
 	rows, err := r.db.Query(ctx, query, limit, nullableUUID(orgID))
 	if err != nil {
 		return nil, fmt.Errorf("query activity: %w", err)
@@ -429,6 +408,33 @@ func (r *PostgresRepository) activity(ctx context.Context, orgID *uuid.UUID, lim
 		return nil, fmt.Errorf("iterate activity: %w", err)
 	}
 	return activity, nil
+}
+
+func activityQuery() string {
+	return `
+		SELECT id, type, title, status, created_at
+		FROM (
+			SELECT id::text, 'requirement' AS type, title, status::text, created_at FROM requirements WHERE $2::uuid IS NULL OR organization_id = $2
+			UNION ALL
+			SELECT id::text, 'project' AS type, name AS title, status::text, created_at FROM projects WHERE $2::uuid IS NULL OR organization_id = $2
+			UNION ALL
+			SELECT id::text, 'workflow' AS type, 'Workflow instance' AS title, status::text, created_at FROM workflow_instances WHERE $2::uuid IS NULL OR organization_id = $2
+			UNION ALL
+			SELECT id::text, 'signal' AS type, signal_type AS title, CASE WHEN acknowledged THEN 'acknowledged' ELSE 'open' END AS status, created_at FROM signals WHERE $2::uuid IS NULL OR data->>'organization_id' = $2::text
+			UNION ALL
+			SELECT id::text, 'ai_invocation' AS type, COALESCE(NULLIF(source_surface, ''), 'AI') || ' model call' AS title, status::text, created_at FROM ai_invocations WHERE $2::uuid IS NULL OR organization_id = $2
+			UNION ALL
+			SELECT id::text, 'tool_execution' AS type, 'Tool execution' AS title, status::text, created_at FROM tool_executions WHERE $2::uuid IS NULL OR organization_id = $2
+			UNION ALL
+			SELECT b.id::text, 'finance_export' AS type, 'Finance export batch' AS title, b.status::text, b.updated_at AS created_at
+			FROM finance_export_batches b
+			WHERE $2::uuid IS NULL OR EXISTS (SELECT 1 FROM finance_export_lines l WHERE l.batch_id = b.id AND l.organization_id = $2)
+			UNION ALL
+			SELECT id::text, 'finance_webhook' AS type, event_type AS title, CASE WHEN processed THEN 'processed' ELSE 'failed' END AS status, created_at FROM finance_webhook_events WHERE $2::uuid IS NULL
+		) events
+		ORDER BY created_at DESC
+		LIMIT $1
+	`
 }
 
 func (r *PostgresRepository) signalInbox(ctx context.Context, orgID *uuid.UUID, limit int) ([]InboxItem, error) {
@@ -494,17 +500,22 @@ func (r *PostgresRepository) toolApprovalInbox(ctx context.Context, orgID *uuid.
 }
 
 func (r *PostgresRepository) financeInbox(ctx context.Context, orgID *uuid.UUID, limit int) ([]InboxItem, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT id::text, 'finance_export', 'Finance export failed', status, 'high', 'finance', updated_at
-		FROM finance_export_batches
-		WHERE status = 'failed' AND ($2::uuid IS NULL OR organization_id = $2)
-		ORDER BY updated_at DESC
-		LIMIT $1
-	`, limit, nullableUUID(orgID))
+	rows, err := r.db.Query(ctx, financeInboxQuery(), limit, nullableUUID(orgID))
 	if err != nil {
 		return nil, fmt.Errorf("query finance inbox: %w", err)
 	}
 	return scanInboxRows(rows)
+}
+
+func financeInboxQuery() string {
+	return `
+		SELECT b.id::text, 'finance_export', 'Finance export failed', b.status, 'high', 'finance', b.updated_at
+		FROM finance_export_batches b
+		WHERE b.status = 'failed'
+		  AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM finance_export_lines l WHERE l.batch_id = b.id AND l.organization_id = $2))
+		ORDER BY b.updated_at DESC
+		LIMIT $1
+	`
 }
 
 func (r *PostgresRepository) tableExists(ctx context.Context, tableName string) bool {

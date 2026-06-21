@@ -8,17 +8,25 @@ const workbenchSource = readFileSync(`${frontendRoot}src/app/api-workbench.tsx`,
 const requiredApiSnippets = [
   "import type { ApiOperation } from './operations'",
   'export async function listRuntimeOperations',
+  'export async function listPlatformRuntimeOperations',
   "'/runtime/operations'",
+  "'/platform/admin/runtime/operations'",
 ]
 
 const requiredWorkbenchSnippets = [
   'listRuntimeOperations',
+  'listPlatformRuntimeOperations',
+  "apiScope?: 'tenant' | 'platform'",
+  "apiScope === 'platform' ? listPlatformRuntimeOperations : listRuntimeOperations",
+  'platformOperationDomains',
+  'platformOperationAvailable',
   'const [runtimeOperations, setRuntimeOperations]',
-  'const operationCatalog = runtimeOperations.length > 0 ? runtimeOperations : apiOperations',
+  'const operationCatalog = scopedRuntimeOperations.length > 0 ? scopedRuntimeOperations : scopedFallbackOperations',
   'operationCatalog.filter',
   'operationDomainsForCatalog',
   'formatRuntimeDomainLabel',
   'saas.module.${domain}',
+  'apiScope={apiScope}',
 ]
 
 const failures = []

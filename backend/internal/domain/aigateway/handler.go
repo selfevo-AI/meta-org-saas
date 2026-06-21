@@ -49,6 +49,17 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/ai-gateway/cost-summary", h.costSummary)
 }
 
+func (h *Handler) RegisterTenantRoutes(r chi.Router) {
+	r.Get("/model-providers", h.listProviders)
+	r.Get("/models", h.listModels)
+	r.Post("/ai-gateway/invoke", h.invoke)
+	r.Get("/ai-gateway/stream", h.stream)
+	r.Post("/ai-gateway/stream", h.streamPost)
+	r.Get("/ai-gateway/invocations", h.listInvocations)
+	r.Get("/ai-gateway/invocations/{id}", h.getInvocation)
+	r.Get("/ai-gateway/cost-summary", h.costSummary)
+}
+
 func (h *Handler) createProvider(w http.ResponseWriter, r *http.Request) {
 	var input CreateProviderInput
 	if !decodeJSON(w, r, &input) {

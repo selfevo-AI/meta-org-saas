@@ -66,9 +66,25 @@ export async function listRuntimeOperations(token: string): Promise<ApiOperation
   return apiRequest<ApiOperation[]>('/runtime/operations', { token })
 }
 
+export async function listPlatformRuntimeOperations(token: string): Promise<ApiOperation[]> {
+  return apiRequest<ApiOperation[]>('/platform/admin/runtime/operations', { token })
+}
+
 export async function listPlatformOrganizations(token: string, limit = 100): Promise<SessionOrganization[]> {
   const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
   return apiRequest<SessionOrganization[]>(`/platform/organizations${query}`, { token })
+}
+
+export async function getPlatformPermissionProfile(token: string): Promise<PlatformPermissionProfile> {
+  return apiRequest<PlatformPermissionProfile>('/platform/admin/me/permissions', { token })
+}
+
+export async function closePlatformOrganization(token: string, organizationID: string, reason = ''): Promise<SessionOrganization> {
+  return apiRequest<SessionOrganization>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/close`, {
+    method: 'POST',
+    token,
+    body: { reason },
+  })
 }
 
 export async function getOrganizationSubscription(token: string, organizationID: string): Promise<OrganizationSubscription> {
@@ -242,6 +258,14 @@ export async function getMetaOrgInbox(token: string): Promise<InboxItem[]> {
   return apiRequest<InboxItem[]>('/meta-org/inbox', { token })
 }
 
+export async function getPlatformMetaOrgOverview(token: string): Promise<MetaOrgOverview> {
+  return apiRequest<MetaOrgOverview>('/platform/admin/meta-org/overview', { token })
+}
+
+export async function getPlatformMetaOrgInbox(token: string): Promise<InboxItem[]> {
+  return apiRequest<InboxItem[]>('/platform/admin/meta-org/inbox', { token })
+}
+
 export async function listMetaResources(token: string, filter: { resource_type?: string; status?: string } = {}): Promise<MetaResource[]> {
   const params = new URLSearchParams()
   if (filter.resource_type) params.set('resource_type', filter.resource_type)
@@ -289,6 +313,10 @@ export async function createPDCAEvent(token: string, input: CreatePDCAEventInput
 
 export async function listModelProviders(token: string): Promise<ModelProvider[]> {
   return apiRequest<ModelProvider[]>('/model-providers', { token })
+}
+
+export async function listPlatformModelProviders(token: string): Promise<ModelProvider[]> {
+  return apiRequest<ModelProvider[]>('/platform/admin/model-providers', { token })
 }
 
 export async function createModelProvider(token: string, input: CreateModelProviderInput): Promise<ModelProvider> {
@@ -344,6 +372,10 @@ export async function listModels(token: string): Promise<ModelCatalogItem[]> {
   return apiRequest<ModelCatalogItem[]>('/models', { token })
 }
 
+export async function listPlatformModels(token: string): Promise<ModelCatalogItem[]> {
+  return apiRequest<ModelCatalogItem[]>('/platform/admin/models', { token })
+}
+
 export async function createModel(token: string, input: CreateModelInput): Promise<ModelCatalogItem> {
   return apiRequest<ModelCatalogItem>('/models', { method: 'POST', token, body: input })
 }
@@ -380,6 +412,14 @@ export async function rejectToolApproval(token: string, id: string, reason = 're
   return apiRequest<ToolApprovalReviewResult>(`/tool-approvals/${id}/reject`, { method: 'POST', token, body: { reason } })
 }
 
+export async function approvePlatformToolApproval(token: string, id: string, reason = 'approved from platform assistant'): Promise<ToolApprovalReviewResult> {
+  return apiRequest<ToolApprovalReviewResult>(`/platform/admin/tool-approvals/${id}/approve`, { method: 'POST', token, body: { reason } })
+}
+
+export async function rejectPlatformToolApproval(token: string, id: string, reason = 'rejected from platform assistant'): Promise<ToolApprovalReviewResult> {
+  return apiRequest<ToolApprovalReviewResult>(`/platform/admin/tool-approvals/${id}/reject`, { method: 'POST', token, body: { reason } })
+}
+
 export async function listInvocations(token: string): Promise<AIInvocation[]> {
   return apiRequest<AIInvocation[]>('/ai-gateway/invocations', { token })
 }
@@ -388,8 +428,16 @@ export async function getAIInvocation(token: string, id: string): Promise<AIInvo
   return apiRequest<AIInvocation>(`/ai-gateway/invocations/${id}`, { token })
 }
 
+export async function getPlatformAIInvocation(token: string, id: string): Promise<AIInvocation> {
+  return apiRequest<AIInvocation>(`/platform/admin/ai-gateway/invocations/${id}`, { token })
+}
+
 export async function createAssistantSession(token: string, input: CreateAssistantSessionInput): Promise<AssistantSession> {
   return apiRequest<AssistantSession>('/assistant/sessions', { method: 'POST', token, body: input })
+}
+
+export async function createPlatformAssistantSession(token: string, input: CreateAssistantSessionInput): Promise<AssistantSession> {
+  return apiRequest<AssistantSession>('/platform/admin/assistant/sessions', { method: 'POST', token, body: input })
 }
 
 export async function listAssistantSessions(token: string, moduleKey?: string): Promise<AssistantSession[]> {
@@ -409,8 +457,20 @@ export async function listAssistantContextTargets(token: string, moduleKey: stri
   return apiRequest<AssistantContextTarget[]>(`/assistant/context-targets${query}`, { token })
 }
 
+export async function listPlatformAssistantContextTargets(token: string, moduleKey: string, targetType?: string): Promise<AssistantContextTarget[]> {
+  const params = new URLSearchParams()
+  if (moduleKey) params.set('module_key', moduleKey)
+  if (targetType) params.set('target_type', targetType)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiRequest<AssistantContextTarget[]>(`/platform/admin/assistant/context-targets${query}`, { token })
+}
+
 export async function listAssistantProposals(token: string, sessionID: string): Promise<AssistantProposal[]> {
   return apiRequest<AssistantProposal[]>(`/assistant/sessions/${sessionID}/proposals`, { token })
+}
+
+export async function listPlatformAssistantProposals(token: string, sessionID: string): Promise<AssistantProposal[]> {
+  return apiRequest<AssistantProposal[]>(`/platform/admin/assistant/sessions/${sessionID}/proposals`, { token })
 }
 
 export async function confirmAssistantProposal(token: string, proposalID: string): Promise<AssistantProposal> {
@@ -425,12 +485,32 @@ export async function rejectAssistantProposal(token: string, proposalID: string,
   })
 }
 
+export async function confirmPlatformAssistantProposal(token: string, proposalID: string): Promise<AssistantProposal> {
+  return apiRequest<AssistantProposal>(`/platform/admin/assistant/proposals/${proposalID}/confirm`, { method: 'POST', token })
+}
+
+export async function rejectPlatformAssistantProposal(token: string, proposalID: string, reason = ''): Promise<AssistantProposal> {
+  return apiRequest<AssistantProposal>(`/platform/admin/assistant/proposals/${proposalID}/reject`, {
+    method: 'POST',
+    token,
+    body: { reason },
+  })
+}
+
 export async function listAssistantSkills(token: string, moduleKey?: string, targetType?: string): Promise<AssistantBusinessSkill[]> {
   const params = new URLSearchParams()
   if (moduleKey) params.set('module_key', moduleKey)
   if (targetType) params.set('target_type', targetType)
   const query = params.toString() ? `?${params.toString()}` : ''
   return apiRequest<AssistantBusinessSkill[]>(`/assistant/skills${query}`, { token })
+}
+
+export async function listPlatformAssistantSkills(token: string, moduleKey?: string, targetType?: string): Promise<AssistantBusinessSkill[]> {
+  const params = new URLSearchParams()
+  if (moduleKey) params.set('module_key', moduleKey)
+  if (targetType) params.set('target_type', targetType)
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiRequest<AssistantBusinessSkill[]>(`/platform/admin/assistant/skills${query}`, { token })
 }
 
 export async function createAssistantSkill(
@@ -440,8 +520,19 @@ export async function createAssistantSkill(
   return apiRequest<AssistantBusinessSkill>('/assistant/skills', { method: 'POST', token, body: input })
 }
 
+export async function createPlatformAssistantSkill(
+  token: string,
+  input: CreateAssistantBusinessSkillInput,
+): Promise<AssistantBusinessSkill> {
+  return apiRequest<AssistantBusinessSkill>('/platform/admin/assistant/skills', { method: 'POST', token, body: input })
+}
+
 export async function activateAssistantSkill(token: string, skillID: string): Promise<AssistantBusinessSkill> {
   return apiRequest<AssistantBusinessSkill>(`/assistant/skills/${skillID}/activate`, { method: 'POST', token })
+}
+
+export async function activatePlatformAssistantSkill(token: string, skillID: string): Promise<AssistantBusinessSkill> {
+  return apiRequest<AssistantBusinessSkill>(`/platform/admin/assistant/skills/${skillID}/activate`, { method: 'POST', token })
 }
 
 export async function runAssistantSkill(
@@ -450,6 +541,14 @@ export async function runAssistantSkill(
   input: Record<string, unknown>,
 ): Promise<AssistantSkillRun> {
   return apiRequest<AssistantSkillRun>(`/assistant/skills/${skillID}/run`, { method: 'POST', token, body: input })
+}
+
+export async function runPlatformAssistantSkill(
+  token: string,
+  skillID: string,
+  input: Record<string, unknown>,
+): Promise<AssistantSkillRun> {
+  return apiRequest<AssistantSkillRun>(`/platform/admin/assistant/skills/${skillID}/run`, { method: 'POST', token, body: input })
 }
 
 export async function getAICostSummary(token: string): Promise<AICostSummary> {
@@ -873,6 +972,16 @@ export interface SessionOrganization {
   membership_id?: string
   authority_tier?: string
   is_owner?: boolean
+  status?: 'active' | 'closed' | string
+  closed_at?: string
+  closed_by?: string
+  closed_reason?: string
+}
+
+export interface PlatformPermissionProfile {
+  role: string
+  permissions: Record<string, boolean>
+  menu_items: string[]
 }
 
 export interface UserProfile {
@@ -1020,6 +1129,7 @@ export interface SchemaPackage {
 
 export interface SchemaTableDefinition {
   name: string
+  previous_name?: string
   fields: SchemaFieldDefinition[]
   indexes?: SchemaIndexDefinition[]
   constraints?: string[]
@@ -1029,6 +1139,7 @@ export interface SchemaTableDefinition {
 
 export interface SchemaFieldDefinition {
   name: string
+  previous_name?: string
   data_type: string
   nullable: boolean
   primary_key?: boolean
@@ -1049,8 +1160,10 @@ export interface SchemaChangeRequest {
   schema_name: string
   request_type: string
   status: string
+  risk_level?: string
   reason: string
   schema_package: SchemaPackage
+  diff?: SchemaDiff
   statements: string[]
   requested_by?: string
   reviewed_by?: string
@@ -1079,7 +1192,48 @@ export interface CreateSchemaChangeRequestInput {
   organization_id?: string
   request_type?: string
   reason?: string
+  current_schema_package?: SchemaPackage
   schema_package: SchemaPackage
+}
+
+export interface SchemaDiff {
+  summary?: string[]
+  tables_added?: string[]
+  tables_removed?: string[]
+  tables_renamed?: SchemaRenameDiff[]
+  fields_added?: SchemaFieldDiff[]
+  fields_removed?: SchemaFieldDiff[]
+  fields_renamed?: SchemaFieldRenameDiff[]
+  fields_changed?: SchemaFieldChangeDiff[]
+  indexes_added?: SchemaIndexDiff[]
+  destructive?: boolean
+}
+
+export interface SchemaRenameDiff {
+  from: string
+  to: string
+}
+
+export interface SchemaFieldDiff {
+  table: string
+  field: string
+}
+
+export interface SchemaFieldRenameDiff {
+  table: string
+  from: string
+  to: string
+}
+
+export interface SchemaFieldChangeDiff {
+  table: string
+  field: string
+  changes: string[]
+}
+
+export interface SchemaIndexDiff {
+  table: string
+  index: string
 }
 
 export interface DataTable {

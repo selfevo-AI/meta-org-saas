@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -36,6 +37,7 @@ type repository interface {
 	ListDefaultModuleKeys(context.Context) ([]string, error)
 	CompleteOnboarding(context.Context, uuid.UUID, OnboardingOrganizationInput, []string) (*OrganizationAccount, error)
 	ListOrganizationsForPlatform(context.Context, int) ([]OrganizationAccount, error)
+	CloseOrganization(context.Context, uuid.UUID, uuid.UUID, string) (*OrganizationAccount, error)
 	GetSubscription(context.Context, uuid.UUID) (*OrganizationSubscription, error)
 	ListEnabledModules(context.Context, uuid.UUID) (map[string]bool, error)
 	UpdateOrganizationModules(context.Context, uuid.UUID, []string) (map[string]bool, error)
@@ -167,10 +169,21 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, inpu
 }
 
 func (s *Service) ListPlatformOrganizations(ctx context.Context, actorID uuid.UUID, limit int) ([]OrganizationAccount, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
 		return nil, err
 	}
 	return s.repo.ListOrganizationsForPlatform(ctx, limit)
+}
+
+func (s *Service) CloseOrganization(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID, input CloseOrganizationInput) (*OrganizationAccount, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionOrganizationClose); err != nil {
+		return nil, err
+	}
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	reason := strings.TrimSpace(input.Reason)
+	return s.repo.CloseOrganization(ctx, orgID, actorID, reason)
 }
 
 func (s *Service) GetSubscription(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID) (*OrganizationSubscription, error) {
@@ -294,6 +307,10 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 		if requested == nil {
 			return nil, middleware.ErrTenantRequired
 		}
+		org, err := s.repo.GetOrganizationAccount(ctx, *requested)
+		if err != nil || org.Status == OrganizationStatusClosed {
+			return nil, middleware.ErrTenantForbidden
+		}
 		membership, err := s.repo.GetAgentMembership(ctx, actorID, *requested)
 		if err != nil {
 			return nil, middleware.ErrTenantForbidden
@@ -337,13 +354,15 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 	if orgID == nil {
 		return nil, middleware.ErrTenantRequired
 	}
+	org, err := s.repo.GetOrganizationAccount(ctx, *orgID)
+	if err != nil || org.Status == OrganizationStatusClosed {
+		return nil, middleware.ErrTenantForbidden
+	}
 
 	var membershipID *uuid.UUID
 	authorityTier := ""
 	if isPlatform {
-		if _, err := s.repo.GetOrganizationAccount(ctx, *orgID); err != nil {
-			return nil, middleware.ErrTenantForbidden
-		}
+		// Platform users may resolve active organizations without membership.
 	} else {
 		membership, err := s.repo.GetHumanMembership(ctx, actorID, *orgID)
 		if err != nil {
@@ -368,16 +387,23 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 }
 
 func (s *Service) requirePlatformAdmin(ctx context.Context, userID uuid.UUID) error {
+	return s.requirePlatformPermission(ctx, userID, platformauth.PermissionPlatformRead)
+}
+
+func (s *Service) requirePlatformPermission(ctx context.Context, userID uuid.UUID, permission string) error {
 	role, err := s.repo.GetPlatformRole(ctx, userID)
-	if err != nil || role == "" {
+	if err != nil || !platformauth.HasPermission(role, permission) {
 		return ErrForbidden
 	}
 	return nil
 }
 
 func (s *Service) requireOrgAdmin(ctx context.Context, userID uuid.UUID, orgID uuid.UUID) error {
-	if _, err := s.repo.GetPlatformRole(ctx, userID); err == nil {
-		return nil
+	if role, err := s.repo.GetPlatformRole(ctx, userID); err == nil {
+		if platformauth.HasPermission(role, platformauth.PermissionOrganizationManage) {
+			return nil
+		}
+		return ErrForbidden
 	}
 	membership, err := s.repo.GetHumanMembership(ctx, userID, orgID)
 	if err != nil {

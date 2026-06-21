@@ -4,11 +4,17 @@ import { Bot, CheckCircle2, CircleStop, ListChecks, Send, XCircle } from 'lucide
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE,
+  approvePlatformToolApproval,
   approveToolApproval,
   createAssistantSession,
+  createPlatformAssistantSession,
   getAIInvocation,
+  getPlatformAIInvocation,
   listModelProviders,
   listModels,
+  listPlatformModelProviders,
+  listPlatformModels,
+  rejectPlatformToolApproval,
   rejectToolApproval,
   type AssistantStep,
   type CostBreakdown,
@@ -72,6 +78,7 @@ interface AIAssistantProps {
   targetID?: string
   autoModel?: boolean
   hideModelSelector?: boolean
+  apiScope?: 'tenant' | 'platform'
   initialIntent?: string
   initialIntentKey?: string
   autoRunInitialIntent?: boolean
@@ -123,6 +130,7 @@ export function AIAssistant({
   targetID,
   autoModel = false,
   hideModelSelector = false,
+  apiScope = 'tenant',
   initialIntent,
   initialIntentKey,
   autoRunInitialIntent = false,
@@ -147,7 +155,17 @@ export function AIAssistant({
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([listModels(token), listModelProviders(token)])
+    if (apiScope === 'platform' && autoModel) {
+      setModels([])
+      setProviders([])
+      setSelectedModelID('')
+      return () => {
+        cancelled = true
+      }
+    }
+    const loadModels = apiScope === 'platform' ? listPlatformModels : listModels
+    const loadProviders = apiScope === 'platform' ? listPlatformModelProviders : listModelProviders
+    Promise.all([loadModels(token), loadProviders(token)])
       .then(([modelItems, providerItems]) => {
         if (cancelled) return
         const activeProviderIDs = new Set(
@@ -176,7 +194,7 @@ export function AIAssistant({
     return () => {
       cancelled = true
     }
-  }, [contextType, token])
+  }, [apiScope, autoModel, contextType, token])
 
   const selectedModel = useMemo(
     () => models.find((model) => model.id === selectedModelID) ?? models[0],
@@ -227,7 +245,7 @@ export function AIAssistant({
     let stoppedForApproval = false
 
     try {
-      const session = await createAssistantSession(token, {
+      const session = await (apiScope === 'platform' ? createPlatformAssistantSession : createAssistantSession)(token, {
         title: trimmed.slice(0, 80),
         mode: assistantMode(contextType),
         module_key: contextType,
@@ -249,8 +267,9 @@ export function AIAssistant({
       })
       setSessionID(session.id)
       onSessionCreated?.(session.id)
+      const assistantBasePath = apiScope === 'platform' ? '/platform/admin/assistant/sessions' : '/assistant/sessions'
       await streamSSEPost<GatewayStreamData>(
-        `${API_BASE}/assistant/sessions/${session.id}/runs`,
+        `${API_BASE}${assistantBasePath}/${session.id}/runs`,
         token,
         {
           message: trimmed,
@@ -318,7 +337,8 @@ export function AIAssistant({
       )
       if (currentInvocationID) {
         try {
-          const invocation = await getAIInvocation(token, currentInvocationID)
+          const loadInvocation = apiScope === 'platform' ? getPlatformAIInvocation : getAIInvocation
+          const invocation = await loadInvocation(token, currentInvocationID)
           setUsage({
             input_tokens: invocation.input_tokens,
             output_tokens: invocation.output_tokens,
@@ -364,7 +384,7 @@ export function AIAssistant({
     let stoppedForApproval = false
     try {
       await streamSSEPost<GatewayStreamData>(
-        `${API_BASE}/assistant/sessions/${sessionID}/resume`,
+        `${API_BASE}${apiScope === 'platform' ? '/platform/admin/assistant/sessions' : '/assistant/sessions'}/${sessionID}/resume`,
         token,
         { tool_approval_id: approvalID },
         ({ data }) => {
@@ -409,7 +429,8 @@ export function AIAssistant({
       )
       if (currentInvocationID) {
         try {
-          const invocation = await getAIInvocation(token, currentInvocationID)
+          const loadInvocation = apiScope === 'platform' ? getPlatformAIInvocation : getAIInvocation
+          const invocation = await loadInvocation(token, currentInvocationID)
           setUsage({
             input_tokens: invocation.input_tokens,
             output_tokens: invocation.output_tokens,
@@ -447,7 +468,8 @@ export function AIAssistant({
     if (!pendingApprovalID || state === 'streaming') return
     setState('streaming')
     try {
-      const result = await approveToolApproval(token, pendingApprovalID, 'approved from assistant')
+      const reviewApproval = apiScope === 'platform' ? approvePlatformToolApproval : approveToolApproval
+      const result = await reviewApproval(token, pendingApprovalID, 'approved from assistant')
       if (result.execution.status !== 'completed') {
         setState('provider_error')
         setMessages((current) => [
@@ -470,7 +492,8 @@ export function AIAssistant({
     if (!pendingApprovalID || state === 'streaming') return
     setState('streaming')
     try {
-      await rejectToolApproval(token, pendingApprovalID, 'rejected from assistant')
+      const reviewRejection = apiScope === 'platform' ? rejectPlatformToolApproval : rejectToolApproval
+      await reviewRejection(token, pendingApprovalID, 'rejected from assistant')
       setPendingApprovalID('')
       setState('cancelled')
       setMessages((current) => [

@@ -1,6 +1,7 @@
 package metaorg
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,5 +39,33 @@ func TestSortInboxItemsOrdersByPriorityThenNewest(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("order[%d] = %q, want %q; got order %v", i, got[i], want[i], got)
 		}
+	}
+}
+
+func TestFinanceInboxQueryFiltersOrganizationThroughFinanceExportLines(t *testing.T) {
+	query := financeInboxQuery()
+
+	if strings.Contains(query, "OR organization_id = $2") {
+		t.Fatalf("finance inbox query filters finance_export_batches by missing organization_id column:\n%s", query)
+	}
+	if !strings.Contains(query, "FROM finance_export_batches b") {
+		t.Fatalf("finance inbox query should alias finance_export_batches as b:\n%s", query)
+	}
+	if !strings.Contains(query, "EXISTS (SELECT 1 FROM finance_export_lines l WHERE l.batch_id = b.id AND l.organization_id = $2)") {
+		t.Fatalf("finance inbox query should filter tenant organization through finance_export_lines:\n%s", query)
+	}
+}
+
+func TestActivityQueryFiltersFinanceBatchesThroughFinanceExportLines(t *testing.T) {
+	query := activityQuery()
+
+	if strings.Contains(query, "FROM finance_export_batches WHERE $2::uuid IS NULL OR organization_id = $2") {
+		t.Fatalf("activity query filters finance_export_batches by missing organization_id column:\n%s", query)
+	}
+	if !strings.Contains(query, "FROM finance_export_batches b") || !strings.Contains(query, "WHERE $2::uuid IS NULL OR EXISTS") {
+		t.Fatalf("activity query should alias finance_export_batches and use an EXISTS organization filter:\n%s", query)
+	}
+	if !strings.Contains(query, "EXISTS (SELECT 1 FROM finance_export_lines l WHERE l.batch_id = b.id AND l.organization_id = $2)") {
+		t.Fatalf("activity query should filter finance batches through finance_export_lines:\n%s", query)
 	}
 }

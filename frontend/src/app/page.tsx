@@ -40,26 +40,39 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
   activateAssistantSkill,
+  activatePlatformAssistantSkill,
+  approvePlatformToolApproval,
   approveToolApproval,
   apiRequest,
   completeOnboarding,
   confirmAssistantProposal,
+  confirmPlatformAssistantProposal,
   createAssistantSkill,
+  createPlatformAssistantSkill,
   getUserPreference,
   getMe,
   getMetaOrgInbox,
   getMetaOrgOverview,
+  getPlatformMetaOrgInbox,
+  getPlatformMetaOrgOverview,
   listAssistantContextTargets,
   listAssistantProposals,
   listAssistantSkills,
   listModels,
+  listPlatformAssistantContextTargets,
+  listPlatformAssistantProposals,
+  listPlatformAssistantSkills,
+  listPlatformModels,
   listRoles,
   listSaaSModules,
   login,
   registerUser,
   rejectAssistantProposal,
+  rejectPlatformAssistantProposal,
+  rejectPlatformToolApproval,
   rejectToolApproval,
   runAssistantSkill,
+  runPlatformAssistantSkill,
   saveUserPreference,
 } from '@/lib/api'
 import type {
@@ -212,6 +225,9 @@ type BusinessTargetType =
   | 'warehouse'
   | 'inventory_balance'
   | 'inventory_movement'
+  | 'inventory_transfer'
+  | 'inventory_adjustment'
+  | 'inventory_count'
   | 'purchase_requisition'
   | 'purchase_order'
   | 'purchase_receipt'
@@ -241,6 +257,31 @@ type BusinessTreeNode = {
 }
 
 type BusinessSelection = BusinessTreeNode
+
+type SupplyChainFunctionID =
+  | 'procurement:requisitions'
+  | 'procurement:orders'
+  | 'procurement:receipts'
+  | 'procurement:returns'
+  | 'sales:quotations'
+  | 'sales:orders'
+  | 'sales:shipments'
+  | 'sales:returns'
+  | 'inventory:partners'
+  | 'inventory:items'
+  | 'inventory:warehouses'
+  | 'inventory:balances'
+  | 'inventory:movements'
+  | 'inventory:transfers'
+  | 'inventory:adjustments'
+  | 'inventory:counts'
+
+type SupplyChainFunction = {
+  id: SupplyChainFunctionID
+  domain: 'Procurement' | 'Sales' | 'Inventory'
+  label: string
+  targetTypes: BusinessTargetType[]
+}
 
 type OverviewBusinessFunction = {
   id: string
@@ -296,6 +337,18 @@ type WorkspaceLayoutPane = keyof WorkspaceLayoutWidths
 
 const lifecycleDomains = ['Requirement', 'Project', 'Delivery', 'Cost', 'Feedback']
 const virtualDomains = ['Costing', 'MetaResource', 'SystemAdmin']
+const platformOnlyDomainSet = new Set([
+  'Capability',
+  'Governance',
+  'Evolution',
+  'Verification',
+  'SystemAdmin',
+  'DeveloperTools',
+  'Identity',
+  'Layer',
+  'Observability',
+])
+const tenantOnlyDomains = [...operationDomains, ...virtualDomains].filter((domain) => !platformOnlyDomainSet.has(domain))
 const dedicatedDomains = new Set([
   'MetaResource',
   'SystemAdmin',
@@ -350,17 +403,8 @@ const defaultMenuGroups: MenuGroup[] = [
       'MetaResource',
       'Organization',
       'Workflow',
-      'Capability',
-      'Governance',
-      'Evolution',
-      'Verification',
       'MetaOrg',
       'Dashboard',
-      'SystemAdmin',
-      'DeveloperTools',
-      'Identity',
-      'Layer',
-      'Observability',
     ],
   },
   {
@@ -382,6 +426,35 @@ const platformMenuGroups: MenuGroup[] = [
     domains: ['SystemAdmin'],
   },
 ]
+
+const supplyChainFunctionGroups: Record<'Procurement' | 'Sales' | 'Inventory', SupplyChainFunction[]> = {
+  Procurement: [
+    { id: 'procurement:requisitions', domain: 'Procurement', label: 'procurement.requisitions', targetTypes: ['purchase_requisition'] },
+    { id: 'procurement:orders', domain: 'Procurement', label: 'procurement.orders', targetTypes: ['purchase_order'] },
+    { id: 'procurement:receipts', domain: 'Procurement', label: 'procurement.receipts', targetTypes: ['purchase_receipt'] },
+    { id: 'procurement:returns', domain: 'Procurement', label: 'procurement.returns', targetTypes: ['purchase_return'] },
+  ],
+  Sales: [
+    { id: 'sales:quotations', domain: 'Sales', label: 'sales.quotations', targetTypes: ['sales_quotation'] },
+    { id: 'sales:orders', domain: 'Sales', label: 'sales.orders', targetTypes: ['sales_order'] },
+    { id: 'sales:shipments', domain: 'Sales', label: 'sales.shipments', targetTypes: ['sales_shipment'] },
+    { id: 'sales:returns', domain: 'Sales', label: 'sales.returns', targetTypes: ['sales_return'] },
+  ],
+  Inventory: [
+    { id: 'inventory:partners', domain: 'Inventory', label: 'inventory.partners', targetTypes: ['business_partner'] },
+    { id: 'inventory:items', domain: 'Inventory', label: 'inventory.items', targetTypes: ['inventory_item'] },
+    { id: 'inventory:warehouses', domain: 'Inventory', label: 'inventory.warehouses', targetTypes: ['warehouse'] },
+    { id: 'inventory:balances', domain: 'Inventory', label: 'inventory.balances', targetTypes: ['inventory_balance'] },
+    { id: 'inventory:movements', domain: 'Inventory', label: 'inventory.movements', targetTypes: ['inventory_movement'] },
+    { id: 'inventory:transfers', domain: 'Inventory', label: 'inventory.transfers', targetTypes: ['inventory_transfer'] },
+    { id: 'inventory:adjustments', domain: 'Inventory', label: 'inventory.adjustments', targetTypes: ['inventory_adjustment'] },
+    { id: 'inventory:counts', domain: 'Inventory', label: 'inventory.counts', targetTypes: ['inventory_count'] },
+  ],
+}
+
+const supplyChainFunctionByID = new Map<SupplyChainFunctionID, SupplyChainFunction>(
+  Object.values(supplyChainFunctionGroups).flat().map((item) => [item.id, item]),
+)
 
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const compactFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact' })
@@ -581,7 +654,25 @@ function buildOrganizationNode(organization: OrganizationTreeRecord, departments
   }
 }
 
-async function loadBusinessTreeNodes(token: string, domain: string): Promise<BusinessTreeNode[]> {
+function supplyChainFunctionsForDomain(domain: string): SupplyChainFunction[] {
+  return domain === 'Procurement' || domain === 'Sales' || domain === 'Inventory' ? supplyChainFunctionGroups[domain] : []
+}
+
+function defaultSupplyChainFunction(domain: string): SupplyChainFunction | null {
+  return supplyChainFunctionsForDomain(domain)[0] ?? null
+}
+
+function supplyChainFunctionForTarget(domain: string, targetType: BusinessTargetType): SupplyChainFunction | null {
+  return supplyChainFunctionsForDomain(domain).find((item) => item.targetTypes.includes(targetType)) ?? null
+}
+
+function filterBusinessNodesBySupplyChainFunction(nodes: BusinessTreeNode[], activeFunction?: SupplyChainFunction | null): BusinessTreeNode[] {
+  if (!activeFunction) return nodes
+  const targetTypes = new Set(activeFunction.targetTypes)
+  return nodes.filter((node) => targetTypes.has(node.targetType))
+}
+
+async function loadBusinessTreeNodes(token: string, domain: string, activeSupplyChainFunction?: SupplyChainFunction | null): Promise<BusinessTreeNode[]> {
   if (domain === 'Requirement') {
     const data = await apiRequest<unknown>('/requirements?limit=100', { token })
     return buildRecordNodes(domain, asRecords(data), 'requirement', {
@@ -619,14 +710,17 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
   }
 
   if (domain === 'Inventory') {
-    const [partners, items, warehouses, balances, movements] = await Promise.all([
+    const [partners, items, warehouses, balances, movements, transfers, adjustments, counts] = await Promise.all([
       apiRequest<unknown>('/inventory/partners?limit=100', { token }).catch(() => []),
       apiRequest<unknown>('/inventory/items?limit=100', { token }).catch(() => []),
       apiRequest<unknown>('/inventory/warehouses?limit=100', { token }).catch(() => []),
       apiRequest<unknown>('/inventory/balances?limit=100', { token }).catch(() => []),
       apiRequest<unknown>('/inventory/movements?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/transfers?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/adjustments?limit=100', { token }).catch(() => []),
+      apiRequest<unknown>('/inventory/counts?limit=100', { token }).catch(() => []),
     ])
-    return [
+    return filterBusinessNodesBySupplyChainFunction([
       {
         id: 'inventory:partners',
         domain,
@@ -677,7 +771,37 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
           descriptionKeys: ['source_type', 'item_id', 'warehouse_id'],
         }),
       },
-    ]
+      {
+        id: 'inventory:transfers',
+        domain,
+        targetType: 'inventory_transfer',
+        label: 'inventory.transfers',
+        children: buildRecordNodes(domain, asRecords(transfers), 'inventory_transfer', {
+          labelKeys: ['transfer_number', 'master_key'],
+          descriptionKeys: ['from_warehouse_id', 'to_warehouse_id', 'id'],
+        }),
+      },
+      {
+        id: 'inventory:adjustments',
+        domain,
+        targetType: 'inventory_adjustment',
+        label: 'inventory.adjustments',
+        children: buildRecordNodes(domain, asRecords(adjustments), 'inventory_adjustment', {
+          labelKeys: ['adjustment_number', 'master_key'],
+          descriptionKeys: ['warehouse_id', 'reason', 'id'],
+        }),
+      },
+      {
+        id: 'inventory:counts',
+        domain,
+        targetType: 'inventory_count',
+        label: 'inventory.counts',
+        children: buildRecordNodes(domain, asRecords(counts), 'inventory_count', {
+          labelKeys: ['count_number', 'master_key'],
+          descriptionKeys: ['warehouse_id', 'status', 'id'],
+        }),
+      },
+    ], activeSupplyChainFunction)
   }
 
   if (domain === 'Procurement') {
@@ -687,7 +811,7 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
       apiRequest<unknown>('/procurement/receipts?limit=100', { token }).catch(() => []),
       apiRequest<unknown>('/procurement/returns?limit=100', { token }).catch(() => []),
     ])
-    return [
+    return filterBusinessNodesBySupplyChainFunction([
       {
         id: 'procurement:requisitions',
         domain,
@@ -728,7 +852,7 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
           descriptionKeys: ['supplier_name', 'receipt_id', 'id'],
         }),
       },
-    ]
+    ], activeSupplyChainFunction)
   }
 
   if (domain === 'Sales') {
@@ -738,7 +862,7 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
       apiRequest<unknown>('/sales/shipments?limit=100', { token }).catch(() => []),
       apiRequest<unknown>('/sales/returns?limit=100', { token }).catch(() => []),
     ])
-    return [
+    return filterBusinessNodesBySupplyChainFunction([
       {
         id: 'sales:quotations',
         domain,
@@ -779,7 +903,7 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
           descriptionKeys: ['customer_name', 'shipment_id', 'id'],
         }),
       },
-    ]
+    ], activeSupplyChainFunction)
   }
 
   if (domain === 'Finance' || domain === 'FinanceAccounting') {
@@ -868,7 +992,7 @@ async function loadBusinessTreeNodes(token: string, domain: string): Promise<Bus
 }
 
 function normalizeMenuGroups(input?: MenuGroup[]): MenuGroup[] {
-  const allMenuDomains = [...operationDomains, ...virtualDomains]
+  const allMenuDomains = tenantOnlyDomains
   const knownDomains = new Set(allMenuDomains)
   const defaultByID = new Map(defaultMenuGroups.map((group) => [group.id, group]))
   const defaultTargetByDomain = new Map(
@@ -1209,6 +1333,7 @@ export default function Home() {
   const [operationContext, setOperationContext] = useState<Record<string, string>>({})
   const [businessNodesByDomain, setBusinessNodesByDomain] = useState<Record<string, BusinessTreeNode[]>>({})
   const [businessSelection, setBusinessSelection] = useState<BusinessSelection | null>(null)
+  const [currentSupplyChainFunctionID, setCurrentSupplyChainFunctionID] = useState<SupplyChainFunctionID | null>(null)
   const [businessTreeLoading, setBusinessTreeLoading] = useState(false)
   const [businessTreeError, setBusinessTreeError] = useState<string | null>(null)
   const [mobileBusinessOpen, setMobileBusinessOpen] = useState(false)
@@ -1250,7 +1375,7 @@ export default function Home() {
       if (sessionPlatformRole) {
         setCurrentOrganizationId(null)
         setCurrentOrganizationID(null)
-        setWorkspaceView('domain:SystemAdmin')
+        setWorkspaceView('overview')
       } else {
         setCurrentOrganizationID(getCurrentOrganizationId())
       }
@@ -1305,7 +1430,7 @@ export default function Home() {
       if (nextPlatformRole) {
         setCurrentOrganizationId(null)
         setCurrentOrganizationID(null)
-        setWorkspaceView((current) => (current === 'overview' ? 'domain:SystemAdmin' : current))
+        setWorkspaceView((current) => (current.startsWith('domain:') ? current : 'overview'))
         return
       }
       const storedOrgID = getCurrentOrganizationId()
@@ -1331,14 +1456,15 @@ export default function Home() {
   }, [orderedOverviewFunctions, overviewFunctionID])
 
   useEffect(() => {
-    if (!token || isPlatformAdminSession) {
+    if (!token) {
       return deferStateUpdate(() => {
         setOverviewModels([])
         setOverviewModelID('')
       })
     }
     let cancelled = false
-    listModels(token)
+    const loadModels = isPlatformAdminSession ? listPlatformModels : listModels
+    loadModels(token)
       .then((items) => {
         if (cancelled) return
         setOverviewModels(items.filter((model) => model.status === 'active'))
@@ -1367,7 +1493,7 @@ export default function Home() {
   }, [overviewModels, selectedOverviewFunction.moduleKey])
 
   useEffect(() => {
-    if (!token || isPlatformAdminSession) {
+    if (!token) {
       return deferStateUpdate(() => {
         setOverviewSkills([])
         setOverviewSkillID('')
@@ -1380,7 +1506,8 @@ export default function Home() {
       if (cancelled) return
       setOverviewControlLoading(true)
       setOverviewControlError('')
-      listAssistantSkills(token, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType)
+      const loadSkills = isPlatformAdminSession ? listPlatformAssistantSkills : listAssistantSkills
+      loadSkills(token, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType)
         .then((items) => {
           if (cancelled) return
           setOverviewSkills(items)
@@ -1433,10 +1560,12 @@ export default function Home() {
   }, [isPlatformAdminSession, token])
 
   useEffect(() => {
-    if (!token || onboardingRequired || isPlatformAdminSession) return
+    if (!token || onboardingRequired) return
     let cancelled = false
+    const loadOverviewData = isPlatformAdminSession ? getPlatformMetaOrgOverview : getMetaOrgOverview
+    const loadInboxData = isPlatformAdminSession ? getPlatformMetaOrgInbox : getMetaOrgInbox
 
-    Promise.all([getMetaOrgOverview(token), getMetaOrgInbox(token)])
+    Promise.all([loadOverviewData(token), loadInboxData(token)])
       .then(([overviewData, inboxData]) => {
         if (!cancelled) {
           setOverview(overviewData)
@@ -1452,9 +1581,13 @@ export default function Home() {
     }
   }, [isPlatformAdminSession, onboardingRequired, t, token])
 
-  const effectiveWorkspaceView: WorkspaceView =
-    isPlatformAdminSession && workspaceView === 'overview' ? 'domain:SystemAdmin' : workspaceView
+  const effectiveWorkspaceView: WorkspaceView = workspaceView
   const activeDomain = effectiveWorkspaceView === 'overview' ? 'MetaOrg' : effectiveWorkspaceView.replace('domain:', '')
+  const activeSupplyChainFunction =
+    currentSupplyChainFunctionID && supplyChainFunctionByID.get(currentSupplyChainFunctionID)?.domain === activeDomain
+      ? supplyChainFunctionByID.get(currentSupplyChainFunctionID) ?? null
+      : defaultSupplyChainFunction(activeDomain)
+  const businessTreeCacheKey = activeSupplyChainFunction ? `${activeDomain}:${activeSupplyChainFunction.id}` : activeDomain
 
   useEffect(() => {
     if (!token || effectiveWorkspaceView === 'overview' || isPlatformAdminSession) {
@@ -1463,23 +1596,23 @@ export default function Home() {
         setBusinessTreeError(null)
       })
     }
-    if (businessNodesByDomain[activeDomain]) return
+    if (businessNodesByDomain[businessTreeCacheKey]) return
     let cancelled = false
 
     const cancelDeferred = deferStateUpdate(() => {
       if (cancelled) return
       setBusinessTreeLoading(true)
       setBusinessTreeError(null)
-      loadBusinessTreeNodes(token, activeDomain)
+      loadBusinessTreeNodes(token, activeDomain, activeSupplyChainFunction)
         .then((nodes) => {
           if (!cancelled) {
-            setBusinessNodesByDomain((current) => ({ ...current, [activeDomain]: nodes }))
+            setBusinessNodesByDomain((current) => ({ ...current, [businessTreeCacheKey]: nodes }))
           }
         })
         .catch((err) => {
           if (!cancelled) {
             setBusinessTreeError(err instanceof Error ? err.message : t('businessTree.loadFailed'))
-            setBusinessNodesByDomain((current) => ({ ...current, [activeDomain]: buildOperationNodes(activeDomain) }))
+            setBusinessNodesByDomain((current) => ({ ...current, [businessTreeCacheKey]: buildOperationNodes(activeDomain) }))
           }
         })
         .finally(() => {
@@ -1491,7 +1624,7 @@ export default function Home() {
       cancelled = true
       cancelDeferred()
     }
-  }, [activeDomain, businessNodesByDomain, effectiveWorkspaceView, isPlatformAdminSession, t, token])
+  }, [activeDomain, activeSupplyChainFunction, businessNodesByDomain, businessTreeCacheKey, effectiveWorkspaceView, isPlatformAdminSession, t, token])
 
   const healthRatio = useMemo(() => {
     if (!overview) return 0
@@ -1515,11 +1648,13 @@ export default function Home() {
   }
 
   async function loadOverview(activeToken = token) {
-    if (!activeToken || isPlatformAdminSession) return
+    if (!activeToken) return
     setOverviewLoading(true)
     setError(null)
     try {
-      const [overviewData, inboxData] = await Promise.all([getMetaOrgOverview(activeToken), getMetaOrgInbox(activeToken)])
+      const loadOverviewData = isPlatformAdminSession ? getPlatformMetaOrgOverview : getMetaOrgOverview
+      const loadInboxData = isPlatformAdminSession ? getPlatformMetaOrgInbox : getMetaOrgInbox
+      const [overviewData, inboxData] = await Promise.all([loadOverviewData(activeToken), loadInboxData(activeToken)])
       setOverview(overviewData)
       setInbox(inboxData)
     } catch (err) {
@@ -1574,7 +1709,7 @@ export default function Home() {
         setCurrentOrganizationID(null)
         setBusinessNodesByDomain({})
         setBusinessSelection(null)
-        setWorkspaceView('domain:SystemAdmin')
+        setWorkspaceView('overview')
       } else {
         setCurrentOrganizationID(nextOrgID)
       }
@@ -1686,7 +1821,7 @@ export default function Home() {
     event.preventDefault()
     if (isPlatformAdminSession) return
     const domain = event.dataTransfer.getData('text/plain') || draggedDomain
-    if (!domain || ![...operationDomains, ...virtualDomains].includes(domain)) return
+    if (!domain || !tenantOnlyDomains.includes(domain)) return
     setMenuGroups((current) =>
       current.map((group) => {
         const domains = group.domains.filter((item) => item !== domain)
@@ -1798,13 +1933,13 @@ export default function Home() {
   }
 
   function openSkillImport() {
-    if (isPlatformAdminSession) return
     if (!token) return
     setSkillImportOpen(true)
     setOverviewControlError('')
     setOverviewControlNotice('')
     setOverviewControlLoading(true)
-    listAssistantSkills(token)
+    const loadSkills = isPlatformAdminSession ? listPlatformAssistantSkills : listAssistantSkills
+    loadSkills(token)
       .then((items) => {
         setSkillLibrary(items)
         setSkillImportID(items[0]?.id || '')
@@ -1825,7 +1960,8 @@ export default function Home() {
     setOverviewControlError('')
     setOverviewControlNotice('')
     try {
-      const imported = await createAssistantSkill(token, {
+      const createSkill = isPlatformAdminSession ? createPlatformAssistantSkill : createAssistantSkill
+      const imported = await createSkill(token, {
         module_key: selectedOverviewFunction.moduleKey,
         target_type: selectedOverviewFunction.targetType,
         business_function_key: selectedOverviewFunction.id,
@@ -1867,13 +2003,23 @@ export default function Home() {
     setAssistantOpen(true)
   }
 
+  function handleSupplyChainFunctionChange(functionID: SupplyChainFunctionID) {
+    const nextFunction = supplyChainFunctionByID.get(functionID)
+    if (!nextFunction) return
+    setCurrentSupplyChainFunctionID(functionID)
+    setWorkspaceView(`domain:${nextFunction.domain}`)
+    setBusinessSelection(null)
+    setMobileMenuOpen(false)
+    setMobileBusinessOpen(false)
+  }
+
   function handleViewChange(view: WorkspaceView) {
-    if (isPlatformAdminSession) {
-      setWorkspaceView('domain:SystemAdmin')
-      setBusinessSelection(null)
-      setMobileMenuOpen(false)
-      setMobileBusinessOpen(false)
-      return
+    const nextDomain = view === 'overview' ? 'MetaOrg' : view.replace('domain:', '')
+    const defaultFunction = defaultSupplyChainFunction(nextDomain)
+    if (defaultFunction) {
+      setCurrentSupplyChainFunctionID(defaultFunction.id)
+    } else {
+      setCurrentSupplyChainFunctionID(null)
     }
     setWorkspaceView(view)
     setBusinessSelection(null)
@@ -1889,6 +2035,8 @@ export default function Home() {
 
   function handleBusinessSelect(node: BusinessTreeNode) {
     const view = node.domain === 'MetaOrg' ? 'overview' : (`domain:${node.domain}` as WorkspaceView)
+    const selectedSupplyChainFunction = supplyChainFunctionForTarget(node.domain, node.targetType)
+    if (selectedSupplyChainFunction) setCurrentSupplyChainFunctionID(selectedSupplyChainFunction.id)
     setWorkspaceView(view)
     setBusinessSelection(node)
     setOperationContext((current) => ({
@@ -1908,10 +2056,12 @@ export default function Home() {
     setError(null)
     try {
       if (decision === 'approve') {
-        await approveToolApproval(token, id)
+        const approve = isPlatformAdminSession ? approvePlatformToolApproval : approveToolApproval
+        await approve(token, id)
         setNotice(t('agent.approvalApproved'))
       } else {
-        await rejectToolApproval(token, id)
+        const reject = isPlatformAdminSession ? rejectPlatformToolApproval : rejectToolApproval
+        await reject(token, id)
         setNotice(t('agent.approvalRejected'))
       }
       await loadOverview(token)
@@ -1935,7 +2085,7 @@ export default function Home() {
   const assistantModule = isOverview ? selectedOverviewFunction.moduleKey : assistantModuleForDomain(activeDomain)
   const assistantTargetType = isOverview ? selectedOverviewFunction.targetType : activeBusinessSelection?.targetType
   const assistantTargetID = isOverview ? undefined : activeBusinessSelection?.targetID
-  const activeBusinessNodes = isOverview ? buildOperationNodes('MetaOrg') : businessNodesByDomain[activeDomain] ?? []
+  const activeBusinessNodes = isOverview ? buildOperationNodes('MetaOrg') : businessNodesByDomain[businessTreeCacheKey] ?? []
 
   return (
     <main className={`app-dark ${themeMode === 'light' ? 'theme-light' : ''}`}>
@@ -2172,6 +2322,8 @@ export default function Home() {
               onDragStart={handleDomainDragStart}
               onDropDomain={handleDomainDrop}
               onReset={resetMenuLayout}
+              currentSupplyChainFunctionID={activeSupplyChainFunction?.id ?? null}
+              onSupplyChainFunctionChange={handleSupplyChainFunctionChange}
             />
           </div>
           {mobileMenuOpen && (
@@ -2292,6 +2444,7 @@ export default function Home() {
                     }}
                     onOpenAssistant={openAssistantWithoutIntent}
                     onReviewApproval={(id, decision) => void handleToolApproval(id, decision)}
+                    apiScope={isPlatformAdminSession ? 'platform' : 'tenant'}
                   />
                 ) : (
                   <div className="flex min-h-[420px] items-center justify-center rounded-lg border border-slate-200 bg-white">
@@ -2330,11 +2483,23 @@ export default function Home() {
               ) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
                 <CostingWorkspace token={token} />
               ) : effectiveWorkspaceView === 'domain:Inventory' ? (
-                <InventoryWorkspace token={token} />
+                <InventoryWorkspace
+                  token={token}
+                  currentSupplyChainFunctionID={activeSupplyChainFunction?.id}
+                  externalSelection={activeBusinessSelection}
+                />
               ) : effectiveWorkspaceView === 'domain:Procurement' ? (
-                <ProcurementWorkspace token={token} />
+                <ProcurementWorkspace
+                  token={token}
+                  currentSupplyChainFunctionID={activeSupplyChainFunction?.id}
+                  externalSelection={activeBusinessSelection}
+                />
               ) : effectiveWorkspaceView === 'domain:Sales' ? (
-                <SalesWorkspace token={token} />
+                <SalesWorkspace
+                  token={token}
+                  currentSupplyChainFunctionID={activeSupplyChainFunction?.id}
+                  externalSelection={activeBusinessSelection}
+                />
               ) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
                 <FinanceWorkspace token={token} mode="accounting" />
               ) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (
@@ -2453,6 +2618,7 @@ export default function Home() {
                   initialIntent={assistantIntent}
                   initialIntentKey={assistantIntentKey}
                   autoRunInitialIntent={Boolean(assistantIntent)}
+                  apiScope={isPlatformAdminSession ? 'platform' : 'tenant'}
                 />
               </aside>
             </div>
@@ -2667,6 +2833,8 @@ function NavigationSidebar({
   onDragStart,
   onDropDomain,
   onReset,
+  currentSupplyChainFunctionID,
+  onSupplyChainFunctionChange,
 }: {
   workspaceView: WorkspaceView
   groups: MenuGroup[]
@@ -2676,6 +2844,8 @@ function NavigationSidebar({
   onDragStart: (event: DragEvent<HTMLButtonElement>, domain: string) => void
   onDropDomain: (event: DragEvent<HTMLElement>, groupID: string) => void
   onReset: () => void
+  currentSupplyChainFunctionID?: SupplyChainFunctionID | null
+  onSupplyChainFunctionChange: (functionID: SupplyChainFunctionID) => void
 }) {
   const { t } = useI18n()
   return (
@@ -2732,18 +2902,46 @@ function NavigationSidebar({
                     const menuKey = `domain:${domain}` as const
                     const count = apiOperations.filter((operation) => operation.domain === domain).length
                     const Icon = domainIcons[domain] ?? FolderKanban
+                    const supplyChainFunctions = supplyChainFunctionsForDomain(domain)
+                    const firstSupplyChainFunction = supplyChainFunctions[0]
 
                     return (
-                      <SidebarButton
-                        key={domain}
-                        active={workspaceView === menuKey}
-                        icon={Icon}
-                        label={t(domainLabels[domain] ?? domain)}
-                        count={count}
-                        onClick={() => onViewChange(menuKey)}
-                        draggable
-                        onDragStart={(event) => onDragStart(event, domain)}
-                      />
+                      <div key={domain} className="space-y-1">
+                        <SidebarButton
+                          active={workspaceView === menuKey}
+                          icon={Icon}
+                          label={t(domainLabels[domain] ?? domain)}
+                          count={count}
+                          onClick={() => {
+                            if (firstSupplyChainFunction) {
+                              onSupplyChainFunctionChange(firstSupplyChainFunction.id)
+                              return
+                            }
+                            onViewChange(menuKey)
+                          }}
+                          draggable
+                          onDragStart={(event) => onDragStart(event, domain)}
+                        />
+                        {supplyChainFunctions.length > 0 && workspaceView === menuKey && (
+                          <div className="space-y-1 pl-7">
+                            {supplyChainFunctions.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => onSupplyChainFunctionChange(item.id)}
+                                className={`flex h-8 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs font-semibold transition ${
+                                  currentSupplyChainFunctionID === item.id
+                                    ? 'border border-[#DF6A24]/35 bg-[#DF6A24]/10 text-white'
+                                    : 'border border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-950/40 hover:text-slate-200'
+                                }`}
+                              >
+                                <span className="truncate">{t(item.label)}</span>
+                                <span className="text-[10px] font-bold text-slate-500">{item.targetTypes.length}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )
                   })}
                   {group.domains.length === 0 && <p className="px-3 py-2 text-sm text-slate-500">{t('nav.empty')}</p>}
@@ -3328,6 +3526,7 @@ function OverviewAssistantHome({
   onQuickPrompt,
   onOpenAssistant,
   onReviewApproval,
+  apiScope,
 }: {
   overview: MetaOrgOverview
   inbox: InboxItem[]
@@ -3353,6 +3552,7 @@ function OverviewAssistantHome({
   onQuickPrompt: (intent: string) => void
   onOpenAssistant: () => void
   onReviewApproval: (id: string, decision: 'approve' | 'reject') => void
+  apiScope: 'tenant' | 'platform'
 }) {
   const { t } = useI18n()
   const modes = [
@@ -3554,12 +3754,14 @@ function Dashboard({
   inbox,
   healthRatio,
   onReviewApproval,
+  apiScope = 'tenant',
 }: {
   token: string
   overview: MetaOrgOverview
   inbox: InboxItem[]
   healthRatio: number
   onReviewApproval: (id: string, decision: 'approve' | 'reject') => void
+  apiScope?: 'tenant' | 'platform'
 }) {
   const { t } = useI18n()
   const agentCoverage = overview.agents.total > 0 ? overview.agents.active / overview.agents.total : 0
@@ -3603,7 +3805,7 @@ function Dashboard({
           </div>
         </section>
 
-        <GlobalBusinessInteraction token={token} />
+        <GlobalBusinessInteraction token={token} apiScope={apiScope} />
 
         <div className="flex items-center justify-between gap-3 px-1">
           <h2 className="text-sm font-bold uppercase tracking-normal text-slate-400">{t('shell.openWork')}</h2>
@@ -3789,7 +3991,7 @@ function Dashboard({
   )
 }
 
-function GlobalBusinessInteraction({ token }: { token: string }) {
+function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScope: 'tenant' | 'platform' }) {
   const { t } = useI18n()
   const [moduleID, setModuleID] = useState('meta_org')
   const [targets, setTargets] = useState<AssistantContextTarget[]>([])
@@ -3849,7 +4051,8 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
     if (!pending) return
     pendingSkillRunRef.current = null
     setBusy(true)
-    runAssistantSkill(token, pending.skillID, {
+    const runSkill = apiScope === 'platform' ? runPlatformAssistantSkill : runAssistantSkill
+    runSkill(token, pending.skillID, {
       module_key: pending.moduleKey,
       target_type: pending.targetType,
       target_id: pending.targetID,
@@ -3862,7 +4065,9 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([listAssistantContextTargets(token, moduleKey, moduleTargetType), listAssistantSkills(token, moduleKey, moduleTargetType)])
+    const loadContextTargets = apiScope === 'platform' ? listPlatformAssistantContextTargets : listAssistantContextTargets
+    const loadSkills = apiScope === 'platform' ? listPlatformAssistantSkills : listAssistantSkills
+    Promise.all([loadContextTargets(token, moduleKey, moduleTargetType), loadSkills(token, moduleKey, moduleTargetType)])
       .then(([targetItems, skillItems]) => {
         if (cancelled) return
         setTargets(targetItems)
@@ -3875,14 +4080,15 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
     return () => {
       cancelled = true
     }
-  }, [moduleKey, moduleTargetType, t, token])
+  }, [apiScope, moduleKey, moduleTargetType, t, token])
 
   useEffect(() => {
     if (!sessionID) return
     let cancelled = false
+    const loadProposals = apiScope === 'platform' ? listPlatformAssistantProposals : listAssistantProposals
     const timers = [0, 2200, 5200, 8200].map((delay) =>
       window.setTimeout(() => {
-        listAssistantProposals(token, sessionID)
+        loadProposals(token, sessionID)
           .then((items) => {
             if (!cancelled) setProposals(items)
           })
@@ -3895,14 +4101,15 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
       cancelled = true
       timers.forEach((timer) => window.clearTimeout(timer))
     }
-  }, [sessionID, token])
+  }, [apiScope, sessionID, token])
 
   async function refreshProposals() {
     if (!sessionID) return
     setBusy(true)
     setError('')
     try {
-      setProposals(await listAssistantProposals(token, sessionID))
+      const loadProposals = apiScope === 'platform' ? listPlatformAssistantProposals : listAssistantProposals
+      setProposals(await loadProposals(token, sessionID))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('assistant.global.loadFailed'))
     } finally {
@@ -3916,10 +4123,12 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
     setNotice('')
     try {
       if (decision === 'confirm') {
-        await confirmAssistantProposal(token, id)
+        const confirmProposal = apiScope === 'platform' ? confirmPlatformAssistantProposal : confirmAssistantProposal
+        await confirmProposal(token, id)
         setNotice(t('assistant.global.proposalConfirmed'))
       } else {
-        await rejectAssistantProposal(token, id, 'rejected from global business interaction')
+        const rejectProposal = apiScope === 'platform' ? rejectPlatformAssistantProposal : rejectAssistantProposal
+        await rejectProposal(token, id, 'rejected from global business interaction')
         setNotice(t('assistant.global.proposalRejected'))
       }
       await refreshProposals()
@@ -3936,7 +4145,8 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
     setError('')
     setNotice('')
     try {
-      const skill = await createAssistantSkill(token, {
+      const createSkill = apiScope === 'platform' ? createPlatformAssistantSkill : createAssistantSkill
+      const skill = await createSkill(token, {
         module_key: moduleKey,
         target_type: activeTargetType,
         business_function_key: activeModule.id,
@@ -3965,7 +4175,8 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
     setBusy(true)
     setError('')
     try {
-      const updated = await activateAssistantSkill(token, id)
+      const activateSkill = apiScope === 'platform' ? activatePlatformAssistantSkill : activateAssistantSkill
+      const updated = await activateSkill(token, id)
       setSkills((current) => current.map((skill) => (skill.id === id ? updated : skill)))
       setNotice(t('assistant.global.skillActivated'))
     } catch (err) {
@@ -4017,6 +4228,7 @@ function GlobalBusinessInteraction({ token }: { token: string }) {
             initialIntent={skillIntent}
             initialIntentKey={skillIntentKey}
             autoRunInitialIntent
+            apiScope={apiScope}
             className="min-h-[560px] rounded-l-lg"
             onSessionCreated={handleSessionCreated}
           />

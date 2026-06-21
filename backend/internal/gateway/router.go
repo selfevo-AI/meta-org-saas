@@ -30,6 +30,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
 )
 
 type Dependencies struct {
@@ -55,6 +56,7 @@ type Dependencies struct {
 	SaaSHandler          *saas.Handler
 	SystemAdminHandler   *systemadmin.Handler
 	TenantResolver       middleware.TenantResolver
+	PlatformRoleResolver middleware.PlatformRoleResolver
 	ObservabilityHandler *observability.Handler
 	VerificationHandler  *verification.Handler
 	GovernanceHandler    *governance.Handler
@@ -84,80 +86,121 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			if deps.SystemAdminHandler != nil {
 				deps.SystemAdminHandler.RegisterAuthenticatedRoutes(r)
 			}
+			registerPlatformAssistantRoutes(r, deps)
+			registerPlatformAdminRoutes(r, deps)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.TenantMiddleware(deps.TenantResolver))
-				if deps.IdentityHandler != nil {
-					deps.IdentityHandler.RegisterProtectedRoutes(r)
-				}
-				if deps.SaaSHandler != nil {
-					deps.SaaSHandler.RegisterTenantRoutes(r)
-				}
-				if deps.OrganizationHandler != nil {
-					deps.OrganizationHandler.RegisterRoutes(r)
-				}
-				if deps.LayerHandler != nil {
-					deps.LayerHandler.RegisterRoutes(r)
-				}
-				if deps.CapabilityHandler != nil {
-					deps.CapabilityHandler.RegisterRoutes(r)
-				}
-				if deps.CostingHandler != nil {
-					deps.CostingHandler.RegisterRoutes(r)
-				}
-				if deps.DashboardHandler != nil {
-					deps.DashboardHandler.RegisterRoutes(r)
-				}
-				if deps.MetaOrgHandler != nil {
-					deps.MetaOrgHandler.RegisterRoutes(r)
-				}
-				if deps.MetaResourceHandler != nil {
-					deps.MetaResourceHandler.RegisterRoutes(r)
-				}
-				if deps.AssistantHandler != nil {
-					deps.AssistantHandler.RegisterRoutes(r)
-				}
-				if deps.AIGatewayHandler != nil {
-					deps.AIGatewayHandler.RegisterRoutes(r)
-				}
-				if deps.WorkflowHandler != nil {
-					deps.WorkflowHandler.RegisterRoutes(r)
-				}
-				if deps.ProjectHandler != nil {
-					deps.ProjectHandler.RegisterRoutes(r)
-				}
-				if deps.FinanceHandler != nil {
-					deps.FinanceHandler.RegisterRoutes(r)
-				}
-				if deps.InventoryHandler != nil {
-					deps.InventoryHandler.RegisterRoutes(r)
-				}
-				if deps.ProcurementHandler != nil {
-					deps.ProcurementHandler.RegisterRoutes(r)
-				}
-				if deps.SalesHandler != nil {
-					deps.SalesHandler.RegisterRoutes(r)
-				}
-				if deps.RuntimeHandler != nil {
-					deps.RuntimeHandler.RegisterRoutes(r)
-				}
-				if deps.ToolRuntimeHandler != nil {
-					deps.ToolRuntimeHandler.RegisterRoutes(r)
-				}
-				if deps.VerificationHandler != nil {
-					deps.VerificationHandler.RegisterRoutes(r)
-				}
-				if deps.ObservabilityHandler != nil {
-					deps.ObservabilityHandler.RegisterRoutes(r)
-				}
-				if deps.GovernanceHandler != nil {
-					deps.GovernanceHandler.RegisterRoutes(r)
-				}
-				if deps.EvolutionHandler != nil {
-					deps.EvolutionHandler.RegisterRoutes(r)
-				}
+				registerTenantRoutes(r, deps)
 			})
 		})
 	})
+}
+
+func registerPlatformAssistantRoutes(r chi.Router, deps *Dependencies) {
+	if deps.AssistantHandler == nil && deps.ToolRuntimeHandler == nil {
+		return
+	}
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionAssistantRun))
+		if deps.AssistantHandler != nil {
+			deps.AssistantHandler.RegisterPlatformRoutes(r)
+		}
+		if deps.ToolRuntimeHandler != nil {
+			deps.ToolRuntimeHandler.RegisterPlatformRoutes(r)
+		}
+	})
+}
+
+func registerPlatformAdminRoutes(r chi.Router, deps *Dependencies) {
+	r.Route("/platform/admin", func(r chi.Router) {
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionPlatformRead))
+			if deps.IdentityHandler != nil {
+				deps.IdentityHandler.RegisterProtectedRoutes(r)
+			}
+			if deps.LayerHandler != nil {
+				deps.LayerHandler.RegisterRoutes(r)
+			}
+			if deps.CapabilityHandler != nil {
+				deps.CapabilityHandler.RegisterRoutes(r)
+			}
+			if deps.GovernanceHandler != nil {
+				deps.GovernanceHandler.RegisterRoutes(r)
+			}
+			if deps.EvolutionHandler != nil {
+				deps.EvolutionHandler.RegisterRoutes(r)
+			}
+			if deps.VerificationHandler != nil {
+				deps.VerificationHandler.RegisterRoutes(r)
+			}
+			if deps.ObservabilityHandler != nil {
+				deps.ObservabilityHandler.RegisterRoutes(r)
+			}
+			if deps.MetaOrgHandler != nil {
+				deps.MetaOrgHandler.RegisterPlatformRoutes(r)
+			}
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionRuntimeManage))
+			if deps.RuntimeHandler != nil {
+				deps.RuntimeHandler.RegisterRoutes(r)
+			}
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionModelManage))
+			if deps.AIGatewayHandler != nil {
+				deps.AIGatewayHandler.RegisterRoutes(r)
+			}
+		})
+	})
+}
+
+func registerTenantRoutes(r chi.Router, deps *Dependencies) {
+	if deps.SaaSHandler != nil {
+		deps.SaaSHandler.RegisterTenantRoutes(r)
+	}
+	if deps.OrganizationHandler != nil {
+		deps.OrganizationHandler.RegisterRoutes(r)
+	}
+	if deps.CostingHandler != nil {
+		deps.CostingHandler.RegisterRoutes(r)
+	}
+	if deps.DashboardHandler != nil {
+		deps.DashboardHandler.RegisterRoutes(r)
+	}
+	if deps.MetaOrgHandler != nil {
+		deps.MetaOrgHandler.RegisterRoutes(r)
+	}
+	if deps.MetaResourceHandler != nil {
+		deps.MetaResourceHandler.RegisterRoutes(r)
+	}
+	if deps.AssistantHandler != nil {
+		deps.AssistantHandler.RegisterRoutes(r)
+	}
+	if deps.AIGatewayHandler != nil {
+		deps.AIGatewayHandler.RegisterTenantRoutes(r)
+	}
+	if deps.WorkflowHandler != nil {
+		deps.WorkflowHandler.RegisterRoutes(r)
+	}
+	if deps.ProjectHandler != nil {
+		deps.ProjectHandler.RegisterRoutes(r)
+	}
+	if deps.FinanceHandler != nil {
+		deps.FinanceHandler.RegisterRoutes(r)
+	}
+	if deps.InventoryHandler != nil {
+		deps.InventoryHandler.RegisterRoutes(r)
+	}
+	if deps.ProcurementHandler != nil {
+		deps.ProcurementHandler.RegisterRoutes(r)
+	}
+	if deps.SalesHandler != nil {
+		deps.SalesHandler.RegisterRoutes(r)
+	}
+	if deps.ToolRuntimeHandler != nil {
+		deps.ToolRuntimeHandler.RegisterRoutes(r)
+	}
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {

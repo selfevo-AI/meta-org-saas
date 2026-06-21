@@ -41,6 +41,12 @@ type PlatformDetail struct {
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
+type PlatformPermissionProfile struct {
+	Role        string          `json:"role"`
+	Permissions map[string]bool `json:"permissions"`
+	MenuItems   []string        `json:"menu_items"`
+}
+
 type OrganizationSchemaTarget struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	SchemaName          string         `json:"schema_name"`
@@ -61,6 +67,8 @@ type SchemaChangeRequest struct {
 	Reason         string        `json:"reason"`
 	SchemaPackage  SchemaPackage `json:"schema_package"`
 	Statements     []string      `json:"statements"`
+	RiskLevel      string        `json:"risk_level"`
+	Diff           []SchemaDiff  `json:"diff"`
 	RequestedBy    *uuid.UUID    `json:"requested_by,omitempty"`
 	ReviewedBy     *uuid.UUID    `json:"reviewed_by,omitempty"`
 	AppliedBy      *uuid.UUID    `json:"applied_by,omitempty"`
@@ -85,10 +93,11 @@ type SchemaApplyJob struct {
 }
 
 type CreateSchemaChangeRequestInput struct {
-	OrganizationID uuid.UUID     `json:"organization_id"`
-	RequestType    string        `json:"request_type"`
-	Reason         string        `json:"reason,omitempty"`
-	SchemaPackage  SchemaPackage `json:"schema_package"`
+	OrganizationID       uuid.UUID      `json:"organization_id"`
+	RequestType          string         `json:"request_type"`
+	Reason               string         `json:"reason,omitempty"`
+	SchemaPackage        SchemaPackage  `json:"schema_package"`
+	CurrentSchemaPackage *SchemaPackage `json:"current_schema_package,omitempty"`
 }
 
 type CreateSchemaChangeRequestRecord struct {
@@ -98,5 +107,7 @@ type CreateSchemaChangeRequestRecord struct {
 	Reason         string
 	SchemaPackage  SchemaPackage
 	Statements     []string
+	RiskLevel      string
+	Diff           []SchemaDiff
 	RequestedBy    uuid.UUID
 }

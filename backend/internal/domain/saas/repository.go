@@ -131,10 +131,10 @@ func (r *Repository) CreateUserWithPasswordHash(ctx context.Context, name string
 
 func (r *Repository) ListOrganizationsForUser(ctx context.Context, userID uuid.UUID) ([]OrganizationAccount, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT o.id, o.name, COALESCE(o.description, ''), om.id, om.authority_tier
+		SELECT o.id, o.name, COALESCE(o.description, ''), COALESCE(o.status, 'active'), om.id, om.authority_tier
 		FROM organization_memberships om
 		JOIN organizations o ON o.id = om.organization_id
-		WHERE om.user_id = $1 AND om.status = 'active'
+		WHERE om.user_id = $1 AND om.status = 'active' AND COALESCE(o.status, 'active') = 'active'
 		ORDER BY om.joined_at ASC, o.name
 	`, userID)
 	if err != nil {
@@ -146,7 +146,7 @@ func (r *Repository) ListOrganizationsForUser(ctx context.Context, userID uuid.U
 	for rows.Next() {
 		var item OrganizationAccount
 		var membershipID uuid.UUID
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &membershipID, &item.AuthorityTier); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Description, &item.Status, &membershipID, &item.AuthorityTier); err != nil {
 			return nil, fmt.Errorf("scan user organization: %w", err)
 		}
 		item.MembershipID = &membershipID
@@ -164,7 +164,7 @@ func (r *Repository) ListOrganizationsForPlatform(ctx context.Context, limit int
 		limit = 100
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT id, name, COALESCE(description, '')
+		SELECT id, name, COALESCE(description, ''), COALESCE(status, 'active'), closed_at, closed_by, COALESCE(closed_reason, '')
 		FROM organizations
 		ORDER BY created_at DESC
 		LIMIT $1
@@ -176,7 +176,7 @@ func (r *Repository) ListOrganizationsForPlatform(ctx context.Context, limit int
 	items := []OrganizationAccount{}
 	for rows.Next() {
 		var item OrganizationAccount
-		if err := rows.Scan(&item.ID, &item.Name, &item.Description); err != nil {
+		if err := scanOrganizationAccount(rows, &item); err != nil {
 			return nil, fmt.Errorf("scan platform organization: %w", err)
 		}
 		items = append(items, item)
@@ -189,15 +189,78 @@ func (r *Repository) ListOrganizationsForPlatform(ctx context.Context, limit int
 
 func (r *Repository) GetOrganizationAccount(ctx context.Context, orgID uuid.UUID) (*OrganizationAccount, error) {
 	item := &OrganizationAccount{}
-	err := r.db.QueryRow(ctx, `
-		SELECT id, name, COALESCE(description, '')
+	err := scanOrganizationAccount(r.db.QueryRow(ctx, `
+		SELECT id, name, COALESCE(description, ''), COALESCE(status, 'active'), closed_at, closed_by, COALESCE(closed_reason, '')
 		FROM organizations
 		WHERE id = $1
-	`, orgID).Scan(&item.ID, &item.Name, &item.Description)
+	`, orgID), item)
 	if err != nil {
 		return nil, fmt.Errorf("get organization account: %w", err)
 	}
 	return item, nil
+}
+
+func (r *Repository) CloseOrganization(ctx context.Context, orgID uuid.UUID, actorID uuid.UUID, reason string) (*OrganizationAccount, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin close organization: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	item := &OrganizationAccount{}
+	err = scanOrganizationAccount(tx.QueryRow(ctx, `
+		UPDATE organizations
+		SET status = 'closed',
+		    closed_at = COALESCE(closed_at, NOW()),
+		    closed_by = $2,
+		    closed_reason = $3,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, name, COALESCE(description, ''), COALESCE(status, 'active'), closed_at, closed_by, COALESCE(closed_reason, '')
+	`, orgID, actorID, reason), item)
+	if err != nil {
+		return nil, fmt.Errorf("close organization: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE platform.organization_schema_targets
+		SET status = 'archived',
+		    metadata = metadata || jsonb_build_object('closed_by', $2::text, 'closed_reason', $3),
+		    updated_at = NOW()
+		WHERE organization_id = $1
+	`, orgID, actorID, reason); err != nil {
+		return nil, fmt.Errorf("archive organization schema target: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit close organization: %w", err)
+	}
+	return item, nil
+}
+
+func scanOrganizationAccount(row interface{ Scan(dest ...any) error }, item *OrganizationAccount) error {
+	var closedAt pgtype.Timestamptz
+	var closedBy pgtype.UUID
+	if err := row.Scan(
+		&item.ID,
+		&item.Name,
+		&item.Description,
+		&item.Status,
+		&closedAt,
+		&closedBy,
+		&item.ClosedReason,
+	); err != nil {
+		return err
+	}
+	if closedAt.Valid {
+		value := closedAt.Time
+		item.ClosedAt = &value
+	}
+	if closedBy.Valid {
+		value, err := uuid.FromBytes(closedBy.Bytes[:])
+		if err == nil {
+			item.ClosedBy = &value
+		}
+	}
+	return nil
 }
 
 func (r *Repository) GetPlatformRole(ctx context.Context, userID uuid.UUID) (string, error) {
