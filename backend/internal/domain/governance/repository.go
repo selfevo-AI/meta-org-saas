@@ -426,12 +426,20 @@ func (r *Repository) CreateFieldPermissionRule(ctx context.Context, input Create
 	metadataJSON, _ := json.Marshal(input.Metadata)
 	rule := &FieldPermissionRule{}
 	err := r.db.QueryRow(ctx,
-		`INSERT INTO field_permission_rules(table_name, field_name, actor_type, actor_id, role_id, action, behavior, required_level, reason, metadata)
-		 VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10)
-		 RETURNING id, table_name, field_name, actor_type, COALESCE(actor_id, ''), role_id, action, behavior, required_level, reason, metadata, created_at, updated_at`,
-		input.TableName, input.FieldName, input.ActorType, input.ActorID, input.RoleID, input.Action, input.Behavior, input.RequiredLevel, input.Reason, metadataJSON,
+		`INSERT INTO field_permission_rules(
+		    organization_id, scope_type, scope_id, table_name, field_name, actor_type, actor_id,
+		    role_id, action, behavior, required_level, reason, priority, metadata
+		 )
+		 VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, $9, $10, $11, $12, $13, $14)
+		 RETURNING id, organization_id, scope_type, scope_id, table_name, field_name, actor_type, COALESCE(actor_id, ''),
+		           role_id, action, behavior, required_level, reason, priority, status, metadata, created_at, updated_at`,
+		input.OrganizationID, input.ScopeType, input.ScopeID, input.TableName, input.FieldName, input.ActorType, input.ActorID,
+		input.RoleID, input.Action, input.Behavior, input.RequiredLevel, input.Reason, input.Priority, metadataJSON,
 	).Scan(
 		&rule.ID,
+		&rule.OrganizationID,
+		&rule.ScopeType,
+		&rule.ScopeID,
 		&rule.TableName,
 		&rule.FieldName,
 		&rule.ActorType,
@@ -441,6 +449,8 @@ func (r *Repository) CreateFieldPermissionRule(ctx context.Context, input Create
 		&rule.Behavior,
 		&rule.RequiredLevel,
 		&rule.Reason,
+		&rule.Priority,
+		&rule.Status,
 		&metadataJSON,
 		&rule.CreatedAt,
 		&rule.UpdatedAt,
@@ -453,15 +463,15 @@ func (r *Repository) CreateFieldPermissionRule(ctx context.Context, input Create
 }
 
 func (r *Repository) ListFieldPermissionRules(ctx context.Context, tableName string) ([]FieldPermissionRule, error) {
-	query := `SELECT id, table_name, field_name, actor_type, COALESCE(actor_id, ''), role_id, action, behavior,
-	                 required_level, reason, metadata, created_at, updated_at
+	query := `SELECT id, organization_id, scope_type, scope_id, table_name, field_name, actor_type, COALESCE(actor_id, ''), role_id, action, behavior,
+	                 required_level, reason, priority, status, metadata, created_at, updated_at
 	          FROM field_permission_rules`
 	args := []any{}
 	if tableName != "" {
 		query += ` WHERE table_name = $1`
 		args = append(args, tableName)
 	}
-	query += ` ORDER BY table_name, field_name, action, actor_type, created_at DESC`
+	query += ` ORDER BY table_name, field_name, action, actor_type, priority DESC, created_at DESC`
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
@@ -475,6 +485,9 @@ func (r *Repository) ListFieldPermissionRules(ctx context.Context, tableName str
 		var metadataJSON []byte
 		if err := rows.Scan(
 			&rule.ID,
+			&rule.OrganizationID,
+			&rule.ScopeType,
+			&rule.ScopeID,
 			&rule.TableName,
 			&rule.FieldName,
 			&rule.ActorType,
@@ -484,6 +497,8 @@ func (r *Repository) ListFieldPermissionRules(ctx context.Context, tableName str
 			&rule.Behavior,
 			&rule.RequiredLevel,
 			&rule.Reason,
+			&rule.Priority,
+			&rule.Status,
 			&metadataJSON,
 			&rule.CreatedAt,
 			&rule.UpdatedAt,
@@ -517,13 +532,22 @@ func (r *Repository) CheckFieldAccess(ctx context.Context, input FieldAccessChec
 		   AND (field_name = $3 OR field_name = '*')
 		   AND (actor_type = $4 OR actor_type = '*')
 		   AND (actor_id = $5 OR actor_id IS NULL)
+		   AND (organization_id IS NOT DISTINCT FROM $6 OR organization_id IS NULL)
+		   AND (scope_type = $7 OR scope_type = 'organization')
+		   AND (scope_id = $8 OR scope_id = '')
+		   AND status = 'active'
 		 ORDER BY
+		   CASE WHEN organization_id IS NOT DISTINCT FROM $6 THEN 0 ELSE 1 END,
+		   CASE WHEN scope_type = $7 THEN 0 ELSE 1 END,
+		   CASE WHEN scope_id = $8 THEN 0 ELSE 1 END,
 		   CASE WHEN actor_id = $5 THEN 0 ELSE 1 END,
 		   CASE WHEN actor_type = $4 THEN 0 ELSE 1 END,
 		   CASE WHEN field_name = $3 THEN 0 ELSE 1 END,
+		   CASE WHEN behavior = 'deny' THEN 0 ELSE 1 END,
+		   priority DESC,
 		   created_at DESC
 		 LIMIT 1`,
-		input.TableName, input.Action, input.FieldName, input.ActorType, input.ActorID,
+		input.TableName, input.Action, input.FieldName, input.ActorType, input.ActorID, input.OrganizationID, input.ScopeType, input.ScopeID,
 	).Scan(&result.Behavior, &result.RequiredLevel, &result.Reason)
 	if err != nil {
 		return result, nil

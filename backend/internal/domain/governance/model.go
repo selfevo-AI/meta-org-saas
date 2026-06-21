@@ -168,40 +168,52 @@ type UpsertUserUIPreferenceInput struct {
 }
 
 type FieldPermissionRule struct {
-	ID            uuid.UUID      `json:"id"`
-	TableName     string         `json:"table_name"`
-	FieldName     string         `json:"field_name"`
-	ActorType     string         `json:"actor_type"`
-	ActorID       string         `json:"actor_id,omitempty"`
-	RoleID        *uuid.UUID     `json:"role_id,omitempty"`
-	Action        string         `json:"action"`
-	Behavior      string         `json:"behavior"`
-	RequiredLevel string         `json:"required_level"`
-	Reason        string         `json:"reason"`
-	Metadata      map[string]any `json:"metadata"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID *uuid.UUID     `json:"organization_id,omitempty"`
+	ScopeType      string         `json:"scope_type"`
+	ScopeID        string         `json:"scope_id,omitempty"`
+	TableName      string         `json:"table_name"`
+	FieldName      string         `json:"field_name"`
+	ActorType      string         `json:"actor_type"`
+	ActorID        string         `json:"actor_id,omitempty"`
+	RoleID         *uuid.UUID     `json:"role_id,omitempty"`
+	Action         string         `json:"action"`
+	Behavior       string         `json:"behavior"`
+	RequiredLevel  string         `json:"required_level"`
+	Reason         string         `json:"reason"`
+	Priority       int            `json:"priority"`
+	Status         string         `json:"status"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 type CreateFieldPermissionRuleInput struct {
-	TableName     string         `json:"table_name"`
-	FieldName     string         `json:"field_name,omitempty"`
-	ActorType     string         `json:"actor_type,omitempty"`
-	ActorID       string         `json:"actor_id,omitempty"`
-	RoleID        *uuid.UUID     `json:"role_id,omitempty"`
-	Action        string         `json:"action"`
-	Behavior      string         `json:"behavior,omitempty"`
-	RequiredLevel string         `json:"required_level,omitempty"`
-	Reason        string         `json:"reason,omitempty"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
+	OrganizationID *uuid.UUID     `json:"organization_id,omitempty"`
+	ScopeType      string         `json:"scope_type,omitempty"`
+	ScopeID        string         `json:"scope_id,omitempty"`
+	TableName      string         `json:"table_name"`
+	FieldName      string         `json:"field_name,omitempty"`
+	ActorType      string         `json:"actor_type,omitempty"`
+	ActorID        string         `json:"actor_id,omitempty"`
+	RoleID         *uuid.UUID     `json:"role_id,omitempty"`
+	Action         string         `json:"action"`
+	Behavior       string         `json:"behavior,omitempty"`
+	RequiredLevel  string         `json:"required_level,omitempty"`
+	Reason         string         `json:"reason,omitempty"`
+	Priority       int            `json:"priority,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
 type FieldAccessCheckInput struct {
-	ActorID   string `json:"actor_id"`
-	ActorType string `json:"actor_type"`
-	TableName string `json:"table_name"`
-	FieldName string `json:"field_name,omitempty"`
-	Action    string `json:"action"`
+	ActorID        string     `json:"actor_id"`
+	ActorType      string     `json:"actor_type"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
+	ScopeType      string     `json:"scope_type,omitempty"`
+	ScopeID        string     `json:"scope_id,omitempty"`
+	TableName      string     `json:"table_name"`
+	FieldName      string     `json:"field_name,omitempty"`
+	Action         string     `json:"action"`
 }
 
 type FieldAccessCheckResult struct {

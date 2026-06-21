@@ -32,6 +32,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/organizations/{id}/departments", h.listDepartments)
 	r.Get("/organizations/{id}/departments/tree", h.getDepartmentTree)
 	r.Get("/organizations/{id}/members", h.listOrganizationMembers)
+	r.Get("/organizations/{id}/permission-change-requests", h.listPermissionChangeRequests)
+	r.Post("/organizations/{id}/permission-change-requests", h.createPermissionChangeRequest)
+	r.Get("/organizations/{id}/permission-rules", h.listAccessRules)
+	r.Post("/organizations/{id}/permission-rules", h.createAccessRule)
 	r.Get("/departments/{id}", h.getDepartment)
 	r.Patch("/departments/{id}", h.updateDepartment)
 	r.Post("/departments/{id}/positions", h.createPosition)
@@ -52,6 +56,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Patch("/external-members/{id}", h.updateExternalMember)
 	r.Patch("/memberships/{id}", h.updateOrganizationMembership)
 	r.Delete("/memberships/{id}", h.removeOrganizationMembership)
+	r.Post("/permission-change-requests/{id}/approve", h.approvePermissionChangeRequest)
+	r.Post("/permission-change-requests/{id}/reject", h.rejectPermissionChangeRequest)
 	r.Post("/organization/match-members", h.matchMembers)
 	r.Post("/organization/match-capabilities", h.matchCapabilities)
 	r.Post("/muvrs", h.createMVRU)
@@ -521,6 +527,99 @@ func (h *Handler) removeOrganizationMembership(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]string{"status": "member removed"})
 }
 
+func (h *Handler) createPermissionChangeRequest(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization id"})
+		return
+	}
+	var input CreatePermissionChangeRequestInput
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	request, err := h.service.CreatePermissionChangeRequest(r.Context(), orgID, input)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, request)
+}
+
+func (h *Handler) listPermissionChangeRequests(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization id"})
+		return
+	}
+	requests, err := h.service.ListPermissionChangeRequests(r.Context(), orgID, r.URL.Query().Get("status"), queryLimit(r, 50))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, requests)
+}
+
+func (h *Handler) approvePermissionChangeRequest(w http.ResponseWriter, r *http.Request) {
+	h.reviewPermissionChangeRequest(w, r, PermissionChangeApproved)
+}
+
+func (h *Handler) rejectPermissionChangeRequest(w http.ResponseWriter, r *http.Request) {
+	h.reviewPermissionChangeRequest(w, r, PermissionChangeRejected)
+}
+
+func (h *Handler) reviewPermissionChangeRequest(w http.ResponseWriter, r *http.Request, decision string) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid permission change request id"})
+		return
+	}
+	var input ReviewPermissionChangeRequestInput
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input)
+	}
+	input.Decision = decision
+	request, err := h.service.ReviewPermissionChangeRequest(r.Context(), id, input)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, request)
+}
+
+func (h *Handler) createAccessRule(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization id"})
+		return
+	}
+	var input CreateAccessRuleInput
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	rule, err := h.service.CreateAccessRule(r.Context(), orgID, input)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, rule)
+}
+
+func (h *Handler) listAccessRules(w http.ResponseWriter, r *http.Request) {
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization id"})
+		return
+	}
+	rules, err := h.service.ListAccessRules(r.Context(), orgID, r.URL.Query().Get("scope_type"), r.URL.Query().Get("resource_type"), queryLimit(r, 50))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rules)
+}
+
 func (h *Handler) linkDepartmentMVRU(w http.ResponseWriter, r *http.Request) {
 	departmentID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -777,6 +876,16 @@ func memberTypesFromQuery(r *http.Request) []string {
 		}
 	}
 	return memberTypes
+}
+
+func queryLimit(r *http.Request, fallback int) int {
+	limit := fallback
+	if value := r.URL.Query().Get("limit"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	return limit
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {

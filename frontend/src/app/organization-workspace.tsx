@@ -8,6 +8,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  ShieldCheck,
   Sparkles,
   UserPlus,
   Users,
@@ -130,6 +131,38 @@ interface MatchCandidate {
   reason: string
 }
 
+interface PermissionChangeRequest {
+  id: string
+  organization_id: string
+  membership_id: string
+  requested_by?: string
+  requested_by_type: string
+  requested_change: Partial<OrganizationMembership>
+  reason?: string
+  status: string
+  review_reason?: string
+  created_at: string
+  updated_at: string
+}
+
+interface OrganizationAccessRule {
+  id: string
+  organization_id: string
+  scope_type: string
+  scope_id?: string
+  resource_type: string
+  resource_key?: string
+  action: string
+  actor_type: string
+  actor_id?: string
+  authority_tier?: string
+  behavior: string
+  required_level: string
+  priority: number
+  status: string
+  reason?: string
+}
+
 interface AgentPlan {
   organizationName: string
   description: string
@@ -182,6 +215,8 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('')
   const [selectedPositionId, setSelectedPositionId] = useState<string>('')
   const [members, setMembers] = useState<OrganizationMembership[]>([])
+  const [permissionRequests, setPermissionRequests] = useState<PermissionChangeRequest[]>([])
+  const [accessRules, setAccessRules] = useState<OrganizationAccessRule[]>([])
   const [externalMembers, setExternalMembers] = useState<ExternalMember[]>([])
   const [agents, setAgents] = useState<AIAgent[]>([])
   const [metaResources, setMetaResources] = useState<MetaResource[]>([])
@@ -198,6 +233,26 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     external_member_id: '',
     agent_id: '',
     title: '',
+  })
+  const [permissionRequestForm, setPermissionRequestForm] = useState({
+    membership_id: '',
+    authority_tier: 'organization_admin',
+    status: 'active',
+    reason: '',
+  })
+  const [accessRuleForm, setAccessRuleForm] = useState({
+    scope_type: 'project',
+    scope_id: '',
+    resource_type: 'project',
+    resource_key: '',
+    action: 'read',
+    actor_type: '*',
+    actor_id: '',
+    authority_tier: '',
+    behavior: 'allow',
+    required_level: 'L1',
+    priority: '0',
+    reason: '',
   })
   const [positionAssignmentForm, setPositionAssignmentForm] = useState<{
     actor_type: PositionAssignment['actor_type']
@@ -356,6 +411,22 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     apiRequest<OrganizationMembership[]>(`/organizations/${selectedOrgId}/members`, { token })
       .then((data) => {
         if (!cancelled) setMembers(asArray<OrganizationMembership>(data))
+      })
+
+    apiRequest<PermissionChangeRequest[]>(`/organizations/${selectedOrgId}/permission-change-requests`, { token })
+      .then((data) => {
+        if (!cancelled) setPermissionRequests(asArray<PermissionChangeRequest>(data))
+      })
+      .catch(() => {
+        if (!cancelled) setPermissionRequests([])
+      })
+
+    apiRequest<OrganizationAccessRule[]>(`/organizations/${selectedOrgId}/permission-rules`, { token })
+      .then((data) => {
+        if (!cancelled) setAccessRules(asArray<OrganizationAccessRule>(data))
+      })
+      .catch(() => {
+        if (!cancelled) setAccessRules([])
       })
       .catch(() => {
         if (!cancelled) setMembers([])
@@ -540,6 +611,16 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     if (!orgId) return
     const data = await apiRequest<OrganizationMembership[]>(`/organizations/${orgId}/members`, { token })
     setMembers(asArray<OrganizationMembership>(data))
+  }
+
+  async function loadPermissionGovernance(orgId = selectedOrgId) {
+    if (!orgId) return
+    const [requests, rules] = await Promise.all([
+      apiRequest<PermissionChangeRequest[]>(`/organizations/${orgId}/permission-change-requests`, { token }),
+      apiRequest<OrganizationAccessRule[]>(`/organizations/${orgId}/permission-rules`, { token }),
+    ])
+    setPermissionRequests(asArray<PermissionChangeRequest>(requests))
+    setAccessRules(asArray<OrganizationAccessRule>(rules))
   }
 
   async function loadExternalMembers() {
@@ -818,6 +899,54 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
       await apiRequest(`/memberships/${id}`, { method: 'DELETE', token })
       await loadMembers()
     }, '成员关系已移除')
+  }
+
+  async function createPermissionChangeRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedOrgId || !permissionRequestForm.membership_id) return
+    await runAction(async () => {
+      await apiRequest<PermissionChangeRequest>(`/organizations/${selectedOrgId}/permission-change-requests`, {
+        method: 'POST',
+        token,
+        body: {
+          membership_id: permissionRequestForm.membership_id,
+          requested_change: {
+            authority_tier: permissionRequestForm.authority_tier,
+            status: permissionRequestForm.status,
+          },
+          reason: permissionRequestForm.reason,
+        },
+      })
+      await loadPermissionGovernance()
+    }, '权限变更请求已提交')
+  }
+
+  async function reviewPermissionChangeRequest(id: string, decision: 'approve' | 'reject') {
+    await runAction(async () => {
+      await apiRequest<PermissionChangeRequest>(`/permission-change-requests/${id}/${decision}`, {
+        method: 'POST',
+        token,
+        body: { reason: decision === 'approve' ? 'reviewed from organization workspace' : 'rejected from organization workspace' },
+      })
+      await Promise.all([loadPermissionGovernance(), loadMembers()])
+    }, decision === 'approve' ? '权限变更已批准' : '权限变更已拒绝')
+  }
+
+  async function createAccessRule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedOrgId) return
+    await runAction(async () => {
+      await apiRequest<OrganizationAccessRule>(`/organizations/${selectedOrgId}/permission-rules`, {
+        method: 'POST',
+        token,
+        body: {
+          ...accessRuleForm,
+          priority: Number(accessRuleForm.priority || 0),
+          metadata: {},
+        },
+      })
+      await loadPermissionGovernance()
+    }, '权限规则已创建')
   }
 
   function analyzeWithAgent() {
@@ -1549,6 +1678,143 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
           </div>
         </Panel>
 
+        <Panel icon={ShieldCheck} title="权限治理">
+          <div className="grid gap-5 xl:grid-cols-2">
+            <div className="space-y-4">
+              <form className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4" onSubmit={createPermissionChangeRequest}>
+                <p className="text-sm font-semibold text-slate-950">{t('提交权限变更复核')}</p>
+                <label className="block">
+                  <span className="text-sm font-medium text-slate-700">{t('成员')}</span>
+                  <select
+                    value={permissionRequestForm.membership_id}
+                    onChange={(event) => setPermissionRequestForm({ ...permissionRequestForm, membership_id: event.target.value })}
+                    className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+                  >
+                    <option value="">{t('选择成员')}</option>
+                    {asArray<OrganizationMembership>(members).map((member) => (
+                      <option key={member.id} value={member.id}>
+                        {member.member_name || member.member_type}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <SelectField
+                    label="组织权限"
+                    value={permissionRequestForm.authority_tier}
+                    onChange={(value) => setPermissionRequestForm({ ...permissionRequestForm, authority_tier: value })}
+                    options={['organization_admin', 'reviewer', 'executor']}
+                  />
+                  <SelectField
+                    label="状态"
+                    value={permissionRequestForm.status}
+                    onChange={(value) => setPermissionRequestForm({ ...permissionRequestForm, status: value })}
+                    options={['active', 'inactive', 'archived']}
+                  />
+                </div>
+                <TextArea
+                  label="原因"
+                  value={permissionRequestForm.reason}
+                  onChange={(value) => setPermissionRequestForm({ ...permissionRequestForm, reason: value })}
+                />
+                <SubmitButton loading={loading || !selectedOrgId} label="提交复核" />
+              </form>
+
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-slate-950">{t('待复核请求')}</p>
+                {asArray<PermissionChangeRequest>(permissionRequests).map((request) => (
+                  <div key={request.id} className="rounded-lg border border-slate-200 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-950">{request.membership_id}</p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {t('状态')} {t(request.status)} · {request.reason || t('未设置原因')}
+                        </p>
+                      </div>
+                      {request.status === 'pending' && (
+                        <div className="flex shrink-0 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => reviewPermissionChangeRequest(request.id, 'approve')}
+                            className="h-8 rounded-md border border-emerald-200 px-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                          >
+                            {t('批准')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => reviewPermissionChangeRequest(request.id, 'reject')}
+                            className="h-8 rounded-md border border-red-200 px-2 text-xs font-semibold text-red-700 hover:bg-red-50"
+                          >
+                            {t('拒绝')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {permissionRequests.length === 0 && <p className="text-sm text-slate-500">{t('暂无权限变更请求')}</p>}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <form className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4" onSubmit={createAccessRule}>
+                <p className="text-sm font-semibold text-slate-950">{t('创建权限规则')}</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <SelectField
+                    label="范围"
+                    value={accessRuleForm.scope_type}
+                    onChange={(value) => setAccessRuleForm({ ...accessRuleForm, scope_type: value })}
+                    options={['organization', 'department', 'project', 'function', 'form', 'field']}
+                  />
+                  <TextInput label="范围 ID" value={accessRuleForm.scope_id} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, scope_id: value })} />
+                  <TextInput
+                    label="资源类型"
+                    value={accessRuleForm.resource_type}
+                    onChange={(value) => setAccessRuleForm({ ...accessRuleForm, resource_type: value })}
+                  />
+                  <SelectField
+                    label="操作"
+                    value={accessRuleForm.action}
+                    onChange={(value) => setAccessRuleForm({ ...accessRuleForm, action: value })}
+                    options={['read', 'write', 'delete', 'admin', 'execute']}
+                  />
+                  <SelectField
+                    label="行为"
+                    value={accessRuleForm.behavior}
+                    onChange={(value) => setAccessRuleForm({ ...accessRuleForm, behavior: value })}
+                    options={['allow', 'notify', 'approve', 'deny']}
+                  />
+                  <SelectField
+                    label="所需级别"
+                    value={accessRuleForm.required_level}
+                    onChange={(value) => setAccessRuleForm({ ...accessRuleForm, required_level: value })}
+                    options={['L1', 'L2', 'L3', 'L4']}
+                  />
+                  <TextInput label="Actor ID" value={accessRuleForm.actor_id} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, actor_id: value })} />
+                  <TextInput label="优先级" value={accessRuleForm.priority} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, priority: value })} />
+                </div>
+                <TextArea label="原因" value={accessRuleForm.reason} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, reason: value })} />
+                <SubmitButton loading={loading || !selectedOrgId} label="创建权限规则" />
+              </form>
+
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-slate-950">{t('组织权限规则')}</p>
+                {asArray<OrganizationAccessRule>(accessRules).map((rule) => (
+                  <div key={rule.id} className="rounded-lg border border-slate-200 p-3">
+                    <p className="text-sm font-semibold text-slate-950">
+                      {rule.scope_type}:{rule.scope_id || '*'} · {rule.resource_type}.{rule.action}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {t(rule.behavior)} · {rule.required_level} · {t('优先级')} {rule.priority}
+                    </p>
+                  </div>
+                ))}
+                {accessRules.length === 0 && <p className="text-sm text-slate-500">{t('暂无权限规则')}</p>}
+              </div>
+            </div>
+          </div>
+        </Panel>
+
         <Panel icon={Sparkles} title="成员匹配">
           <div className="space-y-3">
             <TextInput label="任务描述" value={matchTask} onChange={setMatchTask} />
@@ -1730,6 +1996,36 @@ function TextInput({
         placeholder={placeholder ? t(placeholder) : undefined}
         className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
       />
+    </label>
+  )
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  options: string[]
+}) {
+  const { t } = useI18n()
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-slate-700">{t(label)}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {t(option)}
+          </option>
+        ))}
+      </select>
     </label>
   )
 }

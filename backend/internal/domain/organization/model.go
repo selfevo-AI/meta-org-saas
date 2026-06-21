@@ -326,6 +326,116 @@ type UpdateOrganizationMembershipInput struct {
 	Metadata      map[string]any `json:"metadata,omitempty"`
 }
 
+const (
+	PermissionChangePending   = "pending"
+	PermissionChangeApproved  = "approved"
+	PermissionChangeRejected  = "rejected"
+	PermissionChangeApplied   = "applied"
+	PermissionChangeCancelled = "cancelled"
+)
+
+type PermissionChangeRequest struct {
+	ID              uuid.UUID                         `json:"id"`
+	OrganizationID  uuid.UUID                         `json:"organization_id"`
+	MembershipID    uuid.UUID                         `json:"membership_id"`
+	RequestedBy     *uuid.UUID                        `json:"requested_by,omitempty"`
+	RequestedByType string                            `json:"requested_by_type"`
+	RequestedChange UpdateOrganizationMembershipInput `json:"requested_change"`
+	Reason          string                            `json:"reason"`
+	Status          string                            `json:"status"`
+	ReviewedBy      *uuid.UUID                        `json:"reviewed_by,omitempty"`
+	ReviewReason    string                            `json:"review_reason,omitempty"`
+	ReviewedAt      *time.Time                        `json:"reviewed_at,omitempty"`
+	AppliedAt       *time.Time                        `json:"applied_at,omitempty"`
+	CreatedAt       time.Time                         `json:"created_at"`
+	UpdatedAt       time.Time                         `json:"updated_at"`
+}
+
+type CreatePermissionChangeRequestInput struct {
+	MembershipID    uuid.UUID                         `json:"membership_id"`
+	RequestedChange UpdateOrganizationMembershipInput `json:"requested_change"`
+	Reason          string                            `json:"reason,omitempty"`
+}
+
+type CreatePermissionChangeRequestRecord struct {
+	OrganizationID  uuid.UUID
+	MembershipID    uuid.UUID
+	RequestedBy     uuid.UUID
+	RequestedByType string
+	RequestedChange UpdateOrganizationMembershipInput
+	Reason          string
+}
+
+type ReviewPermissionChangeRequestInput struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type UpdatePermissionChangeRequestStatusInput struct {
+	Status       string
+	ReviewedBy   *uuid.UUID
+	ReviewReason string
+}
+
+type OrganizationAccessRule struct {
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	ScopeType      string         `json:"scope_type"`
+	ScopeID        string         `json:"scope_id"`
+	ResourceType   string         `json:"resource_type"`
+	ResourceKey    string         `json:"resource_key"`
+	Action         string         `json:"action"`
+	ActorType      string         `json:"actor_type"`
+	ActorID        string         `json:"actor_id,omitempty"`
+	RoleID         *uuid.UUID     `json:"role_id,omitempty"`
+	AuthorityTier  AuthorityTier  `json:"authority_tier,omitempty"`
+	Behavior       string         `json:"behavior"`
+	RequiredLevel  string         `json:"required_level"`
+	Priority       int            `json:"priority"`
+	Status         string         `json:"status"`
+	Reason         string         `json:"reason,omitempty"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedBy      *uuid.UUID     `json:"created_by,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type CreateAccessRuleInput struct {
+	ScopeType     string         `json:"scope_type"`
+	ScopeID       string         `json:"scope_id,omitempty"`
+	ResourceType  string         `json:"resource_type"`
+	ResourceKey   string         `json:"resource_key,omitempty"`
+	Action        string         `json:"action"`
+	ActorType     string         `json:"actor_type,omitempty"`
+	ActorID       string         `json:"actor_id,omitempty"`
+	RoleID        *uuid.UUID     `json:"role_id,omitempty"`
+	AuthorityTier AuthorityTier  `json:"authority_tier,omitempty"`
+	Behavior      string         `json:"behavior"`
+	RequiredLevel string         `json:"required_level,omitempty"`
+	Priority      int            `json:"priority,omitempty"`
+	Reason        string         `json:"reason,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateAccessRuleRecord struct {
+	OrganizationID uuid.UUID
+	ScopeType      string
+	ScopeID        string
+	ResourceType   string
+	ResourceKey    string
+	Action         string
+	ActorType      string
+	ActorID        string
+	RoleID         *uuid.UUID
+	AuthorityTier  AuthorityTier
+	Behavior       string
+	RequiredLevel  string
+	Priority       int
+	Reason         string
+	Metadata       map[string]any
+	CreatedBy      *uuid.UUID
+}
+
 type LinkDepartmentMVRUInput struct {
 	DepartmentID uuid.UUID      `json:"department_id"`
 	MVRUID       uuid.UUID      `json:"mvru_id"`

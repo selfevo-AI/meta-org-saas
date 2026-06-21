@@ -56,6 +56,13 @@ type Repository interface {
 	ListOrganizationMemberships(ctx context.Context, orgID uuid.UUID, departmentID *uuid.UUID, memberTypes []string) ([]OrganizationMembership, error)
 	UpdateOrganizationMembership(ctx context.Context, id uuid.UUID, input UpdateOrganizationMembershipInput) (*OrganizationMembership, error)
 	RemoveOrganizationMembership(ctx context.Context, id uuid.UUID) error
+	CountActiveOrganizationOwners(ctx context.Context, orgID uuid.UUID, excludeMembershipID *uuid.UUID) (int, error)
+	CreatePermissionChangeRequest(ctx context.Context, input CreatePermissionChangeRequestRecord) (*PermissionChangeRequest, error)
+	GetPermissionChangeRequestByID(ctx context.Context, id uuid.UUID) (*PermissionChangeRequest, error)
+	ListPermissionChangeRequests(ctx context.Context, orgID uuid.UUID, status string, limit int) ([]PermissionChangeRequest, error)
+	UpdatePermissionChangeRequestStatus(ctx context.Context, id uuid.UUID, input UpdatePermissionChangeRequestStatusInput) (*PermissionChangeRequest, error)
+	CreateAccessRule(ctx context.Context, input CreateAccessRuleRecord) (*OrganizationAccessRule, error)
+	ListAccessRules(ctx context.Context, orgID uuid.UUID, scopeType string, resourceType string, limit int) ([]OrganizationAccessRule, error)
 	LinkDepartmentMVRU(ctx context.Context, input LinkDepartmentMVRUInput) (*DepartmentMVRULink, error)
 	ListDepartmentMVRULinks(ctx context.Context, departmentID uuid.UUID) ([]DepartmentMVRULink, error)
 }
@@ -542,11 +549,17 @@ func (s *Service) UpdateOrganizationMembership(ctx context.Context, id uuid.UUID
 	if err := ensureTenantAccess(ctx, current.OrganizationID); err != nil {
 		return nil, err
 	}
+	if err := requireOrganizationPermissionManager(ctx); err != nil {
+		return nil, err
+	}
 	if input.Status != "" && !isValidOrgStatus(input.Status) {
 		return nil, fmt.Errorf("%w: invalid membership status", ErrValidation)
 	}
 	if input.AuthorityTier != "" && !isValidAuthorityTier(input.AuthorityTier) {
 		return nil, fmt.Errorf("%w: invalid authority tier", ErrValidation)
+	}
+	if err := s.preventLastOwnerLoss(ctx, current, input.AuthorityTier, input.Status); err != nil {
+		return nil, err
 	}
 	return s.repo.UpdateOrganizationMembership(ctx, id, input)
 }
@@ -559,7 +572,178 @@ func (s *Service) RemoveOrganizationMembership(ctx context.Context, id uuid.UUID
 	if err := ensureTenantAccess(ctx, current.OrganizationID); err != nil {
 		return err
 	}
+	if err := requireOrganizationPermissionManager(ctx); err != nil {
+		return err
+	}
+	if err := s.preventLastOwnerLoss(ctx, current, AuthorityExecutor, "archived"); err != nil {
+		return err
+	}
 	return s.repo.RemoveOrganizationMembership(ctx, id)
+}
+
+func (s *Service) CreatePermissionChangeRequest(ctx context.Context, orgID uuid.UUID, input CreatePermissionChangeRequestInput) (*PermissionChangeRequest, error) {
+	if err := ensureTenantAccess(ctx, orgID); err != nil {
+		return nil, err
+	}
+	if input.MembershipID == uuid.Nil {
+		return nil, fmt.Errorf("%w: membership_id is required", ErrValidation)
+	}
+	if input.RequestedChange.AuthorityTier == "" && input.RequestedChange.Status == "" && input.RequestedChange.RoleID == nil && input.RequestedChange.Title == "" {
+		return nil, fmt.Errorf("%w: requested_change is required", ErrValidation)
+	}
+	if input.RequestedChange.AuthorityTier != "" && !isValidAuthorityTier(input.RequestedChange.AuthorityTier) {
+		return nil, fmt.Errorf("%w: invalid authority tier", ErrValidation)
+	}
+	if input.RequestedChange.Status != "" && !isValidOrgStatus(input.RequestedChange.Status) {
+		return nil, fmt.Errorf("%w: invalid membership status", ErrValidation)
+	}
+	current, err := s.repo.GetOrganizationMembershipByID(ctx, input.MembershipID)
+	if err != nil {
+		return nil, err
+	}
+	if current.OrganizationID != orgID {
+		return nil, fmt.Errorf("%w: membership is outside organization", ErrForbidden)
+	}
+	user, ok := middleware.UserFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("%w: authenticated user is required", ErrForbidden)
+	}
+	requestedBy, err := uuid.Parse(user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid authenticated user", ErrValidation)
+	}
+	return s.repo.CreatePermissionChangeRequest(ctx, CreatePermissionChangeRequestRecord{
+		OrganizationID:  orgID,
+		MembershipID:    input.MembershipID,
+		RequestedBy:     requestedBy,
+		RequestedByType: user.Type,
+		RequestedChange: input.RequestedChange,
+		Reason:          input.Reason,
+	})
+}
+
+func (s *Service) ListPermissionChangeRequests(ctx context.Context, orgID uuid.UUID, status string, limit int) ([]PermissionChangeRequest, error) {
+	if err := ensureTenantAccess(ctx, orgID); err != nil {
+		return nil, err
+	}
+	if status != "" && !isValidPermissionChangeStatus(status) {
+		return nil, fmt.Errorf("%w: invalid permission change status", ErrValidation)
+	}
+	return s.repo.ListPermissionChangeRequests(ctx, orgID, status, limit)
+}
+
+func (s *Service) ReviewPermissionChangeRequest(ctx context.Context, id uuid.UUID, input ReviewPermissionChangeRequestInput) (*PermissionChangeRequest, error) {
+	if err := requireOrganizationPermissionManager(ctx); err != nil {
+		return nil, err
+	}
+	request, err := s.repo.GetPermissionChangeRequestByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureTenantAccess(ctx, request.OrganizationID); err != nil {
+		return nil, err
+	}
+	if request.Status != PermissionChangePending {
+		return nil, fmt.Errorf("%w: permission change request is not pending", ErrValidation)
+	}
+	if input.Decision != PermissionChangeApproved && input.Decision != PermissionChangeRejected {
+		return nil, fmt.Errorf("%w: decision must be approved or rejected", ErrValidation)
+	}
+	user, ok := middleware.UserFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("%w: authenticated user is required", ErrForbidden)
+	}
+	reviewedBy, err := uuid.Parse(user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid authenticated user", ErrValidation)
+	}
+	if input.Decision == PermissionChangeRejected {
+		return s.repo.UpdatePermissionChangeRequestStatus(ctx, id, UpdatePermissionChangeRequestStatusInput{
+			Status:       PermissionChangeRejected,
+			ReviewedBy:   &reviewedBy,
+			ReviewReason: input.Reason,
+		})
+	}
+	current, err := s.repo.GetOrganizationMembershipByID(ctx, request.MembershipID)
+	if err != nil {
+		return nil, err
+	}
+	if current.OrganizationID != request.OrganizationID {
+		return nil, fmt.Errorf("%w: membership is outside request organization", ErrForbidden)
+	}
+	if err := s.preventLastOwnerLoss(ctx, current, request.RequestedChange.AuthorityTier, request.RequestedChange.Status); err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.UpdateOrganizationMembership(ctx, request.MembershipID, request.RequestedChange); err != nil {
+		return nil, err
+	}
+	return s.repo.UpdatePermissionChangeRequestStatus(ctx, id, UpdatePermissionChangeRequestStatusInput{
+		Status:       PermissionChangeApplied,
+		ReviewedBy:   &reviewedBy,
+		ReviewReason: input.Reason,
+	})
+}
+
+func (s *Service) CreateAccessRule(ctx context.Context, orgID uuid.UUID, input CreateAccessRuleInput) (*OrganizationAccessRule, error) {
+	if err := ensureTenantAccess(ctx, orgID); err != nil {
+		return nil, err
+	}
+	if err := requireOrganizationPermissionManager(ctx); err != nil {
+		return nil, err
+	}
+	normalizeAccessRuleInput(&input)
+	if !isValidAccessRuleScope(input.ScopeType) {
+		return nil, fmt.Errorf("%w: invalid scope_type", ErrValidation)
+	}
+	if input.ResourceType == "" {
+		return nil, fmt.Errorf("%w: resource_type is required", ErrValidation)
+	}
+	if !isValidAccessRuleAction(input.Action) {
+		return nil, fmt.Errorf("%w: invalid action", ErrValidation)
+	}
+	if !isValidAccessRuleBehavior(input.Behavior) {
+		return nil, fmt.Errorf("%w: invalid behavior", ErrValidation)
+	}
+	if !isValidPermissionLevel(input.RequiredLevel) {
+		return nil, fmt.Errorf("%w: invalid required_level", ErrValidation)
+	}
+	if input.AuthorityTier != "" && !isValidAuthorityTier(input.AuthorityTier) {
+		return nil, fmt.Errorf("%w: invalid authority_tier", ErrValidation)
+	}
+	var createdBy *uuid.UUID
+	if user, ok := middleware.UserFromContext(ctx); ok {
+		if parsed, err := uuid.Parse(user.ID); err == nil {
+			createdBy = &parsed
+		}
+	}
+	return s.repo.CreateAccessRule(ctx, CreateAccessRuleRecord{
+		OrganizationID: orgID,
+		ScopeType:      input.ScopeType,
+		ScopeID:        input.ScopeID,
+		ResourceType:   input.ResourceType,
+		ResourceKey:    input.ResourceKey,
+		Action:         input.Action,
+		ActorType:      input.ActorType,
+		ActorID:        input.ActorID,
+		RoleID:         input.RoleID,
+		AuthorityTier:  input.AuthorityTier,
+		Behavior:       input.Behavior,
+		RequiredLevel:  input.RequiredLevel,
+		Priority:       input.Priority,
+		Reason:         input.Reason,
+		Metadata:       input.Metadata,
+		CreatedBy:      createdBy,
+	})
+}
+
+func (s *Service) ListAccessRules(ctx context.Context, orgID uuid.UUID, scopeType string, resourceType string, limit int) ([]OrganizationAccessRule, error) {
+	if err := ensureTenantAccess(ctx, orgID); err != nil {
+		return nil, err
+	}
+	if scopeType != "" && !isValidAccessRuleScope(scopeType) {
+		return nil, fmt.Errorf("%w: invalid scope_type", ErrValidation)
+	}
+	return s.repo.ListAccessRules(ctx, orgID, scopeType, resourceType, limit)
 }
 
 func (s *Service) LinkDepartmentMVRU(ctx context.Context, departmentID uuid.UUID, input LinkDepartmentMVRUInput) (*DepartmentMVRULink, error) {
@@ -1044,6 +1228,110 @@ func isValidAuthorityTier(tier AuthorityTier) bool {
 	default:
 		return false
 	}
+}
+
+func isValidPermissionChangeStatus(status string) bool {
+	switch status {
+	case PermissionChangePending, PermissionChangeApproved, PermissionChangeRejected, PermissionChangeApplied, PermissionChangeCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeAccessRuleInput(input *CreateAccessRuleInput) {
+	if input.ScopeType == "" {
+		input.ScopeType = "organization"
+	}
+	if input.Action == "" {
+		input.Action = "read"
+	}
+	if input.ActorType == "" {
+		input.ActorType = "*"
+	}
+	if input.Behavior == "" {
+		input.Behavior = "allow"
+	}
+	if input.RequiredLevel == "" {
+		input.RequiredLevel = "L1"
+	}
+	if input.Metadata == nil {
+		input.Metadata = map[string]any{}
+	}
+}
+
+func isValidAccessRuleScope(scopeType string) bool {
+	switch scopeType {
+	case "organization", "department", "project", "function", "form", "field":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidAccessRuleAction(action string) bool {
+	switch action {
+	case "read", "write", "delete", "admin", "execute":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidAccessRuleBehavior(behavior string) bool {
+	switch behavior {
+	case "allow", "notify", "approve", "deny":
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidPermissionLevel(level string) bool {
+	switch level {
+	case "L1", "L2", "L3", "L4":
+		return true
+	default:
+		return false
+	}
+}
+
+func requireOrganizationPermissionManager(ctx context.Context) error {
+	tenant, ok := middleware.TenantFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if tenant.Mode == "single_org" {
+		return nil
+	}
+	if tenant.IsPlatformAdmin {
+		return fmt.Errorf("%w: platform admins must use organization review requests", ErrForbidden)
+	}
+	switch tenant.AuthorityTier {
+	case string(AuthorityOrganizationCreator), string(AuthorityOrganizationAdmin):
+		return nil
+	default:
+		return fmt.Errorf("%w: organization owner or admin is required", ErrForbidden)
+	}
+}
+
+func (s *Service) preventLastOwnerLoss(ctx context.Context, current *OrganizationMembership, nextTier AuthorityTier, nextStatus string) error {
+	if current == nil || current.AuthorityTier != AuthorityOrganizationCreator || current.Status != "active" {
+		return nil
+	}
+	losesOwnerTier := nextTier != "" && nextTier != AuthorityOrganizationCreator
+	losesActiveStatus := nextStatus != "" && nextStatus != "active"
+	if !losesOwnerTier && !losesActiveStatus {
+		return nil
+	}
+	count, err := s.repo.CountActiveOrganizationOwners(ctx, current.OrganizationID, nil)
+	if err != nil {
+		return err
+	}
+	if count <= 1 {
+		return fmt.Errorf("%w: organization must keep at least one active owner", ErrValidation)
+	}
+	return nil
 }
 
 func validateMembershipActor(input AddOrganizationMemberInput) error {

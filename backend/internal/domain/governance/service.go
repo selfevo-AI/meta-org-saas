@@ -303,6 +303,15 @@ func (s *Service) UpsertUserUIPreference(ctx context.Context, actorID, preferenc
 }
 
 func (s *Service) CreateFieldPermissionRule(ctx context.Context, input CreateFieldPermissionRuleInput) (*FieldPermissionRule, error) {
+	if input.OrganizationID == nil {
+		input.OrganizationID = currentTenantOrganizationID(ctx)
+	}
+	if input.ScopeType == "" {
+		input.ScopeType = "organization"
+	}
+	if input.ScopeType != "organization" && input.ScopeType != "department" && input.ScopeType != "project" && input.ScopeType != "function" && input.ScopeType != "form" && input.ScopeType != "field" {
+		return nil, fmt.Errorf("%w: invalid scope_type", ErrValidation)
+	}
 	if input.TableName == "" {
 		return nil, fmt.Errorf("%w: table_name is required", ErrValidation)
 	}
@@ -341,6 +350,12 @@ func (s *Service) ListFieldPermissionRules(ctx context.Context, tableName string
 }
 
 func (s *Service) CheckFieldAccess(ctx context.Context, input FieldAccessCheckInput) (*FieldAccessCheckResult, error) {
+	if input.OrganizationID == nil {
+		input.OrganizationID = currentTenantOrganizationID(ctx)
+	}
+	if input.ScopeType == "" {
+		input.ScopeType = "organization"
+	}
 	if input.ActorID == "" || input.ActorType == "" || input.TableName == "" {
 		return nil, fmt.Errorf("%w: actor_id, actor_type, and table_name are required", ErrValidation)
 	}

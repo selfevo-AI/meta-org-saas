@@ -804,6 +804,170 @@ func (r *PostgresRepository) RemoveOrganizationMembership(ctx context.Context, i
 	return nil
 }
 
+func (r *PostgresRepository) CountActiveOrganizationOwners(ctx context.Context, orgID uuid.UUID, excludeMembershipID *uuid.UUID) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx,
+		`SELECT COUNT(*)
+		 FROM organization_memberships
+		 WHERE organization_id = $1
+		   AND authority_tier = $2
+		   AND status = 'active'
+		   AND ($3::uuid IS NULL OR id <> $3)`,
+		orgID, AuthorityOrganizationCreator, excludeMembershipID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active organization owners: %w", err)
+	}
+	return count, nil
+}
+
+func (r *PostgresRepository) CreatePermissionChangeRequest(ctx context.Context, input CreatePermissionChangeRequestRecord) (*PermissionChangeRequest, error) {
+	changeJSON, err := json.Marshal(input.RequestedChange)
+	if err != nil {
+		return nil, fmt.Errorf("marshal permission change: %w", err)
+	}
+	req := &PermissionChangeRequest{}
+	err = scanPermissionChangeRequest(r.db.QueryRow(ctx,
+		`INSERT INTO permission_change_requests (
+		    organization_id, membership_id, requested_by, requested_by_type, requested_change, reason
+		 )
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, organization_id, membership_id, requested_by, requested_by_type,
+		           requested_change, reason, status, reviewed_by, review_reason,
+		           reviewed_at, applied_at, created_at, updated_at`,
+		input.OrganizationID, input.MembershipID, input.RequestedBy, input.RequestedByType, changeJSON, input.Reason,
+	).Scan, req)
+	if err != nil {
+		return nil, fmt.Errorf("create permission change request: %w", err)
+	}
+	return req, nil
+}
+
+func (r *PostgresRepository) GetPermissionChangeRequestByID(ctx context.Context, id uuid.UUID) (*PermissionChangeRequest, error) {
+	req := &PermissionChangeRequest{}
+	if err := scanPermissionChangeRequest(r.db.QueryRow(ctx,
+		`SELECT id, organization_id, membership_id, requested_by, requested_by_type,
+		        requested_change, reason, status, reviewed_by, review_reason,
+		        reviewed_at, applied_at, created_at, updated_at
+		 FROM permission_change_requests
+		 WHERE id = $1`, id,
+	).Scan, req); err != nil {
+		return nil, fmt.Errorf("get permission change request: %w", err)
+	}
+	return req, nil
+}
+
+func (r *PostgresRepository) ListPermissionChangeRequests(ctx context.Context, orgID uuid.UUID, status string, limit int) ([]PermissionChangeRequest, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx,
+		`SELECT id, organization_id, membership_id, requested_by, requested_by_type,
+		        requested_change, reason, status, reviewed_by, review_reason,
+		        reviewed_at, applied_at, created_at, updated_at
+		 FROM permission_change_requests
+		 WHERE organization_id = $1
+		   AND ($2 = '' OR status = $2)
+		 ORDER BY created_at DESC
+		 LIMIT $3`, orgID, status, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list permission change requests: %w", err)
+	}
+	defer rows.Close()
+	requests := []PermissionChangeRequest{}
+	for rows.Next() {
+		var req PermissionChangeRequest
+		if err := scanPermissionChangeRequest(rows.Scan, &req); err != nil {
+			return nil, err
+		}
+		requests = append(requests, req)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list permission change requests iteration: %w", err)
+	}
+	return requests, nil
+}
+
+func (r *PostgresRepository) UpdatePermissionChangeRequestStatus(ctx context.Context, id uuid.UUID, input UpdatePermissionChangeRequestStatusInput) (*PermissionChangeRequest, error) {
+	req := &PermissionChangeRequest{}
+	err := scanPermissionChangeRequest(r.db.QueryRow(ctx,
+		`UPDATE permission_change_requests
+		 SET status = $2,
+		     reviewed_by = COALESCE($3, reviewed_by),
+		     review_reason = COALESCE(NULLIF($4, ''), review_reason),
+		     reviewed_at = CASE WHEN $2 IN ('rejected', 'applied', 'approved') THEN COALESCE(reviewed_at, NOW()) ELSE reviewed_at END,
+		     applied_at = CASE WHEN $2 = 'applied' THEN COALESCE(applied_at, NOW()) ELSE applied_at END,
+		     updated_at = NOW()
+		 WHERE id = $1
+		 RETURNING id, organization_id, membership_id, requested_by, requested_by_type,
+		           requested_change, reason, status, reviewed_by, review_reason,
+		           reviewed_at, applied_at, created_at, updated_at`,
+		id, input.Status, input.ReviewedBy, input.ReviewReason,
+	).Scan, req)
+	if err != nil {
+		return nil, fmt.Errorf("update permission change request: %w", err)
+	}
+	return req, nil
+}
+
+func (r *PostgresRepository) CreateAccessRule(ctx context.Context, input CreateAccessRuleRecord) (*OrganizationAccessRule, error) {
+	metadataJSON, err := json.Marshal(input.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshal organization access rule metadata: %w", err)
+	}
+	rule := &OrganizationAccessRule{}
+	err = scanOrganizationAccessRule(r.db.QueryRow(ctx,
+		`INSERT INTO organization_access_rules (
+		    organization_id, scope_type, scope_id, resource_type, resource_key, action,
+		    actor_type, actor_id, role_id, authority_tier, behavior, required_level,
+		    priority, reason, metadata, created_by
+		 )
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		 RETURNING id, organization_id, scope_type, scope_id, resource_type, resource_key, action,
+		           actor_type, actor_id, role_id, authority_tier, behavior, required_level,
+		           priority, status, reason, metadata, created_by, created_at, updated_at`,
+		input.OrganizationID, input.ScopeType, input.ScopeID, input.ResourceType, input.ResourceKey, input.Action,
+		input.ActorType, input.ActorID, input.RoleID, input.AuthorityTier, input.Behavior, input.RequiredLevel,
+		input.Priority, input.Reason, metadataJSON, input.CreatedBy,
+	).Scan, rule)
+	if err != nil {
+		return nil, fmt.Errorf("create organization access rule: %w", err)
+	}
+	return rule, nil
+}
+
+func (r *PostgresRepository) ListAccessRules(ctx context.Context, orgID uuid.UUID, scopeType string, resourceType string, limit int) ([]OrganizationAccessRule, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx,
+		`SELECT id, organization_id, scope_type, scope_id, resource_type, resource_key, action,
+		        actor_type, actor_id, role_id, authority_tier, behavior, required_level,
+		        priority, status, reason, metadata, created_by, created_at, updated_at
+		 FROM organization_access_rules
+		 WHERE organization_id = $1
+		   AND ($2 = '' OR scope_type = $2)
+		   AND ($3 = '' OR resource_type = $3)
+		 ORDER BY priority DESC, created_at DESC
+		 LIMIT $4`, orgID, scopeType, resourceType, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list organization access rules: %w", err)
+	}
+	defer rows.Close()
+	rules := []OrganizationAccessRule{}
+	for rows.Next() {
+		var rule OrganizationAccessRule
+		if err := scanOrganizationAccessRule(rows.Scan, &rule); err != nil {
+			return nil, err
+		}
+		rules = append(rules, rule)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list organization access rules iteration: %w", err)
+	}
+	return rules, nil
+}
+
 func (r *PostgresRepository) LinkDepartmentMVRU(ctx context.Context, input LinkDepartmentMVRUInput) (*DepartmentMVRULink, error) {
 	if input.Metadata == nil {
 		input.Metadata = map[string]any{}
@@ -1018,6 +1182,66 @@ func scanOrganizationMembership(scan scanFunc) (*OrganizationMembership, error) 
 		return nil, fmt.Errorf("unmarshal organization membership metadata: %w", err)
 	}
 	return membership, nil
+}
+
+func scanPermissionChangeRequest(scan scanFunc, req *PermissionChangeRequest) error {
+	var changeJSON []byte
+	var requestedBy *uuid.UUID
+	if err := scan(
+		&req.ID,
+		&req.OrganizationID,
+		&req.MembershipID,
+		&requestedBy,
+		&req.RequestedByType,
+		&changeJSON,
+		&req.Reason,
+		&req.Status,
+		&req.ReviewedBy,
+		&req.ReviewReason,
+		&req.ReviewedAt,
+		&req.AppliedAt,
+		&req.CreatedAt,
+		&req.UpdatedAt,
+	); err != nil {
+		return fmt.Errorf("scan permission change request: %w", err)
+	}
+	if err := json.Unmarshal(changeJSON, &req.RequestedChange); err != nil {
+		return fmt.Errorf("unmarshal permission change request: %w", err)
+	}
+	req.RequestedBy = requestedBy
+	return nil
+}
+
+func scanOrganizationAccessRule(scan scanFunc, rule *OrganizationAccessRule) error {
+	var metadataJSON []byte
+	if err := scan(
+		&rule.ID,
+		&rule.OrganizationID,
+		&rule.ScopeType,
+		&rule.ScopeID,
+		&rule.ResourceType,
+		&rule.ResourceKey,
+		&rule.Action,
+		&rule.ActorType,
+		&rule.ActorID,
+		&rule.RoleID,
+		&rule.AuthorityTier,
+		&rule.Behavior,
+		&rule.RequiredLevel,
+		&rule.Priority,
+		&rule.Status,
+		&rule.Reason,
+		&metadataJSON,
+		&rule.CreatedBy,
+		&rule.CreatedAt,
+		&rule.UpdatedAt,
+	); err != nil {
+		return fmt.Errorf("scan organization access rule: %w", err)
+	}
+	if err := json.Unmarshal(metadataJSON, &rule.Metadata); err != nil {
+		return fmt.Errorf("unmarshal organization access rule metadata: %w", err)
+	}
+	return nil
 }
 
 func uuidPointer(value pgtype.UUID) *uuid.UUID {
