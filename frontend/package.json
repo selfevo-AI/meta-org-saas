@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test:operations": "node verify-operations-i18n.mjs",
-    "test:system-admin": "node verify-system-admin-workspace.mjs"
+    "test:system-admin": "node verify-system-admin-workspace.mjs",
+    "test:runtime-workbench": "node verify-runtime-workbench.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.0",

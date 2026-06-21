@@ -366,6 +366,15 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `SECURITY_KERNEL_SHARED_SECRET` | empty | Shared secret for calls to the external security kernel. |
 | `SECURITY_KERNEL_ENFORCEMENT_MODE` | `blocking` | Security-kernel enforcement mode; supports `blocking` and `audit`. |
 
+In SaaS mode, initialize the platform administrator with `META_ORG_PLATFORM_ADMIN_EMAIL` and `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH`. Generate the bcrypt password hash from `backend/`:
+
+```powershell
+$env:BCRYPT_PASSWORD = '<your-admin-password>'
+go run ./cmd/bcrypt-hash
+```
+
+You can also pipe the password: `'<your-admin-password>' | go run ./cmd/bcrypt-hash -stdin`. Do not commit plaintext passwords or production hashes.
+
 Frontend configuration:
 
 | Environment Variable | Default | Description |

@@ -342,6 +342,10 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 		return nil, fmt.Errorf("complete onboarding user: %w", err)
 	}
 
+	if _, err := tx.Exec(ctx, `SELECT platform.provision_runtime_organization($1)`, org.ID); err != nil {
+		return nil, fmt.Errorf("provision runtime organization schema: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit onboarding: %w", err)
 	}

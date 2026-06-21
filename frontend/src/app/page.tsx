@@ -375,6 +375,14 @@ const defaultMenuGroups: MenuGroup[] = [
   },
 ]
 
+const platformMenuGroups: MenuGroup[] = [
+  {
+    id: 'system',
+    label: 'SystemAdmin',
+    domains: ['SystemAdmin'],
+  },
+]
+
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const compactFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact' })
 const percentFormatter = new Intl.NumberFormat('zh-CN', {
@@ -1223,6 +1231,7 @@ export default function Home() {
   const selectedOverviewSkill = overviewSkills.find((skill) => skill.id === overviewSkillID)
   const selectedOverviewModel = overviewModels.find((model) => model.id === overviewModelID)
   const isPlatformAdminSession = !!platformRole
+  const visibleMenuGroups = isPlatformAdminSession ? platformMenuGroups : menuGroups
 
   useEffect(() => {
     let cancelled = false
@@ -1322,7 +1331,7 @@ export default function Home() {
   }, [orderedOverviewFunctions, overviewFunctionID])
 
   useEffect(() => {
-    if (!token) {
+    if (!token || isPlatformAdminSession) {
       return deferStateUpdate(() => {
         setOverviewModels([])
         setOverviewModelID('')
@@ -1343,7 +1352,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [isPlatformAdminSession, token])
 
   useEffect(() => {
     return deferStateUpdate(() => {
@@ -1358,10 +1367,12 @@ export default function Home() {
   }, [overviewModels, selectedOverviewFunction.moduleKey])
 
   useEffect(() => {
-    if (!token) {
+    if (!token || isPlatformAdminSession) {
       return deferStateUpdate(() => {
         setOverviewSkills([])
         setOverviewSkillID('')
+        setOverviewControlLoading(false)
+        setOverviewControlError('')
       })
     }
     let cancelled = false
@@ -1390,7 +1401,7 @@ export default function Home() {
       cancelled = true
       cancelDeferred()
     }
-  }, [selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType, t, token])
+  }, [isPlatformAdminSession, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType, t, token])
 
   useEffect(() => {
     if (!menuReady || typeof window === 'undefined') return
@@ -1403,7 +1414,7 @@ export default function Home() {
   }, [menuReady, themeMode])
 
   useEffect(() => {
-    if (!token) {
+    if (!token || isPlatformAdminSession) {
       return deferStateUpdate(() => setWorkspaceLayoutWidths(defaultWorkspaceLayoutWidths))
     }
     let cancelled = false
@@ -1419,7 +1430,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [isPlatformAdminSession, token])
 
   useEffect(() => {
     if (!token || onboardingRequired || isPlatformAdminSession) return
@@ -1441,10 +1452,17 @@ export default function Home() {
     }
   }, [isPlatformAdminSession, onboardingRequired, t, token])
 
-  const activeDomain = workspaceView === 'overview' ? 'MetaOrg' : workspaceView.replace('domain:', '')
+  const effectiveWorkspaceView: WorkspaceView =
+    isPlatformAdminSession && workspaceView === 'overview' ? 'domain:SystemAdmin' : workspaceView
+  const activeDomain = effectiveWorkspaceView === 'overview' ? 'MetaOrg' : effectiveWorkspaceView.replace('domain:', '')
 
   useEffect(() => {
-    if (!token || workspaceView === 'overview') return
+    if (!token || effectiveWorkspaceView === 'overview' || isPlatformAdminSession) {
+      return deferStateUpdate(() => {
+        setBusinessTreeLoading(false)
+        setBusinessTreeError(null)
+      })
+    }
     if (businessNodesByDomain[activeDomain]) return
     let cancelled = false
 
@@ -1473,7 +1491,7 @@ export default function Home() {
       cancelled = true
       cancelDeferred()
     }
-  }, [activeDomain, businessNodesByDomain, t, token, workspaceView])
+  }, [activeDomain, businessNodesByDomain, effectiveWorkspaceView, isPlatformAdminSession, t, token])
 
   const healthRatio = useMemo(() => {
     if (!overview) return 0
@@ -1565,7 +1583,8 @@ export default function Home() {
       }
       setPassword('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('auth.failed'))
+      const message = err instanceof Error ? err.message : ''
+      setError(message === 'email already registered' ? t('auth.emailAlreadyRegistered') : message || t('auth.failed'))
     } finally {
       setLoading(false)
     }
@@ -1665,6 +1684,7 @@ export default function Home() {
 
   function handleDomainDrop(event: DragEvent<HTMLElement>, groupID: string) {
     event.preventDefault()
+    if (isPlatformAdminSession) return
     const domain = event.dataTransfer.getData('text/plain') || draggedDomain
     if (!domain || ![...operationDomains, ...virtualDomains].includes(domain)) return
     setMenuGroups((current) =>
@@ -1679,11 +1699,13 @@ export default function Home() {
   }
 
   function resetMenuLayout() {
+    if (isPlatformAdminSession) return
     setMenuGroups(normalizeMenuGroups())
     setExpandedGroups(defaultExpandedGroups())
   }
 
   function persistWorkspaceLayout(widths: WorkspaceLayoutWidths) {
+    if (isPlatformAdminSession) return
     if (!token) return
     saveUserPreference(token, workspaceLayoutPreferenceKey, widths).catch(() => undefined)
   }
@@ -1776,6 +1798,7 @@ export default function Home() {
   }
 
   function openSkillImport() {
+    if (isPlatformAdminSession) return
     if (!token) return
     setSkillImportOpen(true)
     setOverviewControlError('')
@@ -1845,6 +1868,13 @@ export default function Home() {
   }
 
   function handleViewChange(view: WorkspaceView) {
+    if (isPlatformAdminSession) {
+      setWorkspaceView('domain:SystemAdmin')
+      setBusinessSelection(null)
+      setMobileMenuOpen(false)
+      setMobileBusinessOpen(false)
+      return
+    }
     setWorkspaceView(view)
     setBusinessSelection(null)
     setMobileMenuOpen(false)
@@ -1892,8 +1922,10 @@ export default function Home() {
     }
   }
 
-  const activeGroup = menuGroups.find((group) => group.domains.includes(activeDomain))
-  const isOverview = workspaceView === 'overview'
+  const activeGroup = visibleMenuGroups.find((group) => group.domains.includes(activeDomain))
+  const isOverview = effectiveWorkspaceView === 'overview'
+  const showBusinessChrome = !isOverview && !isPlatformAdminSession
+  const shellUsesOverviewLayout = isOverview || isPlatformAdminSession
   const activeOperationCount =
     isOverview
       ? apiOperations.filter((operation) => operation.domain === 'MetaOrg').length
@@ -2125,15 +2157,15 @@ export default function Home() {
           </section>
         </div>
       ) : (
-        <div className={`workspace-shell grid min-h-screen ${isOverview ? 'workspace-shell-overview' : ''}`} style={workspaceLayoutStyle(workspaceLayoutWidths)}>
+        <div className={`workspace-shell grid min-h-screen ${shellUsesOverviewLayout ? 'workspace-shell-overview' : ''}`} style={workspaceLayoutStyle(workspaceLayoutWidths)}>
           <div
             className={`workspace-sidebar-pane fixed inset-y-0 left-0 z-40 w-[248px] transform transition lg:static lg:w-auto lg:translate-x-0 ${
               mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
           >
             <NavigationSidebar
-              workspaceView={workspaceView}
-              groups={menuGroups}
+              workspaceView={effectiveWorkspaceView}
+              groups={visibleMenuGroups}
               expandedGroups={expandedGroups}
               onViewChange={handleViewChange}
               onToggleGroup={toggleMenuGroup}
@@ -2155,8 +2187,8 @@ export default function Home() {
 
           <div className="workspace-topbar min-w-0">
             <Topbar
-              activeTitle={workspaceView === 'overview' ? t('nav.overview') : t(domainLabels[activeDomain] ?? activeDomain)}
-              activeDomain={workspaceView === 'overview' ? 'SuperClaw' : activeDomain}
+              activeTitle={isOverview ? t('nav.overview') : t(domainLabels[activeDomain] ?? activeDomain)}
+              activeDomain={isOverview ? 'SuperClaw' : activeDomain}
               locale={locale}
               setLocale={setLocale}
               themeMode={themeMode}
@@ -2171,13 +2203,13 @@ export default function Home() {
               onRefresh={() => loadOverview()}
               onSignOut={handleSignOut}
               onOpenMenu={() => setMobileMenuOpen(true)}
-              showBusinessControl={!isOverview}
+              showBusinessControl={showBusinessChrome}
               onOpenBusiness={() => setMobileBusinessOpen(true)}
               onResetLayout={handleResetWorkspaceLayout}
             />
           </div>
 
-          {!isOverview && (
+          {showBusinessChrome && (
             <div
               className={`workspace-business-pane fixed inset-y-0 left-0 z-30 w-[300px] transform transition lg:static lg:w-auto lg:translate-x-0 ${
                 mobileBusinessOpen ? 'translate-x-0' : '-translate-x-full'
@@ -2193,7 +2225,7 @@ export default function Home() {
               />
             </div>
           )}
-          {!isOverview && mobileBusinessOpen && (
+          {showBusinessChrome && mobileBusinessOpen && (
             <button
               type="button"
               aria-label={t('businessTree.close')}
@@ -2202,13 +2234,13 @@ export default function Home() {
             />
           )}
 
-          {!isOverview && (
+          {showBusinessChrome && (
             <WorkspaceLayoutResizer pane="business" label={t('layout.resizeBusiness')} onResizeStart={handleLayoutResizeStart} className="workspace-business-resizer lg:flex" />
           )}
 
           <section className="workspace-main-pane min-w-0">
             <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
-              {workspaceView !== 'overview' && (
+              {!isOverview && (
                 <WorkspaceHeader
                   title={activeBusinessSelection?.label ?? (domainLabels[activeDomain] ?? activeDomain)}
                   domain={activeBusinessSelection ? t(`businessTree.type.${activeBusinessSelection.targetType}`) : activeDomain}
@@ -2230,7 +2262,7 @@ export default function Home() {
                   {error}
                 </div>
               )}
-              {workspaceView === 'overview' ? (
+              {effectiveWorkspaceView === 'overview' ? (
                 overview ? (
                   <OverviewAssistantHome
                     overview={overview}
@@ -2266,61 +2298,65 @@ export default function Home() {
                     <RefreshCw className="h-5 w-5 animate-spin text-slate-500" />
                   </div>
                 )
-              ) : workspaceView === 'domain:Organization' ? (
+              ) : effectiveWorkspaceView === 'domain:Organization' ? (
                 <OrganizationWorkspace token={token} currentUserId={userId} externalSelection={activeBusinessSelection} />
-              ) : workspaceView === 'domain:MetaResource' ? (
+              ) : effectiveWorkspaceView === 'domain:MetaResource' ? (
                 <MetaResourceWorkspace token={token} />
-              ) : workspaceView === 'domain:Governance' ? (
+              ) : effectiveWorkspaceView === 'domain:Governance' ? (
                 <GovernanceWorkspace token={token} currentUserId={userId} />
-              ) : workspaceView === 'domain:Evolution' ? (
+              ) : effectiveWorkspaceView === 'domain:Evolution' ? (
                 <WeightWorkspace token={token} currentUserId={userId} />
-              ) : workspaceView === 'domain:Capability' ? (
+              ) : effectiveWorkspaceView === 'domain:Capability' ? (
                 <CapabilityEvaluationWorkspace token={token} currentUserId={userId} />
-              ) : workspaceView === 'domain:Workflow' ? (
+              ) : effectiveWorkspaceView === 'domain:Workflow' ? (
                 <div className="space-y-5">
                   <WorkflowDesignerWorkspace token={token} currentUserId={userId} />
                   <WorkflowMatchingWorkspace token={token} currentUserId={userId} />
                 </div>
               ) : ['domain:Requirement', 'domain:Project', 'domain:Delivery', 'domain:Cost', 'domain:Feedback'].includes(
-                  workspaceView,
+                  effectiveWorkspaceView,
                 ) ? (
                 <ProjectLifecycleWorkspace
                   token={token}
                   currentUserId={userId}
-                  mode={workspaceView.replace('domain:', '') as 'Requirement' | 'Project' | 'Delivery' | 'Cost' | 'Feedback'}
+                  mode={effectiveWorkspaceView.replace('domain:', '') as 'Requirement' | 'Project' | 'Delivery' | 'Cost' | 'Feedback'}
                   externalSelection={activeBusinessSelection}
                   onOperationContextChange={handleOperationContextChange}
                 />
-              ) : workspaceView === 'domain:DeveloperTools' ? (
+              ) : effectiveWorkspaceView === 'domain:DeveloperTools' ? (
                 <DeveloperToolsWorkspace token={token} />
-              ) : workspaceView === 'domain:SystemAdmin' ? (
+              ) : effectiveWorkspaceView === 'domain:SystemAdmin' ? (
                 <SystemAdminWorkspace token={token} organizations={organizations} currentOrganizationID={currentOrganizationID} />
-              ) : workspaceView === 'domain:Costing' || workspaceView === 'domain:FinanceCostAccounting' ? (
+              ) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
                 <CostingWorkspace token={token} />
-              ) : workspaceView === 'domain:Inventory' ? (
+              ) : effectiveWorkspaceView === 'domain:Inventory' ? (
                 <InventoryWorkspace token={token} />
-              ) : workspaceView === 'domain:Procurement' ? (
+              ) : effectiveWorkspaceView === 'domain:Procurement' ? (
                 <ProcurementWorkspace token={token} />
-              ) : workspaceView === 'domain:Sales' ? (
+              ) : effectiveWorkspaceView === 'domain:Sales' ? (
                 <SalesWorkspace token={token} />
-              ) : workspaceView === 'domain:Finance' || workspaceView === 'domain:FinanceAccounting' ? (
+              ) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
                 <FinanceWorkspace token={token} mode="accounting" />
-              ) : workspaceView === 'domain:FinanceReceivables' ? (
+              ) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (
                 <FinanceWorkspace token={token} mode="receivables" />
-              ) : workspaceView === 'domain:FinancePayables' ? (
+              ) : effectiveWorkspaceView === 'domain:FinancePayables' ? (
                 <FinanceWorkspace token={token} mode="payables" />
               ) : (
-                <AgentOnlyWorkspace domain={workspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
+                <AgentOnlyWorkspace domain={effectiveWorkspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
               )}
               <div className="xl:hidden">
-                <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />
+                {!isPlatformAdminSession && <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />}
               </div>
             </div>
           </section>
-          <WorkspaceLayoutResizer pane="status" label={t('layout.resizeStatus')} onResizeStart={handleLayoutResizeStart} className="workspace-status-resizer xl:flex" />
-          <aside className="workspace-status-pane hidden min-w-0 border-l border-slate-800 bg-[#121317] xl:block">
-            <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />
-          </aside>
+          {!isPlatformAdminSession && (
+            <>
+              <WorkspaceLayoutResizer pane="status" label={t('layout.resizeStatus')} onResizeStart={handleLayoutResizeStart} className="workspace-status-resizer xl:flex" />
+              <aside className="workspace-status-pane hidden min-w-0 border-l border-slate-800 bg-[#121317] xl:block">
+                <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />
+              </aside>
+            </>
+          )}
           {skillImportOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
               <button
