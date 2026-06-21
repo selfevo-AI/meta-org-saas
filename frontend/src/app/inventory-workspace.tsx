@@ -36,14 +36,18 @@ import {
   SelectInput,
   StatusPill,
   SubmitButton,
+  SupplyChainDocumentDetail,
   TextInput,
   documentKey,
   money,
   quantity,
+  type SupplyChainSelection,
 } from './supply-chain-ui'
 
 interface InventoryWorkspaceProps {
   token: string
+  currentSupplyChainFunctionID?: string
+  externalSelection?: SupplyChainSelection | null
 }
 
 type TabID = 'master' | 'balances' | 'movements' | 'documents'
@@ -68,7 +72,7 @@ const movementTypes = [
   'count_loss',
 ]
 
-export function InventoryWorkspace({ token }: InventoryWorkspaceProps) {
+export function InventoryWorkspace({ token, currentSupplyChainFunctionID, externalSelection }: InventoryWorkspaceProps) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<TabID>('master')
   const [partners, setPartners] = useState<BusinessPartner[]>([])
@@ -134,6 +138,23 @@ export function InventoryWorkspace({ token }: InventoryWorkspaceProps) {
 
   const itemLabels = useMemo(() => Object.fromEntries(items.map((item) => [item.id, `${item.item_code || item.master_key || item.id.slice(0, 8)} · ${item.name}`])), [items])
   const warehouseLabels = useMemo(() => Object.fromEntries(warehouses.map((warehouse) => [warehouse.id, `${warehouse.warehouse_code || warehouse.master_key || warehouse.id.slice(0, 8)} · ${warehouse.name}`])), [warehouses])
+  const selectedDocument = useMemo(
+    () =>
+      selectedInventoryDocument(externalSelection, {
+        partners,
+        items,
+        warehouses,
+        balances,
+        movements,
+        transfers,
+        adjustments,
+        counts,
+      }),
+    [adjustments, balances, counts, externalSelection, items, movements, partners, transfers, warehouses],
+  )
+  const detailTitle = selectedDocument ? inventoryDocumentTitle(selectedDocument) : ''
+  const lineColumns = inventoryLineColumns(selectedDocument?.targetType)
+  const lineRows = inventoryLineRows(selectedDocument?.document, selectedDocument?.targetType, itemLabels, warehouseLabels, t)
 
   const loadInventory = useCallback(async () => {
     setLoading(true)
@@ -179,6 +200,13 @@ export function InventoryWorkspace({ token }: InventoryWorkspaceProps) {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [loadInventory])
+
+  useEffect(() => {
+    const nextTab = inventoryTabForSelection(externalSelection?.targetType) ?? inventoryTabForFunction(currentSupplyChainFunctionID)
+    if (!nextTab) return
+    const timer = window.setTimeout(() => setActiveTab(nextTab), 0)
+    return () => window.clearTimeout(timer)
+  }, [currentSupplyChainFunctionID, externalSelection?.targetType])
 
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true)
@@ -347,6 +375,18 @@ export function InventoryWorkspace({ token }: InventoryWorkspaceProps) {
         </p>
       )}
 
+      {selectedDocument && (
+        <SupplyChainDocumentDetail
+          title={detailTitle}
+          subtitle={t('supplyChain.selectedDocument')}
+          mainFields={inventoryMainFields(selectedDocument.document, selectedDocument.targetType, itemLabels, warehouseLabels, t)}
+          lineColumns={lineColumns}
+          lineRows={lineRows}
+        />
+      )}
+
+      {!selectedDocument && (
+        <>
       {activeTab === 'master' && (
         <div className="grid gap-5 xl:grid-cols-3">
           <Panel title="inventory.partners">
@@ -542,6 +582,241 @@ export function InventoryWorkspace({ token }: InventoryWorkspaceProps) {
           </Panel>
         </div>
       )}
+        </>
+      )}
     </div>
   )
+}
+
+type InventoryDocumentSelection = {
+  targetType: string
+  document: Record<string, any>
+}
+
+function inventoryTabForSelection(targetType?: string): TabID | null {
+  const tabsByType: Record<string, TabID> = {
+    business_partner: 'master',
+    inventory_item: 'master',
+    warehouse: 'master',
+    inventory_balance: 'balances',
+    inventory_movement: 'movements',
+    inventory_transfer: 'documents',
+    inventory_adjustment: 'documents',
+    inventory_count: 'documents',
+  }
+  return targetType ? tabsByType[targetType] ?? null : null
+}
+
+function inventoryTabForFunction(functionID?: string): TabID | null {
+  const tabsByFunction: Record<string, TabID> = {
+    'inventory:partners': 'master',
+    'inventory:items': 'master',
+    'inventory:warehouses': 'master',
+    'inventory:balances': 'balances',
+    'inventory:movements': 'movements',
+    'inventory:transfers': 'documents',
+    'inventory:adjustments': 'documents',
+    'inventory:counts': 'documents',
+  }
+  return functionID ? tabsByFunction[functionID] ?? null : null
+}
+
+function selectedInventoryDocument(
+  selection: SupplyChainSelection | null | undefined,
+  data: {
+    partners: BusinessPartner[]
+    items: InventoryItem[]
+    warehouses: Warehouse[]
+    balances: InventoryBalance[]
+    movements: InventoryMovement[]
+    transfers: InventoryTransfer[]
+    adjustments: InventoryAdjustment[]
+    counts: InventoryCount[]
+  },
+): InventoryDocumentSelection | null {
+  if (!selection) return null
+  const byType: Record<string, Array<Record<string, any>>> = {
+    business_partner: data.partners,
+    inventory_item: data.items,
+    warehouse: data.warehouses,
+    inventory_balance: data.balances,
+    inventory_movement: data.movements,
+    inventory_transfer: data.transfers,
+    inventory_adjustment: data.adjustments,
+    inventory_count: data.counts,
+  }
+  const document = byType[selection.targetType]?.find((item) => item.id === selection.targetID) ?? selection.record
+  return document ? { targetType: selection.targetType, document: document as Record<string, any> } : null
+}
+
+function inventoryDocumentTitle(selection: InventoryDocumentSelection): string {
+  const document = selection.document
+  return String(
+    document.name ||
+      document.partner_code ||
+      document.item_code ||
+      document.warehouse_code ||
+      document.transfer_number ||
+      document.adjustment_number ||
+      document.count_number ||
+      document.movement_type ||
+      document.master_key ||
+      document.id ||
+      '',
+  )
+}
+
+function inventoryMainFields(
+  document: Record<string, any>,
+  targetType: string,
+  itemLabels: Record<string, string>,
+  warehouseLabels: Record<string, string>,
+  t: (key: string) => string,
+): Array<{ label: string; value: any }> {
+  if (targetType === 'business_partner') {
+    return [
+      { label: 'inventory.partnerCode', value: document.partner_code || document.master_key },
+      { label: 'inventory.partnerType', value: document.partner_type ? t(`inventory.partnerType.${document.partner_type}`) : '' },
+      { label: 'common.name', value: document.name },
+      { label: 'inventory.email', value: document.email },
+      { label: 'inventory.phone', value: document.phone },
+      { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+      { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+      { label: 'businessStatus.code', value: document.id },
+    ]
+  }
+  if (targetType === 'inventory_item') {
+    return [
+      { label: 'inventory.itemCode', value: document.item_code || document.master_key },
+      { label: 'common.name', value: document.name },
+      { label: 'inventory.itemType', value: document.item_type ? t(`inventory.itemType.${document.item_type}`) : '' },
+      { label: 'inventory.uom', value: document.base_uom },
+      { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+      { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+      { label: 'businessStatus.code', value: document.id },
+    ]
+  }
+  if (targetType === 'warehouse') {
+    return [
+      { label: 'inventory.warehouseCode', value: document.warehouse_code || document.master_key },
+      { label: 'common.name', value: document.name },
+      { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+      { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+      { label: 'businessStatus.code', value: document.id },
+    ]
+  }
+  if (targetType === 'inventory_balance') {
+    return [
+      { label: 'inventory.item', value: itemLabels[document.item_id] ?? document.item_id },
+      { label: 'inventory.warehouse', value: warehouseLabels[document.warehouse_id] ?? document.warehouse_id },
+      { label: 'inventory.quantity', value: quantity(document.quantity) },
+      { label: 'inventory.reservedQty', value: quantity(document.reserved_qty) },
+      { label: 'inventory.averageCost', value: money(document.average_cost, document.currency) },
+      { label: 'inventory.valueAmount', value: money(document.value_amount, document.currency) },
+      { label: 'finance.currency', value: document.currency },
+      { label: 'businessStatus.updated', value: document.updated_at },
+    ]
+  }
+  if (targetType === 'inventory_movement') {
+    return [
+      { label: 'inventory.movementType', value: document.movement_type ? t(`inventory.movementType.${document.movement_type}`) : '' },
+      { label: 'inventory.sourceType', value: document.source_type },
+      { label: 'inventory.item', value: itemLabels[document.item_id] ?? document.item_id },
+      { label: 'inventory.warehouse', value: warehouseLabels[document.warehouse_id] ?? document.warehouse_id },
+      { label: 'inventory.quantity', value: quantity(document.quantity) },
+      { label: 'inventory.unitCost', value: money(document.unit_cost, document.currency) },
+      { label: 'inventory.balanceAfter', value: quantity(document.balance_after) },
+      { label: 'businessStatus.updated', value: document.occurred_at || document.created_at },
+    ]
+  }
+  if (targetType === 'inventory_transfer') {
+    return [
+      { label: 'inventory.documentNumber', value: document.transfer_number || document.master_key },
+      { label: 'inventory.fromWarehouse', value: warehouseLabels[document.from_warehouse_id] ?? document.from_warehouse_id },
+      { label: 'inventory.toWarehouse', value: warehouseLabels[document.to_warehouse_id] ?? document.to_warehouse_id },
+      { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+      { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+      { label: 'businessStatus.code', value: document.id },
+    ]
+  }
+  if (targetType === 'inventory_adjustment') {
+    return [
+      { label: 'inventory.documentNumber', value: document.adjustment_number || document.master_key },
+      { label: 'inventory.warehouse', value: warehouseLabels[document.warehouse_id] ?? document.warehouse_id },
+      { label: 'inventory.reason', value: document.reason },
+      { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+      { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+      { label: 'businessStatus.code', value: document.id },
+    ]
+  }
+  return [
+    { label: 'inventory.documentNumber', value: document.count_number || document.master_key },
+    { label: 'inventory.warehouse', value: warehouseLabels[document.warehouse_id] ?? document.warehouse_id },
+    { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+    { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+    { label: 'businessStatus.code', value: document.id },
+  ]
+}
+
+function inventoryLineColumns(targetType?: string): string[] {
+  if (targetType === 'inventory_movement') {
+    return ['inventory.item', 'inventory.warehouse', 'inventory.movementType', 'inventory.sourceType', 'inventory.quantity', 'inventory.unitCost', 'inventory.balanceAfter']
+  }
+  if (targetType === 'inventory_transfer') {
+    return ['inventory.item', 'inventory.quantity', 'inventory.unitCost']
+  }
+  if (targetType === 'inventory_adjustment') {
+    return ['inventory.item', 'inventory.quantityDelta', 'inventory.unitCost']
+  }
+  if (targetType === 'inventory_count') {
+    return ['inventory.item', 'inventory.bookQty', 'inventory.countedQty', 'inventory.varianceQty']
+  }
+  return ['supplyChain.lineItems']
+}
+
+function inventoryLineRows(
+  document: Record<string, any> | undefined,
+  targetType: string | undefined,
+  itemLabels: Record<string, string>,
+  warehouseLabels: Record<string, string>,
+  t: (key: string) => string,
+): any[][] {
+  if (!document) return []
+  if (targetType === 'inventory_movement') {
+    return [
+      [
+        itemLabels[document.item_id] ?? document.item_id,
+        warehouseLabels[document.warehouse_id] ?? document.warehouse_id,
+        document.movement_type ? t(`inventory.movementType.${document.movement_type}`) : '',
+        document.source_type,
+        quantity(document.quantity),
+        money(document.unit_cost, document.currency),
+        quantity(document.balance_after),
+      ],
+    ]
+  }
+  const lines = Array.isArray(document.lines) ? document.lines : []
+  if (targetType === 'inventory_transfer') {
+    return lines.map((line: Record<string, any>) => [
+      itemLabels[line.item_id] ?? line.item_id,
+      quantity(line.quantity),
+      money(line.unit_cost),
+    ])
+  }
+  if (targetType === 'inventory_adjustment') {
+    return lines.map((line: Record<string, any>) => [
+      itemLabels[line.item_id] ?? line.item_id,
+      quantity(line.quantity_delta),
+      money(line.unit_cost),
+    ])
+  }
+  if (targetType === 'inventory_count') {
+    return lines.map((line: Record<string, any>) => [
+      itemLabels[line.item_id] ?? line.item_id,
+      quantity(line.book_qty),
+      quantity(line.counted_qty),
+      quantity(line.variance_qty),
+    ])
+  }
+  return []
 }

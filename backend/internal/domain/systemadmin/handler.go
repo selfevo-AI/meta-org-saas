@@ -21,6 +21,7 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
+	r.Get("/platform/admin/me/permissions", h.getPermissionProfile)
 	r.Get("/platform/admin/modules/{moduleKey}/masters", h.listPlatformMasters)
 	r.Get("/platform/admin/masters/{masterKey}/details", h.listPlatformDetails)
 	r.Get("/platform/admin/schema-targets", h.listSchemaTargets)
@@ -29,6 +30,15 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/organizations/{id}/schema/change-requests", h.createOrganizationSchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/approve", h.approveSchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/apply", h.applySchemaChange)
+}
+
+func (h *Handler) getPermissionProfile(w http.ResponseWriter, r *http.Request) {
+	actorID, ok := authenticatedHumanID(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetPermissionProfile(r.Context(), actorID)
+	writeResult(w, http.StatusOK, result, err)
 }
 
 func (h *Handler) listPlatformMasters(w http.ResponseWriter, r *http.Request) {

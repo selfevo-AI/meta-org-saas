@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { listRuntimeOperations } from '@/lib/api'
+import { listPlatformRuntimeOperations, listRuntimeOperations } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import { ApiOperation, apiOperations } from '@/lib/operations'
 import { MethodBadge, OperationRunner } from './operation-runner'
@@ -10,6 +10,23 @@ interface ApiWorkbenchProps {
   token: string
   domain?: string
   showDomainMenu?: boolean
+  apiScope?: 'tenant' | 'platform'
+}
+
+const platformOperationDomains = new Set([
+  'Layer',
+  'Capability',
+  'Governance',
+  'Evolution',
+  'Verification',
+  'Observability',
+  'DeveloperTools',
+])
+const platformIdentityPaths = new Set(['/agents/register', '/agents'])
+
+function platformOperationAvailable(operation: ApiOperation): boolean {
+  if (operation.domain === 'Identity') return platformIdentityPaths.has(operation.path)
+  return platformOperationDomains.has(operation.domain)
 }
 
 function formatRuntimeDomainLabel(domain: string, translate: (key: string) => string) {
@@ -20,10 +37,18 @@ function formatRuntimeDomainLabel(domain: string, translate: (key: string) => st
   return moduleLabel === moduleLabelKey ? domain : moduleLabel
 }
 
-export function ApiWorkbench({ token, domain, showDomainMenu = true }: ApiWorkbenchProps) {
+export function ApiWorkbench({ token, domain, showDomainMenu = true, apiScope = 'tenant' }: ApiWorkbenchProps) {
   const { t } = useI18n()
   const [runtimeOperations, setRuntimeOperations] = useState<ApiOperation[]>([])
-  const operationCatalog = runtimeOperations.length > 0 ? runtimeOperations : apiOperations
+  const scopedRuntimeOperations = useMemo(
+    () => (apiScope === 'platform' ? runtimeOperations.filter(platformOperationAvailable) : runtimeOperations),
+    [apiScope, runtimeOperations],
+  )
+  const scopedFallbackOperations = useMemo(
+    () => (apiScope === 'platform' ? apiOperations.filter(platformOperationAvailable) : apiOperations),
+    [apiScope],
+  )
+  const operationCatalog = scopedRuntimeOperations.length > 0 ? scopedRuntimeOperations : scopedFallbackOperations
   const operationDomainsForCatalog = useMemo(() => Array.from(new Set(operationCatalog.map((operation) => operation.domain))), [operationCatalog])
   const firstOperation = domain
     ? operationCatalog.find((operation) => operation.domain === domain) ?? operationCatalog[0] ?? apiOperations[0]
@@ -33,7 +58,8 @@ export function ApiWorkbench({ token, domain, showDomainMenu = true }: ApiWorkbe
 
   useEffect(() => {
     let cancelled = false
-    listRuntimeOperations(token)
+    const loadRuntimeOperations = apiScope === 'platform' ? listPlatformRuntimeOperations : listRuntimeOperations
+    loadRuntimeOperations(token)
       .then((items) => {
         if (cancelled || items.length === 0) return
         setRuntimeOperations(items)
@@ -42,7 +68,7 @@ export function ApiWorkbench({ token, domain, showDomainMenu = true }: ApiWorkbe
     return () => {
       cancelled = true
     }
-  }, [token])
+  }, [apiScope, token])
 
   const effectiveActiveDomain = operationCatalog.some((operation) => operation.domain === activeDomain)
     ? activeDomain
@@ -115,7 +141,7 @@ export function ApiWorkbench({ token, domain, showDomainMenu = true }: ApiWorkbe
         </div>
       </section>
 
-      <OperationRunner key={effectiveSelectedOperation.id} token={token} operation={effectiveSelectedOperation} />
+      <OperationRunner key={effectiveSelectedOperation.id} token={token} operation={effectiveSelectedOperation} apiScope={apiScope} />
     </div>
   )
 }

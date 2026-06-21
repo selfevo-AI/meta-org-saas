@@ -4,6 +4,22 @@ import type { ReactNode } from 'react'
 import { RefreshCw, Save } from 'lucide-react'
 import { useI18n } from '@/lib/i18n'
 
+export type SupplyChainSelection = {
+  targetType: string
+  targetID?: string
+  label: string
+  record?: Record<string, unknown>
+}
+
+export interface SupplyChainDocumentDetailProps {
+  title: string
+  subtitle?: string
+  mainFields: Array<{ label: string; value: ReactNode }>
+  lineColumns: string[]
+  lineRows: ReactNode[][]
+  actions?: ReactNode
+}
+
 export function money(value: number | undefined, currency = 'CNY'): string {
   return `${currency} ${Number(value ?? 0).toFixed(2)}`
 }
@@ -30,6 +46,50 @@ export function Panel({ title, children, action }: { title: string; children: Re
         {action}
       </div>
       <div className="mt-4">{children}</div>
+    </section>
+  )
+}
+
+export function SupplyChainDocumentDetail({
+  title,
+  subtitle,
+  mainFields,
+  lineColumns,
+  lineRows,
+  actions,
+}: SupplyChainDocumentDetailProps) {
+  const { t } = useI18n()
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-bold uppercase tracking-normal text-slate-500">{t('supplyChain.documentDetail')}</p>
+          <h2 className="mt-1 truncate text-lg font-semibold text-slate-950">{t(title)}</h2>
+          {subtitle && <p className="mt-1 truncate text-sm text-slate-500">{subtitle}</p>}
+        </div>
+        {actions}
+      </div>
+      <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {mainFields.map((field) => (
+          <div key={field.label} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="text-[11px] font-semibold uppercase tracking-normal text-slate-500">{t(field.label)}</p>
+            <div className="mt-1 min-h-5 break-words text-sm font-semibold text-slate-900">{field.value || t('common.none')}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-6">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-950">{t('supplyChain.lineItems')}</h3>
+          <span className="text-xs font-semibold text-slate-500">{lineRows.length}</span>
+        </div>
+        {lineRows.length > 0 ? (
+          <DataTable headers={lineColumns} rows={lineRows} />
+        ) : (
+          <div className="rounded-lg border border-dashed border-slate-300 px-3 py-6 text-center text-sm text-slate-500">
+            {t('supplyChain.noLineItems')}
+          </div>
+        )}
+      </div>
     </section>
   )
 }

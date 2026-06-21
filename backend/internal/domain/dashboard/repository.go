@@ -234,21 +234,7 @@ func (r *Repository) Capability(ctx context.Context) (CapabilitySummary, error) 
 func (r *Repository) Observability(ctx context.Context) (ObservabilitySummary, error) {
 	var s ObservabilitySummary
 	if orgID := currentTenantOrganizationID(ctx); orgID != nil {
-		if err := r.db.QueryRow(ctx, `
-			SELECT
-				(SELECT COUNT(*) FROM traces tr JOIN workflow_instances wi ON wi.id = tr.workflow_id WHERE wi.organization_id = $1 AND tr.status = 'active'),
-				(SELECT COUNT(*) FROM traces tr JOIN workflow_instances wi ON wi.id = tr.workflow_id WHERE wi.organization_id = $1 AND tr.status = 'completed'),
-				(SELECT COUNT(*) FROM traces tr JOIN workflow_instances wi ON wi.id = tr.workflow_id WHERE wi.organization_id = $1 AND tr.status = 'failed'),
-				(SELECT COUNT(*)
-				 FROM spans sp
-				 JOIN traces tr ON tr.id = sp.trace_id
-				 JOIN workflow_instances wi ON wi.id = tr.workflow_id
-				 WHERE wi.organization_id = $1 AND sp.started_at >= NOW() - INTERVAL '24 hours'),
-				(SELECT COUNT(*) FROM metrics WHERE metadata->>'organization_id' = $1::text AND recorded_at >= NOW() - INTERVAL '24 hours'),
-				(SELECT COUNT(*) FROM ai_invocations WHERE organization_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'),
-				(SELECT COUNT(*) FROM tool_executions WHERE organization_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'),
-				(SELECT COUNT(*) FROM finance_export_batches WHERE organization_id = $1 AND updated_at >= NOW() - INTERVAL '24 hours')
-		`, *orgID).Scan(
+		if err := r.db.QueryRow(ctx, scopedObservabilityQuery(), *orgID).Scan(
 			&s.ActiveTraces,
 			&s.CompletedTraces,
 			&s.FailedTraces,
@@ -286,6 +272,27 @@ func (r *Repository) Observability(ctx context.Context) (ObservabilitySummary, e
 		return s, fmt.Errorf("query observability summary: %w", err)
 	}
 	return s, nil
+}
+
+func scopedObservabilityQuery() string {
+	return `
+		SELECT
+			(SELECT COUNT(*) FROM traces tr JOIN workflow_instances wi ON wi.id = tr.workflow_id WHERE wi.organization_id = $1 AND tr.status = 'active'),
+			(SELECT COUNT(*) FROM traces tr JOIN workflow_instances wi ON wi.id = tr.workflow_id WHERE wi.organization_id = $1 AND tr.status = 'completed'),
+			(SELECT COUNT(*) FROM traces tr JOIN workflow_instances wi ON wi.id = tr.workflow_id WHERE wi.organization_id = $1 AND tr.status = 'failed'),
+			(SELECT COUNT(*)
+			 FROM spans sp
+			 JOIN traces tr ON tr.id = sp.trace_id
+			 JOIN workflow_instances wi ON wi.id = tr.workflow_id
+			 WHERE wi.organization_id = $1 AND sp.started_at >= NOW() - INTERVAL '24 hours'),
+			(SELECT COUNT(*) FROM metrics WHERE metadata->>'organization_id' = $1::text AND recorded_at >= NOW() - INTERVAL '24 hours'),
+			(SELECT COUNT(*) FROM ai_invocations WHERE organization_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'),
+			(SELECT COUNT(*) FROM tool_executions WHERE organization_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'),
+			(SELECT COUNT(*)
+			 FROM finance_export_batches b
+			 WHERE b.updated_at >= NOW() - INTERVAL '24 hours'
+			   AND EXISTS (SELECT 1 FROM finance_export_lines l WHERE l.batch_id = b.id AND l.organization_id = $1))
+	`
 }
 
 func (r *Repository) Verification(ctx context.Context) (VerificationSummary, error) {

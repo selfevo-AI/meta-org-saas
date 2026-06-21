@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/tenantdb"
 )
 
@@ -35,15 +36,55 @@ func NewService(repo repository) *Service {
 	return &Service{repo: repo}
 }
 
+func (s *Service) GetPermissionProfile(ctx context.Context, actorID uuid.UUID) (*PlatformPermissionProfile, error) {
+	if actorID == uuid.Nil {
+		return nil, ErrForbidden
+	}
+	role, err := s.repo.GetPlatformRole(ctx, actorID)
+	if err != nil {
+		return nil, ErrForbidden
+	}
+	normalized := platformauth.NormalizeRole(role)
+	permissions := platformauth.PermissionsForRole(normalized)
+	if len(permissions) == 0 {
+		return nil, ErrForbidden
+	}
+	return &PlatformPermissionProfile{
+		Role:        normalized,
+		Permissions: permissions,
+		MenuItems:   menuItemsForPermissions(permissions),
+	}, nil
+}
+
 func (s *Service) ListPlatformMasters(ctx context.Context, actorID uuid.UUID, moduleKey string, limit int) ([]PlatformMaster, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
 		return nil, err
 	}
 	return s.repo.ListPlatformMasters(ctx, moduleKey, limit)
 }
 
+func menuItemsForPermissions(permissions map[string]bool) []string {
+	items := []string{}
+	if permissions[platformauth.PermissionPlatformRead] {
+		items = append(items, "saas", "catalog", "targets", "assistant")
+	}
+	if permissions[platformauth.PermissionOrganizationManage] || permissions[platformauth.PermissionOrganizationClose] {
+		items = append(items, "organizations")
+	}
+	if permissions[platformauth.PermissionModelManage] {
+		items = append(items, "models")
+	}
+	if permissions[platformauth.PermissionRuntimeManage] {
+		items = append(items, "runtime")
+	}
+	if permissions[platformauth.PermissionSchemaManage] {
+		items = append(items, "schema")
+	}
+	return items
+}
+
 func (s *Service) ListPlatformDetails(ctx context.Context, actorID uuid.UUID, masterKey string) ([]PlatformDetail, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
 		return nil, err
 	}
 	if masterKey == "" {
@@ -53,14 +94,14 @@ func (s *Service) ListPlatformDetails(ctx context.Context, actorID uuid.UUID, ma
 }
 
 func (s *Service) ListSchemaTargets(ctx context.Context, actorID uuid.UUID, limit int) ([]OrganizationSchemaTarget, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
 		return nil, err
 	}
 	return s.repo.ListSchemaTargets(ctx, limit)
 }
 
 func (s *Service) ExportOrganizationSchema(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID) (*SchemaPackage, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
 		return nil, err
 	}
 	if orgID == uuid.Nil {
@@ -71,7 +112,7 @@ func (s *Service) ExportOrganizationSchema(ctx context.Context, actorID uuid.UUI
 }
 
 func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UUID, input CreateSchemaChangeRequestInput) (*SchemaChangeRequest, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
 		return nil, err
 	}
 	if input.OrganizationID == uuid.Nil {
@@ -84,9 +125,23 @@ func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UU
 		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
 	schemaName := tenantdb.SchemaNameForOrganization(input.OrganizationID)
-	statements, err := BuildCreateTableStatements(schemaName, input.SchemaPackage)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	riskLevel := SchemaRiskSafe
+	diff := []SchemaDiff{{Action: "create_or_ensure_tables", Risk: SchemaRiskSafe}}
+	var statements []string
+	if input.CurrentSchemaPackage != nil {
+		plan, err := BuildSchemaMigrationPlan(schemaName, *input.CurrentSchemaPackage, input.SchemaPackage)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+		}
+		statements = plan.Statements
+		riskLevel = plan.RiskLevel
+		diff = plan.Diff
+	} else {
+		var err error
+		statements, err = BuildCreateTableStatements(schemaName, input.SchemaPackage)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+		}
 	}
 	return s.repo.CreateSchemaChangeRequest(ctx, CreateSchemaChangeRequestRecord{
 		OrganizationID: input.OrganizationID,
@@ -95,19 +150,21 @@ func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UU
 		Reason:         input.Reason,
 		SchemaPackage:  input.SchemaPackage,
 		Statements:     statements,
+		RiskLevel:      riskLevel,
+		Diff:           diff,
 		RequestedBy:    actorID,
 	})
 }
 
 func (s *Service) ApproveSchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID, reason string) (*SchemaChangeRequest, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApprove); err != nil {
 		return nil, err
 	}
 	return s.repo.UpdateSchemaChangeRequestStatus(ctx, requestID, SchemaChangeApproved, actorID, reason)
 }
 
 func (s *Service) ApplySchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) (*SchemaApplyJob, error) {
-	if err := s.requirePlatformAdmin(ctx, actorID); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApply); err != nil {
 		return nil, err
 	}
 	request, err := s.repo.GetSchemaChangeRequest(ctx, requestID)
@@ -131,12 +188,12 @@ func (s *Service) ApplySchemaChange(ctx context.Context, actorID uuid.UUID, requ
 	return s.repo.ApplySchemaChange(ctx, request, statements)
 }
 
-func (s *Service) requirePlatformAdmin(ctx context.Context, actorID uuid.UUID) error {
+func (s *Service) requirePlatformPermission(ctx context.Context, actorID uuid.UUID, permission string) error {
 	if actorID == uuid.Nil {
 		return ErrForbidden
 	}
 	role, err := s.repo.GetPlatformRole(ctx, actorID)
-	if err != nil || role == "" {
+	if err != nil || !platformauth.HasPermission(role, permission) {
 		return ErrForbidden
 	}
 	return nil

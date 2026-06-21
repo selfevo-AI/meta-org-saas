@@ -62,6 +62,60 @@ func TestBuildCreateTableStatementsUsesQuotedSchemaAndNonDestructiveDDL(t *testi
 	}
 }
 
+func TestBuildSchemaMigrationPlanDetectsFullSchemaChanges(t *testing.T) {
+	current := validOrganizationPackage()
+	current.Tables[0].Fields = append(current.Tables[0].Fields,
+		SchemaFieldDefinition{Name: "legacy_code", DataType: "text", Nullable: true},
+		SchemaFieldDefinition{Name: "display_name", DataType: "text", Nullable: true},
+	)
+	current.Tables = append(current.Tables, SchemaTableDefinition{
+		Name: "obsolete_table",
+		Fields: []SchemaFieldDefinition{
+			{Name: "id", DataType: "uuid", PrimaryKey: true},
+		},
+	})
+
+	desired := validOrganizationPackage()
+	desired.Tables[0].Fields = append(desired.Tables[0].Fields,
+		SchemaFieldDefinition{Name: "external_code", DataType: "text", Nullable: true, PreviousName: "legacy_code"},
+		SchemaFieldDefinition{Name: "display_name", DataType: "varchar(255)", Nullable: false, Default: "''"},
+		SchemaFieldDefinition{Name: "search_vector", DataType: "text", Nullable: true},
+	)
+	desired.Tables[0].Indexes = []SchemaIndexDefinition{{Name: "idx_organization_masters_external_code", Fields: []string{"external_code"}}}
+	desired.Tables = append(desired.Tables, SchemaTableDefinition{
+		Name: "audit_events",
+		Fields: []SchemaFieldDefinition{
+			{Name: "id", DataType: "uuid", PrimaryKey: true, Default: "gen_random_uuid()"},
+			{Name: "payload", DataType: "jsonb", Nullable: false, Default: "'{}'::jsonb"},
+		},
+	})
+
+	plan, err := BuildSchemaMigrationPlan("org_123e4567e89b12d3a456426614174000", current, desired)
+	if err != nil {
+		t.Fatalf("BuildSchemaMigrationPlan error = %v", err)
+	}
+	joined := strings.Join(plan.Statements, "\n")
+	expected := []string{
+		`CREATE TABLE IF NOT EXISTS "org_123e4567e89b12d3a456426614174000"."audit_events"`,
+		`ALTER TABLE "org_123e4567e89b12d3a456426614174000"."organization_masters" RENAME COLUMN "legacy_code" TO "external_code"`,
+		`ALTER TABLE "org_123e4567e89b12d3a456426614174000"."organization_masters" ALTER COLUMN "display_name" TYPE VARCHAR(255)`,
+		`ALTER TABLE "org_123e4567e89b12d3a456426614174000"."organization_masters" ADD COLUMN "search_vector" TEXT`,
+		`DROP TABLE "org_123e4567e89b12d3a456426614174000"."obsolete_table"`,
+		`CREATE INDEX IF NOT EXISTS "idx_organization_masters_external_code"`,
+	}
+	for _, snippet := range expected {
+		if !strings.Contains(joined, snippet) {
+			t.Fatalf("migration statements missing %q\nstatements:\n%s", snippet, joined)
+		}
+	}
+	if plan.RiskLevel != SchemaRiskDestructive {
+		t.Fatalf("risk level = %q, want %q", plan.RiskLevel, SchemaRiskDestructive)
+	}
+	if len(plan.Diff) == 0 {
+		t.Fatalf("migration diff is empty")
+	}
+}
+
 func validOrganizationPackage() SchemaPackage {
 	return SchemaPackage{
 		FormatVersion: "meta-org.schema.v1",

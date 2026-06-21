@@ -45,6 +45,11 @@ export function buildOperationRequestPath(operation: ApiOperation, state: Operat
   return queryString ? `${path}?${queryString}` : path
 }
 
+function scopeOperationRequestPath(path: string, apiScope: 'tenant' | 'platform'): string {
+  if (apiScope !== 'platform' || path.startsWith('/platform/admin')) return path
+  return `/platform/admin${path.startsWith('/') ? path : `/${path}`}`
+}
+
 function parseBody(operation: ApiOperation, bodyText: string): unknown {
   if (operation.bodyTemplate === undefined) return undefined
   if (bodyText.trim() === '') return {}
@@ -96,11 +101,13 @@ export function OperationRunner({
   operation,
   initialPathValues,
   compact = false,
+  apiScope = 'tenant',
 }: {
   token: string
   operation: ApiOperation
   initialPathValues?: Record<string, string>
   compact?: boolean
+  apiScope?: 'tenant' | 'platform'
 }) {
   const { t } = useI18n()
   const [formState, setFormState] = useState<OperationFormState>(() => createOperationFormState(operation, initialPathValues))
@@ -109,6 +116,7 @@ export function OperationRunner({
   const [loading, setLoading] = useState(false)
 
   const requestPath = useMemo(() => buildOperationRequestPath(operation, formState), [operation, formState])
+  const scopedRequestPath = useMemo(() => scopeOperationRequestPath(requestPath, apiScope), [apiScope, requestPath])
   const profile = useMemo(() => getOperationProfile(operation), [operation])
   const resultSummary = useMemo(() => extractResultSummary(response), [response])
 
@@ -133,7 +141,7 @@ export function OperationRunner({
 
     try {
       const body = parseBody(operation, formState.body)
-      const result = await apiRequest<unknown>(requestPath, {
+      const result = await apiRequest<unknown>(scopedRequestPath, {
         method: operation.method,
         token: operation.auth === false ? undefined : token,
         body,
@@ -156,7 +164,7 @@ export function OperationRunner({
             <DangerBadge dangerLevel={profile.dangerLevel} />
             <h2 className="truncate text-base font-semibold text-slate-950">{t(operation.title)}</h2>
           </div>
-          <p className="mt-2 break-all text-sm text-slate-500">{requestPath}</p>
+          <p className="mt-2 break-all text-sm text-slate-500">{scopedRequestPath}</p>
         </div>
         {operation.auth === false ? <StatusBadge label={t('common.public')} tone="blue" /> : <StatusBadge label={t('common.jwt')} tone="green" />}
       </div>

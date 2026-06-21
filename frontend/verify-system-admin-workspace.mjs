@@ -5,6 +5,7 @@ const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
 const authSource = readFileSync(`${frontendRoot}src/lib/auth.ts`, 'utf8')
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
+const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
 const workspacePath = `${frontendRoot}src/app/system-admin-workspace.tsx`
 const workspaceSource = existsSync(workspacePath) ? readFileSync(workspacePath, 'utf8') : ''
@@ -23,6 +24,13 @@ const requiredApiExports = [
   'updateOrganizationModules',
   'listOrganizationInvitations',
   'createOrganizationInvitation',
+  'closePlatformOrganization',
+  'getPlatformPermissionProfile',
+  'createPlatformAssistantSession',
+  'approvePlatformToolApproval',
+  'rejectPlatformToolApproval',
+  'getPlatformAIInvocation',
+  'listPlatformModelProviders',
 ]
 
 const requiredApiTypes = [
@@ -38,6 +46,7 @@ const requiredApiTypes = [
   'OrganizationSubscription',
   'OrganizationInvitation',
   'CreateOrganizationInvitationInput',
+  'PlatformPermissionProfile',
 ]
 
 const requiredI18nKeys = [
@@ -79,6 +88,13 @@ const requiredI18nKeys = [
   'systemAdmin.changeApproved',
   'systemAdmin.changeApplied',
   'systemAdmin.loadFailed',
+  'systemAdmin.permissions',
+  'systemAdmin.closeOrganization',
+  'systemAdmin.organizationClosed',
+  'systemAdmin.showClosedOrganizations',
+  'systemAdmin.platformAssistant',
+  'systemAdmin.platformFeatures',
+  'systemAdmin.apiWorkbench',
 ]
 
 const requiredPageSnippets = [
@@ -90,25 +106,36 @@ const requiredPageSnippets = [
   'platformRole',
   'loginSurface',
   'effectiveWorkspaceView',
-  "isPlatformAdminSession && workspaceView === 'overview' ? 'domain:SystemAdmin' : workspaceView",
   'showBusinessChrome',
   "showBusinessControl={showBusinessChrome}",
   'const platformMenuGroups',
   'const visibleMenuGroups = isPlatformAdminSession ? platformMenuGroups : menuGroups',
   'groups={visibleMenuGroups}',
   '!isPlatformAdminSession && <BusinessStatusPanel',
-  'if (!token || isPlatformAdminSession) {',
-  'if (isPlatformAdminSession) return',
-  "setWorkspaceView('domain:SystemAdmin')",
+  'getPlatformMetaOrgOverview',
+  'getPlatformMetaOrgInbox',
+  'listPlatformModels',
+  'listPlatformAssistantSkills',
+  "setWorkspaceView('overview')",
+  "apiScope={isPlatformAdminSession ? 'platform' : 'tenant'}",
   "setCurrentOrganizationId(null)",
   "t('auth.platformAdmin')",
   "t('auth.emailAlreadyRegistered')",
+  'const tenantOnlyDomains',
 ]
 
 const requiredWorkspaceSnippets = [
   'export function SystemAdminWorkspace',
+  'AIAssistant',
+  'apiScope="platform"',
+  'ApiWorkbench',
+  'platformFeatureTabs',
+  'platformPermissions',
+  'canPlatform',
   'listPlatformMasters',
   'listPlatformOrganizations',
+  'getPlatformPermissionProfile',
+  'closePlatformOrganization',
   'getOrganizationSubscription',
   'getOrganizationEntitlements',
   'updateOrganizationModules',
@@ -121,6 +148,27 @@ const requiredWorkspaceSnippets = [
   'applySchemaChange',
   "'saas'",
   "t('systemAdmin.",
+]
+
+const requiredAssistantSnippets = [
+  'approvePlatformToolApproval',
+  'rejectPlatformToolApproval',
+  "apiScope === 'platform' ? approvePlatformToolApproval : approveToolApproval",
+  "apiScope === 'platform' ? rejectPlatformToolApproval : rejectToolApproval",
+  "apiScope === 'platform' ? getPlatformAIInvocation : getAIInvocation",
+  "apiScope === 'platform' ? listPlatformModelProviders : listModelProviders",
+]
+
+const movedPlatformDomains = [
+  'Capability',
+  'Governance',
+  'Evolution',
+  'Verification',
+  'DeveloperTools',
+  'Identity',
+  'Layer',
+  'Observability',
+  'SystemAdmin',
 ]
 
 const requiredAuthSnippets = [
@@ -177,6 +225,18 @@ if (missingPageSnippets.length > 0) {
   failures.push(`Missing page integration snippets:\n${missingPageSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
+const defaultMenuStart = pageSource.indexOf('const defaultMenuGroups')
+const platformMenuStart = pageSource.indexOf('const platformMenuGroups')
+if (defaultMenuStart === -1 || platformMenuStart === -1 || platformMenuStart <= defaultMenuStart) {
+  failures.push('Could not locate tenant and platform menu group boundaries')
+} else {
+  const defaultMenuSource = pageSource.slice(defaultMenuStart, platformMenuStart)
+  const domainsStillInTenantMenu = movedPlatformDomains.filter((domain) => defaultMenuSource.includes(`'${domain}'`))
+  if (domainsStillInTenantMenu.length > 0) {
+    failures.push(`Platform-only domains still appear in tenant default menu:\n${domainsStillInTenantMenu.map((domain) => `  - ${domain}`).join('\n')}`)
+  }
+}
+
 if (!workspaceSource) {
   failures.push('Missing src/app/system-admin-workspace.tsx')
 } else {
@@ -184,6 +244,11 @@ if (!workspaceSource) {
   if (missingWorkspaceSnippets.length > 0) {
     failures.push(`Missing workspace integration snippets:\n${missingWorkspaceSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
   }
+}
+
+const missingAssistantSnippets = requiredAssistantSnippets.filter((snippet) => !assistantSource.includes(snippet))
+if (missingAssistantSnippets.length > 0) {
+  failures.push(`Missing platform assistant approval snippets:\n${missingAssistantSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
 const missingEnKeys = requiredI18nKeys.filter((key) => !hasDictionaryKey(enDictionary, key))

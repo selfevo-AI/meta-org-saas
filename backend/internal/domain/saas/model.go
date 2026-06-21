@@ -15,6 +15,9 @@ const (
 
 	AuthorityOwner = "organization_creator"
 	AuthorityAdmin = "organization_admin"
+
+	OrganizationStatusActive = "active"
+	OrganizationStatusClosed = "closed"
 )
 
 type UserProfile struct {
@@ -31,9 +34,14 @@ type UserProfile struct {
 }
 
 type OrganizationAccount struct {
-	ID            uuid.UUID  `json:"id"`
-	Name          string     `json:"name"`
-	Description   string     `json:"description,omitempty"`
+	ID           uuid.UUID  `json:"id"`
+	Name         string     `json:"name"`
+	Description  string     `json:"description,omitempty"`
+	Status       string     `json:"status,omitempty"`
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`
+	ClosedBy     *uuid.UUID `json:"closed_by,omitempty"`
+	ClosedReason string     `json:"closed_reason,omitempty"`
+
 	MembershipID  *uuid.UUID `json:"membership_id,omitempty"`
 	AuthorityTier string     `json:"authority_tier,omitempty"`
 	IsOwner       bool       `json:"is_owner"`
@@ -76,6 +84,10 @@ type OnboardingOrganizationResponse struct {
 
 type UpdateOrganizationModulesInput struct {
 	EnabledModules []string `json:"enabled_modules"`
+}
+
+type CloseOrganizationInput struct {
+	Reason string `json:"reason,omitempty"`
 }
 
 type CreateInvitationInput struct {

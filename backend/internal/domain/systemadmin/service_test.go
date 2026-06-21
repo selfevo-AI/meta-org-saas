@@ -2,6 +2,7 @@ package systemadmin
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -36,6 +37,28 @@ func TestApplySchemaChangeRejectsPendingRequest(t *testing.T) {
 	}
 	if repo.applied {
 		t.Fatal("ApplySchemaChange() applied pending request")
+	}
+}
+
+func TestApplySchemaChangeRejectsAuditorRole(t *testing.T) {
+	repo := &fakeRepository{
+		role: "auditor",
+		request: &SchemaChangeRequest{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			Status:         SchemaChangeApproved,
+			SchemaPackage:  DefaultOrganizationSchemaPackage(),
+		},
+	}
+	service := NewService(repo)
+
+	_, err := service.ApplySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ApplySchemaChange error = %v, want ErrForbidden", err)
+	}
+	if repo.applied {
+		t.Fatal("ApplySchemaChange applied schema for auditor role")
 	}
 }
 

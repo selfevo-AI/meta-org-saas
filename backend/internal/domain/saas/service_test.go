@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
 )
 
@@ -48,11 +49,74 @@ func TestUpdateOrganizationModulesRequiresSecurityKernelAuthorization(t *testing
 	}
 }
 
+func TestCloseOrganizationRequiresPlatformAdmin(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{platformRole: ""}
+	svc := NewService(repo, ModeSaaS)
+
+	_, err := svc.CloseOrganization(context.Background(), actorID, orgID, CloseOrganizationInput{Reason: "expired contract"})
+
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("CloseOrganization error = %v, want ErrForbidden", err)
+	}
+	if repo.closedOrganization {
+		t.Fatalf("organization closed without platform permission")
+	}
+}
+
+func TestCloseOrganizationMarksOrganizationClosed(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{platformRole: "owner"}
+	svc := NewService(repo, ModeSaaS)
+
+	closed, err := svc.CloseOrganization(context.Background(), actorID, orgID, CloseOrganizationInput{Reason: "expired contract"})
+
+	if err != nil {
+		t.Fatalf("CloseOrganization error = %v", err)
+	}
+	if !repo.closedOrganization {
+		t.Fatalf("CloseOrganization did not call repository")
+	}
+	if closed.Status != OrganizationStatusClosed {
+		t.Fatalf("closed status = %q, want %q", closed.Status, OrganizationStatusClosed)
+	}
+	if repo.closeReason != "expired contract" {
+		t.Fatalf("close reason = %q, want expired contract", repo.closeReason)
+	}
+}
+
+func TestResolveTenantRejectsClosedOrganization(t *testing.T) {
+	userID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{
+		profile: &UserProfile{
+			ID:                    userID,
+			OnboardingStatus:      OnboardingComplete,
+			DefaultOrganizationID: &orgID,
+		},
+		membership:   &membershipRecord{ID: uuid.New(), OrganizationID: orgID, AuthorityTier: AuthorityOwner},
+		organization: &OrganizationAccount{ID: orgID, Status: OrganizationStatusClosed},
+	}
+	svc := NewService(repo, ModeSaaS)
+
+	_, err := svc.ResolveTenant(context.Background(), middleware.AuthenticatedUser{ID: userID.String(), Type: "human"}, orgID.String())
+
+	if !errors.Is(err, middleware.ErrTenantForbidden) {
+		t.Fatalf("ResolveTenant error = %v, want ErrTenantForbidden for closed organization", err)
+	}
+}
+
 type fakeRepository struct {
 	completedOnboarding bool
 	updatedModules      bool
+	closedOrganization  bool
+	closeReason         string
 	profile             *UserProfile
 	membership          *membershipRecord
+	organization        *OrganizationAccount
+	platformRole        string
 }
 
 func (f *fakeRepository) BootstrapPlatformAdmin(context.Context, string, string) error {
@@ -81,6 +145,12 @@ func (f *fakeRepository) CompleteOnboarding(context.Context, uuid.UUID, Onboardi
 
 func (f *fakeRepository) ListOrganizationsForPlatform(context.Context, int) ([]OrganizationAccount, error) {
 	return []OrganizationAccount{}, nil
+}
+
+func (f *fakeRepository) CloseOrganization(_ context.Context, orgID uuid.UUID, actorID uuid.UUID, reason string) (*OrganizationAccount, error) {
+	f.closedOrganization = true
+	f.closeReason = reason
+	return &OrganizationAccount{ID: orgID, Status: OrganizationStatusClosed}, nil
 }
 
 func (f *fakeRepository) GetSubscription(context.Context, uuid.UUID) (*OrganizationSubscription, error) {
@@ -124,11 +194,17 @@ func (f *fakeRepository) GetAgentMembership(context.Context, uuid.UUID, uuid.UUI
 }
 
 func (f *fakeRepository) GetOrganizationAccount(context.Context, uuid.UUID) (*OrganizationAccount, error) {
+	if f.organization != nil {
+		return f.organization, nil
+	}
 	return &OrganizationAccount{ID: uuid.New()}, nil
 }
 
 func (f *fakeRepository) GetPlatformRole(context.Context, uuid.UUID) (string, error) {
-	return "", ErrForbidden
+	if f.platformRole == "" {
+		return "", ErrForbidden
+	}
+	return f.platformRole, nil
 }
 
 type fakeSecurityKernel struct {

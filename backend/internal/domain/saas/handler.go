@@ -29,6 +29,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Get("/modules", h.listModules)
 	r.Post("/onboarding/organization", h.completeOnboarding)
 	r.Get("/platform/organizations", h.listPlatformOrganizations)
+	r.Post("/platform/admin/organizations/{id}/close", h.closePlatformOrganization)
 }
 
 func (h *Handler) RegisterTenantRoutes(r chi.Router) {
@@ -73,6 +74,24 @@ func (h *Handler) listPlatformOrganizations(w http.ResponseWriter, r *http.Reque
 	}
 	items, err := h.service.ListPlatformOrganizations(r.Context(), userID, queryLimit(r))
 	writeResult(w, http.StatusOK, items, err)
+}
+
+func (h *Handler) closePlatformOrganization(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authenticatedUserID(w, r)
+	if !ok {
+		return
+	}
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization id"})
+		return
+	}
+	var input CloseOrganizationInput
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input)
+	}
+	result, err := h.service.CloseOrganization(r.Context(), userID, orgID, input)
+	writeResult(w, http.StatusOK, result, err)
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {

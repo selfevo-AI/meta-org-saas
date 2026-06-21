@@ -36,13 +36,18 @@ import {
   SelectInput,
   StatusPill,
   SubmitButton,
+  SupplyChainDocumentDetail,
   TextInput,
   documentKey,
   money,
+  quantity,
+  type SupplyChainSelection,
 } from './supply-chain-ui'
 
 interface ProcurementWorkspaceProps {
   token: string
+  currentSupplyChainFunctionID?: string
+  externalSelection?: SupplyChainSelection | null
 }
 
 type TabID = 'requisitions' | 'orders' | 'receipts' | 'returns'
@@ -54,7 +59,7 @@ const tabs: Array<{ id: TabID; label: string; icon: typeof ClipboardList }> = [
   { id: 'returns', label: 'procurement.returns', icon: RotateCcw },
 ]
 
-export function ProcurementWorkspace({ token }: ProcurementWorkspaceProps) {
+export function ProcurementWorkspace({ token, currentSupplyChainFunctionID, externalSelection }: ProcurementWorkspaceProps) {
   const { t } = useI18n()
   const [activeTab, setActiveTab] = useState<TabID>('requisitions')
   const [partners, setPartners] = useState<BusinessPartner[]>([])
@@ -121,6 +126,14 @@ export function ProcurementWorkspace({ token }: ProcurementWorkspaceProps) {
   const requisitionLabels = useMemo(() => Object.fromEntries(requisitions.map((item) => [item.id, item.title || documentKey(item)])), [requisitions])
   const orderLabels = useMemo(() => Object.fromEntries(orders.map((item) => [item.id, item.order_number || documentKey(item)])), [orders])
   const receiptLabels = useMemo(() => Object.fromEntries(receipts.map((item) => [item.id, item.receipt_number || documentKey(item)])), [receipts])
+  const selectedDocument = useMemo(
+    () => selectedProcurementDocument(externalSelection, { requisitions, orders, receipts, returns }),
+    [externalSelection, orders, receipts, requisitions, returns],
+  )
+  const detailTitle = selectedDocument ? procurementDocumentTitle(selectedDocument) : ''
+  const detailActions = selectedDocument ? procurementDetailActions(selectedDocument, token, run) : null
+  const lineColumns = procurementLineColumns(selectedDocument?.targetType)
+  const lineRows = procurementLineRows(selectedDocument?.document, selectedDocument?.targetType, itemLabels, warehouseLabels)
 
   const loadProcurement = useCallback(async () => {
     setLoading(true)
@@ -187,6 +200,13 @@ export function ProcurementWorkspace({ token }: ProcurementWorkspaceProps) {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [loadProcurement])
+
+  useEffect(() => {
+    const nextTab = procurementTabForSelection(externalSelection?.targetType) ?? procurementTabForFunction(currentSupplyChainFunctionID)
+    if (!nextTab) return
+    const timer = window.setTimeout(() => setActiveTab(nextTab), 0)
+    return () => window.clearTimeout(timer)
+  }, [currentSupplyChainFunctionID, externalSelection?.targetType])
 
   async function run(action: () => Promise<void>, success: string) {
     setLoading(true)
@@ -339,6 +359,20 @@ export function ProcurementWorkspace({ token }: ProcurementWorkspaceProps) {
         </p>
       )}
 
+      {selectedDocument && (
+        <SupplyChainDocumentDetail
+          title={detailTitle}
+          subtitle={t('supplyChain.selectedDocument')}
+          mainFields={procurementMainFields(selectedDocument.document, selectedDocument.targetType)}
+          lineColumns={lineColumns}
+          lineRows={lineRows}
+          actions={detailActions}
+        />
+      )}
+
+      {!selectedDocument && (
+        <>
+
       {activeTab === 'requisitions' && (
         <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
           <Panel title="procurement.requisitions">
@@ -457,6 +491,135 @@ export function ProcurementWorkspace({ token }: ProcurementWorkspaceProps) {
           </Panel>
         </div>
       )}
+        </>
+      )}
     </div>
   )
+}
+
+type ProcurementDocumentSelection = {
+  targetType: string
+  document: Record<string, any>
+}
+
+function procurementTabForSelection(targetType?: string): TabID | null {
+  const tabsByType: Record<string, TabID> = {
+    purchase_requisition: 'requisitions',
+    purchase_order: 'orders',
+    purchase_receipt: 'receipts',
+    purchase_return: 'returns',
+  }
+  return targetType ? tabsByType[targetType] ?? null : null
+}
+
+function procurementTabForFunction(functionID?: string): TabID | null {
+  const tabsByFunction: Record<string, TabID> = {
+    'procurement:requisitions': 'requisitions',
+    'procurement:orders': 'orders',
+    'procurement:receipts': 'receipts',
+    'procurement:returns': 'returns',
+  }
+  return functionID ? tabsByFunction[functionID] ?? null : null
+}
+
+function selectedProcurementDocument(
+  selection: SupplyChainSelection | null | undefined,
+  data: {
+    requisitions: PurchaseRequisition[]
+    orders: PurchaseOrder[]
+    receipts: PurchaseReceipt[]
+    returns: PurchaseReturn[]
+  },
+): ProcurementDocumentSelection | null {
+  if (!selection) return null
+  const byType: Record<string, Array<Record<string, any>>> = {
+    purchase_requisition: data.requisitions,
+    purchase_order: data.orders,
+    purchase_receipt: data.receipts,
+    purchase_return: data.returns,
+  }
+  const document = byType[selection.targetType]?.find((item) => item.id === selection.targetID) ?? selection.record
+  return document ? { targetType: selection.targetType, document: document as Record<string, any> } : null
+}
+
+function procurementDocumentTitle(selection: ProcurementDocumentSelection): string {
+  const document = selection.document
+  return String(document.title || document.order_number || document.receipt_number || document.return_number || document.master_key || document.id || '')
+}
+
+function procurementMainFields(document: Record<string, any>, targetType: string): Array<{ label: string; value: any }> {
+  return [
+    { label: targetType === 'purchase_requisition' ? 'finance.title' : 'procurement.documentNumber', value: document.title || document.order_number || document.receipt_number || document.return_number || document.master_key },
+    { label: 'finance.vendor', value: document.supplier_name || document.supplier_id },
+    { label: 'developer.status', value: <StatusPill label={document.status || ''} /> },
+    { label: 'procurement.approvalStatus', value: <StatusPill label={document.approval_status || 'not_required'} /> },
+    { label: 'finance.amount', value: money(document.total_amount, document.currency) },
+    { label: 'finance.currency', value: document.currency },
+    { label: 'businessStatus.updated', value: document.updated_at || document.created_at },
+    { label: 'businessStatus.code', value: document.id },
+  ]
+}
+
+function procurementLineColumns(targetType?: string): string[] {
+  if (targetType === 'purchase_requisition') {
+    return ['inventory.item', 'inventory.warehouse', 'inventory.quantity', 'inventory.unitCost', 'finance.amount']
+  }
+  return ['inventory.item', 'inventory.warehouse', 'inventory.quantity', 'inventory.unitCost', 'finance.taxAmount', 'finance.amount']
+}
+
+function procurementLineRows(
+  document: Record<string, any> | undefined,
+  targetType: string | undefined,
+  itemLabels: Record<string, string>,
+  warehouseLabels: Record<string, string>,
+): any[][] {
+  const lines = Array.isArray(document?.lines) ? document.lines : []
+  return lines.map((line: Record<string, any>) => {
+    if (targetType === 'purchase_requisition') {
+      return [
+        itemLabels[line.item_id] ?? line.item_id,
+        warehouseLabels[line.warehouse_id] ?? line.warehouse_id,
+        quantity(line.quantity),
+        money(line.unit_cost, document?.currency),
+        money(line.amount, document?.currency),
+      ]
+    }
+    return [
+      itemLabels[line.item_id] ?? line.item_id,
+      warehouseLabels[line.warehouse_id] ?? line.warehouse_id,
+      quantity(line.quantity),
+      money(line.unit_cost, document?.currency),
+      money(line.tax_amount, document?.currency),
+      money(line.total_amount ?? line.amount, document?.currency),
+    ]
+  })
+}
+
+function procurementDetailActions(
+  selection: ProcurementDocumentSelection,
+  token: string,
+  run: (action: () => Promise<void>, success: string) => Promise<void>,
+) {
+  const document = selection.document
+  if (!document.id) return null
+  if (selection.targetType === 'purchase_requisition') {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton label="procurement.submit" onClick={() => void run(() => submitPurchaseRequisition(token, document.id).then(() => undefined), 'procurement.requisitionSubmitted')} disabled={document.status !== 'draft'} icon={<Send className="h-3.5 w-3.5" />} />
+        <ActionButton label="procurement.approve" onClick={() => void run(() => approvePurchaseRequisition(token, document.id).then(() => undefined), 'procurement.requisitionApproved')} disabled={document.status === 'approved'} tone="green" icon={<CheckCircle2 className="h-3.5 w-3.5" />} />
+      </div>
+    )
+  }
+  if (selection.targetType === 'purchase_order') {
+    return (
+      <div className="flex flex-wrap gap-2">
+        <ActionButton label="procurement.submit" onClick={() => void run(() => submitPurchaseOrder(token, document.id).then(() => undefined), 'procurement.orderSubmitted')} disabled={document.status !== 'draft'} icon={<Send className="h-3.5 w-3.5" />} />
+        <ActionButton label="procurement.approve" onClick={() => void run(() => approvePurchaseOrder(token, document.id).then(() => undefined), 'procurement.orderApproved')} disabled={document.status === 'approved'} tone="green" icon={<CheckCircle2 className="h-3.5 w-3.5" />} />
+      </div>
+    )
+  }
+  if (selection.targetType === 'purchase_receipt') {
+    return <ActionButton label="procurement.postReceipt" onClick={() => void run(() => postPurchaseReceipt(token, document.id).then(() => undefined), 'procurement.receiptPosted')} disabled={document.status === 'posted'} tone="primary" icon={<PackageCheck className="h-3.5 w-3.5" />} />
+  }
+  return null
 }
