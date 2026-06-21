@@ -18,6 +18,7 @@ import (
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
+	"github.com/selfevo-AI/meta-org/backend/internal/domain/industry"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/inventory"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaorg"
@@ -67,8 +68,12 @@ func main() {
 		EnforcementMode: cfg.SecurityKernelEnforcementMode,
 	})
 
+	industryRepo := industry.NewRepository(db)
+	industrySvc := industry.NewService(industryRepo)
+	industryHandler := industry.NewHandler(industrySvc)
+
 	saasRepo := saas.NewRepository(db)
-	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saas.WithSecurityKernel(securityKernel))
+	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saas.WithSecurityKernel(securityKernel), saas.WithIndustryPolicy(industrySvc))
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
 		log.Fatalf("platform admin bootstrap failed: %v", err)
 	}
@@ -225,6 +230,7 @@ func main() {
 		ProjectHandler:       projectHandler,
 		FinanceHandler:       financeHandler,
 		InventoryHandler:     inventoryHandler,
+		IndustryHandler:      industryHandler,
 		ProcurementHandler:   procurementHandler,
 		SalesHandler:         salesHandler,
 		RuntimeHandler:       runtimeHandler,
