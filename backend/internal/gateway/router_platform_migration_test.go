@@ -23,7 +23,6 @@ func TestPlatformOnlyDomainsAreNotMountedInTenantRoutes(t *testing.T) {
 		"deps.EvolutionHandler.RegisterRoutes",
 		"deps.VerificationHandler.RegisterRoutes",
 		"deps.ObservabilityHandler.RegisterRoutes",
-		"deps.RuntimeHandler.RegisterRoutes",
 	}
 
 	for _, handlerCall := range movedHandlers {
@@ -40,6 +39,17 @@ func TestPlatformOnlyDomainsAreNotMountedInTenantRoutes(t *testing.T) {
 	}
 	if !strings.Contains(platformBlock, "AIGatewayHandler.RegisterRoutes") {
 		t.Fatalf("platform routes should expose AI gateway administration routes")
+	}
+}
+
+func TestRuntimeRoutesAreMountedForTenantWorkbench(t *testing.T) {
+	sourceBytes, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatalf("read router.go: %v", err)
+	}
+	tenantBlock := functionBlock(t, string(sourceBytes), "registerTenantRoutes")
+	if !strings.Contains(tenantBlock, "deps.RuntimeHandler.RegisterRoutes") {
+		t.Fatalf("tenant routes should expose runtime operations used by the frontend workbench")
 	}
 }
 

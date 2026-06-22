@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -563,6 +564,17 @@ func scanKnowledgeSource(row pgx.Row, item *KnowledgeSource) error {
 func jsonBytes(value any) []byte {
 	if value == nil {
 		return []byte("{}")
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Map:
+		if reflected.IsNil() {
+			return []byte("{}")
+		}
+	case reflect.Slice:
+		if reflected.IsNil() {
+			return []byte("[]")
+		}
 	}
 	data, err := json.Marshal(value)
 	if err != nil {

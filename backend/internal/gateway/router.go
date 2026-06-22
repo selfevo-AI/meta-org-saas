@@ -203,6 +203,9 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	if deps.SalesHandler != nil {
 		deps.SalesHandler.RegisterRoutes(r)
 	}
+	if deps.RuntimeHandler != nil {
+		deps.RuntimeHandler.RegisterRoutes(r)
+	}
 	if deps.ToolRuntimeHandler != nil {
 		deps.ToolRuntimeHandler.RegisterRoutes(r)
 	}
