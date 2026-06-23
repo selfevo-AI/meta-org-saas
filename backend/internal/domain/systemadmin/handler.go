@@ -30,6 +30,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/organizations/{id}/schema/change-requests", h.createOrganizationSchemaChange)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/erp-standard", h.createERPSolutionFlow)
 	r.Post("/platform/admin/schema-change-requests/{id}/approve", h.approveSchemaChange)
+	r.Post("/platform/admin/schema-change-requests/{id}/verify", h.verifySchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/apply", h.applySchemaChange)
 }
 
@@ -121,6 +122,15 @@ func (h *Handler) approveSchemaChange(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input)
 	}
 	result, err := h.service.ApproveSchemaChange(r.Context(), actorID, requestID, input.Reason)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) verifySchemaChange(w http.ResponseWriter, r *http.Request) {
+	actorID, requestID, ok := h.actorAndRequest(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.VerifySchemaChange(r.Context(), actorID, requestID)
 	writeResult(w, http.StatusOK, result, err)
 }
 

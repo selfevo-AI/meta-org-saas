@@ -45,6 +45,7 @@ import {
   listSaaSModules,
   reviewIndustryPublicationRequest,
   submitIndustryExtensionPublication,
+  verifySchemaChange,
   type Industry,
   type IndustryExtension,
   type IndustryPackage,
@@ -61,6 +62,7 @@ import {
   type SchemaApplyJob,
   type SchemaChangeRequest,
   type SchemaPackage,
+  type SchemaVerificationReport,
   type SessionOrganization,
   updatePlatformOrganizationProfile,
 } from '@/lib/api'
@@ -99,7 +101,20 @@ const platformPermissionCatalog = [
   'assistant.platform.run',
 ]
 const erpSolutionModules = ['project', 'procurement', 'inventory', 'sales', 'finance']
-const erpSolutionAssets = ['database_assets', 'business_functions', 'process_loops', 'permissions', 'api_operations', 'ui_workspaces', 'assistant_targets']
+const erpSolutionAssets = [
+  'database_assets',
+  'business_functions',
+  'process_loops',
+  'permissions',
+  'api_operations',
+  'ui_workspaces',
+  'assistant_targets',
+  'context_rules',
+  'tool_definitions',
+  'assistant_skills',
+  'quality_gates',
+  'verification_scenarios',
+]
 const platformFeatureTabs = [
   { id: 'capability', label: 'systemAdmin.feature.capability', permission: 'platform.read', moduleKey: 'capability' },
   { id: 'governance', label: 'systemAdmin.feature.governance', permission: 'platform.read', moduleKey: 'governance' },
@@ -129,6 +144,15 @@ function formatDateTime(value?: string): string {
 
 function countFields(pkg: SchemaPackage | null): number {
   return pkg?.tables.reduce((total, table) => total + table.fields.length, 0) ?? 0
+}
+
+function summarizeSchemaDiff(diff?: SchemaChangeRequest['diff']): string[] {
+  if (!Array.isArray(diff)) return []
+  return diff.map((item) =>
+    [item.action, item.table, item.field, item.from && item.to ? `${item.from} -> ${item.to}` : item.to || item.from, item.risk]
+      .filter(Boolean)
+      .join(' / '),
+  )
 }
 
 function parseSchemaPackage(source: string): SchemaPackage {
@@ -178,6 +202,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [schemaJson, setSchemaJson] = useState('')
   const [changeRequest, setChangeRequest] = useState<SchemaChangeRequest | null>(null)
   const [applyJob, setApplyJob] = useState<SchemaApplyJob | null>(null)
+  const [verificationReport, setVerificationReport] = useState<SchemaVerificationReport | null>(null)
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState('')
@@ -212,6 +237,9 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     () => targets.find((item) => item.organization_id === activeOrganizationID) ?? null,
     [activeOrganizationID, targets],
   )
+  const verificationBlocksApply =
+    !!changeRequest && verificationReport?.change_request_id === changeRequest.id && verificationReport.can_apply === false
+  const schemaDiffItems = useMemo(() => summarizeSchemaDiff(changeRequest?.diff), [changeRequest?.diff])
   const selectedIndustryPackage = useMemo(
     () => industryPackages.find((item) => item.id === selectedPackageID) ?? industryPackages[0] ?? null,
     [industryPackages, selectedPackageID],
@@ -516,6 +544,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         enabled_modules: erpSolutionModuleDraft,
       })
       setChangeRequest(request)
+      setVerificationReport(null)
       setSchemaPackage(request.schema_package)
       setSchemaJson(jsonText(request.schema_package))
       setActiveTab('schema')
@@ -608,6 +637,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       const pkg = await exportOrganizationSchema(token, activeOrganizationID)
       setSchemaPackage(pkg)
       setSchemaJson(jsonText(pkg))
+      setVerificationReport(null)
     }, 'systemAdmin.schemaExported')
   }
 
@@ -630,6 +660,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       const pkg = parseSchemaPackage(content)
       setSchemaPackage(pkg)
       setSchemaJson(jsonText(pkg))
+      setVerificationReport(null)
       setNotice(t('systemAdmin.jsonImported'))
       setError('')
     } catch {
@@ -657,6 +688,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setSchemaPackage(pkg)
       setChangeRequest(request)
       setApplyJob(null)
+      setVerificationReport(null)
     }, 'systemAdmin.changeCreated')
   }
 
@@ -664,14 +696,23 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     if (!changeRequest || !canPlatform('schema.approve')) return
     await run(async () => {
       setChangeRequest(await approveSchemaChange(token, changeRequest.id, reason))
+      setVerificationReport(null)
     }, 'systemAdmin.changeApproved')
   }
 
+  async function verifyChange() {
+    if (!changeRequest || !canPlatform('schema.manage')) return
+    await run(async () => {
+      setVerificationReport(await verifySchemaChange(token, changeRequest.id))
+    }, 'systemAdmin.changeVerified')
+  }
+
   async function applyChange() {
-    if (!changeRequest || !canPlatform('schema.apply')) return
+    if (!changeRequest || verificationBlocksApply || !canPlatform('schema.apply')) return
     await run(async () => {
       const job = await applySchemaChange(token, changeRequest.id)
       setApplyJob(job)
+      setVerificationReport(null)
     }, 'systemAdmin.changeApplied')
   }
 
@@ -1586,8 +1627,17 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 </button>
                 <button
                   type="button"
+                  onClick={() => void verifyChange()}
+                  disabled={!changeRequest || loading || !canPlatform('schema.manage')}
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  {t('systemAdmin.verify')}
+                </button>
+                <button
+                  type="button"
                   onClick={() => void applyChange()}
-                  disabled={!changeRequest || !['approved', 'applied'].includes(changeRequest.status) || loading || !canPlatform('schema.apply')}
+                  disabled={!changeRequest || !['approved', 'applied'].includes(changeRequest.status) || verificationBlocksApply || loading || !canPlatform('schema.apply')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play className="h-4 w-4" />
@@ -1612,6 +1662,18 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   <Metric label={t('systemAdmin.requestId')} value={changeRequest.id} />
                   <Metric label={t('systemAdmin.status')} value={t(changeRequest.status)} />
                   <Metric label={t('systemAdmin.statementCount')} value={String(changeRequest.statements.length)} />
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.packageDiff')}</p>
+                    {schemaDiffItems.length > 0 ? (
+                      <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                        {schemaDiffItems.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-500">{t('systemAdmin.noPackageDiff')}</p>
+                    )}
+                  </div>
                   <pre className="max-h-56 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
                     {changeRequest.statements.join('\n\n') || t('common.empty')}
                   </pre>
@@ -1620,6 +1682,33 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <p className="mt-4 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">{t('systemAdmin.noChangeRequest')}</p>
               )}
             </section>
+
+            {verificationReport && (
+              <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.verificationReport')}</h2>
+                  <StatusBadge label={verificationReport.status} />
+                </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <Metric label={t('systemAdmin.canApply')} value={verificationReport.can_apply ? t('common.yes') : t('common.no')} />
+                  <Metric label={t('systemAdmin.blockingIssues')} value={String(verificationReport.blocking_issues)} />
+                  <Metric label={t('systemAdmin.statementCount')} value={String(verificationReport.statement_count)} />
+                  <Metric label={t('systemAdmin.status')} value={t(verificationReport.request_status)} />
+                </div>
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.checks')}</p>
+                  {verificationReport.checks.map((check) => (
+                    <div key={`${check.key}-${check.status}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="min-w-0 text-sm font-semibold text-slate-900">{t(`systemAdmin.check.${check.key}`)}</p>
+                        <StatusBadge label={check.status} />
+                      </div>
+                      <p className="mt-2 text-xs text-slate-600">{check.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             {applyJob && (
               <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -1650,11 +1739,13 @@ function Metric({ label, value }: { label: string; value: string }) {
 function StatusBadge({ label }: { label: string }) {
   const { t } = useI18n()
   const tone =
-    label === 'active' || label === 'applied'
+    label === 'active' || label === 'applied' || label === 'passed'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-      : label === 'pending' || label === 'approved'
+      : label === 'pending' || label === 'approved' || label === 'warning'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
-        : 'border-slate-200 bg-slate-50 text-slate-700'
+        : label === 'failed' || label === 'error'
+          ? 'border-red-200 bg-red-50 text-red-700'
+          : 'border-slate-200 bg-slate-50 text-slate-700'
 
   return <span className={`inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
 }

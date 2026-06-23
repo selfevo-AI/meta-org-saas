@@ -62,6 +62,147 @@ func TestApplySchemaChangeRejectsAuditorRole(t *testing.T) {
 	}
 }
 
+func TestVerifySchemaChangeReportsChecksWithoutApplying(t *testing.T) {
+	repo := &fakeRepository{
+		role: "system_owner",
+		request: &SchemaChangeRequest{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			SchemaName:     "org_123e4567e89b12d3a456426614174000",
+			Status:         SchemaChangeApproved,
+			SchemaPackage:  DefaultOrganizationSchemaPackage(),
+			RiskLevel:      SchemaRiskSafe,
+		},
+	}
+	service := NewService(repo)
+
+	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	if err != nil {
+		t.Fatalf("VerifySchemaChange() error = %v", err)
+	}
+	if report.ChangeRequestID != repo.request.ID {
+		t.Fatalf("ChangeRequestID = %s, want %s", report.ChangeRequestID, repo.request.ID)
+	}
+	if report.Status != "passed" {
+		t.Fatalf("Status = %q, want passed", report.Status)
+	}
+	if report.StatementCount == 0 {
+		t.Fatal("StatementCount = 0, want generated DDL statements")
+	}
+	if report.BlockingIssues != 0 || !report.CanApply {
+		t.Fatalf("report blocking/can_apply = %d/%v, want 0/true", report.BlockingIssues, report.CanApply)
+	}
+	if repo.applied {
+		t.Fatal("VerifySchemaChange() applied schema change")
+	}
+}
+
+func TestVerifySchemaChangeReportsIndustryFactoryCoverage(t *testing.T) {
+	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{
+		IndustryKey:    "professional_services",
+		PackageKey:     "erp_standard",
+		Name:           "ERP Standard",
+		EnabledModules: []string{"project", "procurement", "inventory", "sales", "finance"},
+	})
+	repo := &fakeRepository{
+		role: "system_owner",
+		request: &SchemaChangeRequest{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			SchemaName:     "org_123e4567e89b12d3a456426614174000",
+			RequestType:    "erp_solution_flow",
+			Status:         SchemaChangeApproved,
+			SchemaPackage:  pkg,
+			RiskLevel:      SchemaRiskSafe,
+		},
+	}
+	service := NewService(repo)
+
+	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	if err != nil {
+		t.Fatalf("VerifySchemaChange() error = %v", err)
+	}
+
+	for _, key := range []string{
+		"permissions_impact",
+		"runtime_operations",
+		"assistant_context",
+		"tool_policy",
+		"assistant_skills",
+		"quality_gates",
+		"verification_scenarios",
+		"rollback_risk",
+	} {
+		check := verificationCheckByKey(report, key)
+		if check == nil {
+			t.Fatalf("missing verification check %s in %#v", key, report.Checks)
+		}
+		if check.Status != "passed" {
+			t.Fatalf("check %s status = %q, want passed", key, check.Status)
+		}
+	}
+	if report.Status != "passed" || report.BlockingIssues != 0 || !report.CanApply {
+		t.Fatalf("report status/blocking/can_apply = %s/%d/%v, want passed/0/true", report.Status, report.BlockingIssues, report.CanApply)
+	}
+	if repo.applied {
+		t.Fatal("VerifySchemaChange() applied schema change")
+	}
+}
+
+func TestVerifySchemaChangeWarnsWhenIndustryFactoryCoverageIsIncomplete(t *testing.T) {
+	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{
+		IndustryKey:    "professional_services",
+		PackageKey:     "erp_standard",
+		Name:           "ERP Standard",
+		EnabledModules: []string{"project", "procurement"},
+	})
+	delete(pkg.Metadata, "verification_scenarios")
+	repo := &fakeRepository{
+		role: "system_owner",
+		request: &SchemaChangeRequest{
+			ID:             uuid.New(),
+			OrganizationID: uuid.New(),
+			SchemaName:     "org_123e4567e89b12d3a456426614174000",
+			RequestType:    "erp_solution_flow",
+			Status:         SchemaChangeApproved,
+			SchemaPackage:  pkg,
+			RiskLevel:      SchemaRiskSafe,
+		},
+	}
+	service := NewService(repo)
+
+	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	if err != nil {
+		t.Fatalf("VerifySchemaChange() error = %v", err)
+	}
+
+	check := verificationCheckByKey(report, "verification_scenarios")
+	if check == nil {
+		t.Fatalf("missing verification_scenarios check in %#v", report.Checks)
+	}
+	if check.Status != "warning" {
+		t.Fatalf("verification_scenarios status = %q, want warning", check.Status)
+	}
+	if report.Status != "warning" || report.BlockingIssues != 0 || !report.CanApply {
+		t.Fatalf("report status/blocking/can_apply = %s/%d/%v, want warning/0/true", report.Status, report.BlockingIssues, report.CanApply)
+	}
+	if repo.applied {
+		t.Fatal("VerifySchemaChange() applied schema change")
+	}
+}
+
+func verificationCheckByKey(report *SchemaVerificationReport, key string) *SchemaVerificationCheck {
+	if report == nil {
+		return nil
+	}
+	for i := range report.Checks {
+		if report.Checks[i].Key == key {
+			return &report.Checks[i]
+		}
+	}
+	return nil
+}
+
 type fakeRepository struct {
 	role          string
 	request       *SchemaChangeRequest
