@@ -24,6 +24,7 @@ type WorkRecordContext struct {
 	ModuleKey string
 	Records   []WorkRecord
 	Error     string
+	Metadata  map[string]any
 }
 
 type ContextResolver interface {

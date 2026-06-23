@@ -864,6 +864,61 @@ func buildAIMessages(session *Session, memories []Memory, history []Message, wor
 	return messages
 }
 
+func contextPackageMetadata(pkg *ContextPackage) map[string]any {
+	if pkg == nil {
+		return map[string]any{}
+	}
+	metadata := map[string]any{
+		"context_package_id":       pkg.ID.String(),
+		"attention_core_count":     len(pkg.AttentionCore),
+		"supporting_context_count": len(pkg.SupportingContext),
+		"risk_signal_count":        len(pkg.RiskAndSignals),
+		"omission_count":           len(pkg.Omissions),
+		"context_token_budget":     pkg.TokenBudget,
+		"context_estimated_tokens": pkg.TotalEstimatedTokens(),
+	}
+	if pkg.DictionaryVersionID != nil {
+		metadata["dictionary_version_id"] = pkg.DictionaryVersionID.String()
+	}
+	if source, ok := pkg.Provenance["source"]; ok {
+		metadata["context_source"] = source
+	}
+	return metadata
+}
+
+func contextPackageToWorkRecordContext(moduleKey string, pkg *ContextPackage) WorkRecordContext {
+	workContext := WorkRecordContext{ModuleKey: moduleKey}
+	if pkg == nil {
+		return workContext
+	}
+	records := make([]WorkRecord, 0, len(pkg.AttentionCore)+len(pkg.SupportingContext))
+	items := append([]ContextItem{}, pkg.AttentionCore...)
+	items = append(items, pkg.SupportingContext...)
+	for _, item := range items {
+		records = append(records, WorkRecord{
+			ID:     item.RecordID,
+			Type:   item.EntityKey,
+			Title:  item.EntityKey + "." + item.FieldKey,
+			Status: item.ValidationState,
+			Data: map[string]any{
+				"field_key":          item.FieldKey,
+				"value":              item.Value,
+				"source":             item.Source,
+				"validation_state":   item.ValidationState,
+				"context_package_id": pkg.ID.String(),
+			},
+		})
+	}
+	workContext.Records = records
+	workContext.Metadata = map[string]any{
+		"verified_context_package": true,
+		"context_package_id":       pkg.ID.String(),
+		"risk_signals":             len(pkg.RiskAndSignals),
+		"omissions":                len(pkg.Omissions),
+	}
+	return workContext
+}
+
 func systemPrompt(session *Session, memories []Memory, workContext WorkRecordContext) string {
 	var b strings.Builder
 	b.WriteString("You are a business process and system self-evolution assistant for this organization.\n")
@@ -893,7 +948,15 @@ func systemPrompt(session *Session, memories []Memory, workContext WorkRecordCon
 		b.WriteString("Work record context unavailable: ")
 		b.WriteString(workContext.Error)
 		b.WriteByte('\n')
-	} else if len(workContext.Records) > 0 {
+	} else if workContext.Metadata != nil && workContext.Metadata["verified_context_package"] == true {
+		b.WriteString("Verified context package: ")
+		b.WriteString(fmt.Sprintf("id=%s risk_signals=%v omissions=%v\n",
+			fmt.Sprint(workContext.Metadata["context_package_id"]),
+			workContext.Metadata["risk_signals"],
+			workContext.Metadata["omissions"],
+		))
+	}
+	if workContext.Error == "" && len(workContext.Records) > 0 {
 		b.WriteString("Recent work records from this module:\n")
 		for _, record := range workContext.Records {
 			b.WriteString("- ")
