@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -53,6 +54,44 @@ func (r *PostgresContextRepository) CreateContextMigrationDraft(ctx context.Cont
 		return uuid.Nil, fmt.Errorf("create context migration draft: %w", err)
 	}
 	return id, nil
+}
+
+func (r *PostgresContextRepository) ListActiveContextRules(ctx context.Context, request ContextRequest) ([]ContextRuleRecord, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT cr.id, cr.dictionary_version_id, cr.module_key, cr.entity_key, cr.field_key, cr.rule_type, cr.rule, cr.status
+		FROM context_rules cr
+		JOIN context_dictionary_versions cdv ON cdv.id = cr.dictionary_version_id
+		WHERE cr.status = 'active'
+			AND cdv.status = 'active'
+			AND (cr.module_key = '' OR cr.module_key = $1 OR $1 = '')
+			AND (cdv.organization_id IS NULL OR cdv.organization_id IS NOT DISTINCT FROM $2)
+		ORDER BY
+			CASE WHEN cdv.organization_id IS NOT NULL THEN 0 ELSE 1 END,
+			cr.created_at DESC
+	`, request.ModuleKey, request.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("list active context rules: %w", err)
+	}
+	defer rows.Close()
+	rules := []ContextRuleRecord{}
+	for rows.Next() {
+		var item ContextRuleRecord
+		var ruleJSON []byte
+		if err := rows.Scan(&item.ID, &item.DictionaryVersionID, &item.ModuleKey, &item.EntityKey, &item.FieldKey, &item.RuleType, &ruleJSON, &item.Status); err != nil {
+			return nil, fmt.Errorf("scan active context rule: %w", err)
+		}
+		item.Rule = map[string]any{}
+		if len(ruleJSON) > 0 {
+			if err := json.Unmarshal(ruleJSON, &item.Rule); err != nil {
+				return nil, fmt.Errorf("decode active context rule: %w", err)
+			}
+		}
+		rules = append(rules, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active context rules: %w", err)
+	}
+	return rules, nil
 }
 
 func (r *PostgresContextRepository) CreateContextPackage(ctx context.Context, request ContextRequest, pkg ContextPackage) (*ContextPackage, error) {

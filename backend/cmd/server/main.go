@@ -196,6 +196,7 @@ func main() {
 		Resolver:   contextResolver,
 		Evaluator:  assistant.NewContextRuleEvaluator(assistant.ContextRuleEvaluatorConfig{AttentionCoreRatio: 0.4}),
 		Repository: contextRepo,
+		RuleSource: contextRepo,
 	})
 	dictionarySvc := assistant.NewDictionaryService(contextRepo, nil)
 	assistantSvc := assistant.NewService(
