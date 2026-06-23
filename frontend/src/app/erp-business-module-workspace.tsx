@@ -1,9 +1,9 @@
 'use client'
 
-import { FileText, Play, Plus, RefreshCw, Rows3 } from 'lucide-react'
+import { CheckCircle2, Clock3, FileText, Play, Plus, RefreshCw, Rows3, ShieldAlert } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { createERPChildRecord, createERPRecord, listERPRecords, runERPAction } from '@/lib/api'
+import { createERPChildRecord, createERPRecord, listERPChildRecords, listERPRecords, runERPAction, type ERPActionResult } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 
 type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance'
@@ -30,6 +30,18 @@ type ERPBusinessModuleWorkspaceProps = {
 }
 
 type ERPBusinessRecord = Record<string, unknown> & { key: string }
+
+type ERPActionAvailability = {
+  action: string
+  available: boolean
+  reasonKey: string
+}
+
+type ERPTimelineEvent = {
+  id: string
+  titleKey: string
+  detail: string
+}
 
 const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
   project: [
@@ -72,14 +84,29 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   const [activeID, setActiveID] = useState(documents[0]?.id ?? '')
   const activeDocument = useMemo(() => documents.find((item) => item.id === activeID) ?? documents[0], [activeID, documents])
   const [records, setRecords] = useState<ERPBusinessRecord[]>([])
+  const [childRows, setChildRows] = useState<ERPBusinessRecord[]>([])
   const [selectedKey, setSelectedKey] = useState('')
   const [form, setForm] = useState({ key: '', name: '', cardCode: '', itemCode: '', whsCode: '', quantity: '1', price: '0', targetKey: '', amount: '0' })
   const [lineForm, setLineForm] = useState({ lineNum: '1', itemCode: '', whsCode: '', quantity: '1', price: '0' })
+  const [actionResult, setActionResult] = useState<ERPActionResult<ERPBusinessRecord> | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
 
   const selectedRecord = records.find((record) => record.key === selectedKey)
+  const actionAvailability = useMemo(
+    () => (activeDocument?.actions ?? []).map((action) => isERPActionAvailable(activeDocument, selectedRecord, action)),
+    [activeDocument, selectedRecord],
+  )
+  const availableActions = actionAvailability.filter((item) => item.available)
+  const blockedActions = actionAvailability.filter((item) => !item.available)
+  const currentActionResult = actionResult?.table_code === activeDocument?.tableCode && actionResult.key === selectedKey ? actionResult : null
+  const generatedRecords = currentActionResult?.generated_records ?? []
+  const assistantProposals = useMemo(() => recordArray(selectedRecord?.assistant_confirmed_proposals), [selectedRecord])
+  const businessTimeline = useMemo(
+    () => buildBusinessTimeline(selectedRecord, childRows, currentActionResult, assistantProposals),
+    [assistantProposals, childRows, currentActionResult, selectedRecord],
+  )
 
   async function loadRecords(document = activeDocument) {
     if (!document) return
@@ -97,6 +124,20 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       setError(err instanceof Error ? err.message : t('erp.business.loadFailed'))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function loadChildRows(document = activeDocument, key = selectedKey) {
+    if (!document?.childCode || !key) {
+      setChildRows([])
+      return
+    }
+    try {
+      const rows = await listERPChildRecords<ERPBusinessRecord>(token, document.tableCode, key, document.childCode, 100)
+      setChildRows(rows)
+    } catch (err) {
+      setChildRows([])
+      setError(err instanceof Error ? err.message : t('erp.business.loadFailed'))
     }
   }
 
@@ -120,6 +161,27 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       cancelled = true
     }
   }, [activeDocument, externalSelection?.targetID, t, token])
+
+  useEffect(() => {
+    if (!activeDocument?.childCode || !selectedKey) {
+      const timer = window.setTimeout(() => setChildRows([]), 0)
+      return () => window.clearTimeout(timer)
+    }
+    let cancelled = false
+    listERPChildRecords<ERPBusinessRecord>(token, activeDocument.tableCode, selectedKey, activeDocument.childCode, 100)
+      .then((items) => {
+        if (!cancelled) setChildRows(items)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setChildRows([])
+          setError(err instanceof Error ? err.message : t('erp.business.loadFailed'))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeDocument, selectedKey, t, token])
 
   async function handleCreateRecord() {
     if (!activeDocument || !form.key.trim()) return
@@ -158,6 +220,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       })
       setLineForm((current) => ({ ...current, lineNum: String(Number(current.lineNum || 1) + 1) }))
       setNotice(t('erp.business.lineCreated'))
+      await loadChildRows(activeDocument, selectedKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
     } finally {
@@ -171,9 +234,11 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
     setError('')
     setNotice('')
     try {
-      await runERPAction(token, activeDocument.tableCode, selectedKey, action, buildActionData(action, form))
+      const result = await runERPAction<ERPBusinessRecord>(token, activeDocument.tableCode, selectedKey, action, buildActionData(action, form))
+      setActionResult(result)
       setNotice(t('erp.business.actionDone'))
       await loadRecords(activeDocument)
+      await loadChildRows(activeDocument, selectedKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
     } finally {
@@ -255,6 +320,15 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
           </section>
 
           <aside className="space-y-4">
+            <ERPDocumentDetail
+              document={activeDocument}
+              record={selectedRecord}
+              childRows={childRows}
+              generatedRecords={generatedRecords}
+              assistantProposals={assistantProposals}
+              businessTimeline={businessTimeline}
+            />
+
             <section className="rounded-lg border border-slate-200 bg-white p-4">
               <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.createDocument')}</h3>
               <div className="mt-3 space-y-2">
@@ -299,7 +373,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
 
             {(activeDocument.actions ?? []).length > 0 && (
               <section className="rounded-lg border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.actions')}</h3>
+                <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.availableActions')}</h3>
                 {activeDocument.tableCode === 'MRCT' && (
                   <div className="mt-3 space-y-2">
                     <ERPInput label={t('erp.business.targetKey')} value={form.targetKey} onChange={(value) => setForm((current) => ({ ...current, targetKey: value }))} placeholder="INV-1001" />
@@ -307,7 +381,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
                   </div>
                 )}
                 <div className="mt-3 grid gap-2">
-                  {activeDocument.actions?.map((action) => (
+                  {availableActions.map(({ action }) => (
                     <button
                       key={action}
                       type="button"
@@ -319,14 +393,23 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
                       {t(`erp.action.${action}`)}
                     </button>
                   ))}
+                  {availableActions.length === 0 && (
+                    <p className="rounded-md border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500">{t('erp.business.actionBlocked')}</p>
+                  )}
                 </div>
-              </section>
-            )}
-
-            {selectedRecord && (
-              <section className="rounded-lg border border-slate-200 bg-white p-4">
-                <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.selected')}</h3>
-                <pre className="mt-3 max-h-64 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(selectedRecord, null, 2)}</pre>
+                {blockedActions.length > 0 && (
+                  <div className="mt-4 border-t border-slate-100 pt-3">
+                    <p className="text-xs font-semibold text-slate-500">{t('erp.business.unavailableActions')}</p>
+                    <div className="mt-2 space-y-1">
+                      {blockedActions.map((item) => (
+                        <div key={item.action} className="flex items-start gap-2 rounded-md bg-slate-50 px-2 py-1.5 text-xs text-slate-600">
+                          <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                          <span>{t('erp.business.actionBlocked', { action: t(`erp.action.${item.action}`), reason: t(item.reasonKey) })}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </section>
             )}
 
@@ -354,6 +437,150 @@ function ERPInput({ label, value, placeholder, onChange }: { label: string; valu
       />
     </label>
   )
+}
+
+function ERPDocumentDetail({
+  document,
+  record,
+  childRows,
+  generatedRecords,
+  assistantProposals,
+  businessTimeline,
+}: {
+  document: DocumentConfig
+  record?: ERPBusinessRecord
+  childRows: ERPBusinessRecord[]
+  generatedRecords: NonNullable<ERPActionResult['generated_records']>
+  assistantProposals: Array<Record<string, unknown>>
+  businessTimeline: ERPTimelineEvent[]
+}) {
+  const { t } = useI18n()
+  if (!record) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-4">
+        <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.documentDetail')}</h3>
+        <p className="mt-3 rounded-md border border-dashed border-slate-300 px-3 py-4 text-sm text-slate-500">{t('common.notSelected')}</p>
+      </section>
+    )
+  }
+  const status = recordStatus(record) || 'ready'
+  const fields = [
+    { label: document.primaryKey, value: record.key },
+    { label: 'erp.business.statusReason', value: status },
+    { label: 'erp.business.relatedProject', value: String(record.ProjectCode || record.PrjCode || record.RequirementCode || record.BaseEntry || '') },
+    { label: 'erp.business.costImpact', value: String(record.DocTotal || record.PaidToDate || record.OpenBal || record.LastCostCode || '') },
+  ]
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.documentDetail')}</h3>
+          <p className="mt-1 truncate font-mono text-xs text-slate-500">{document.tableCode} / {record.key}</p>
+        </div>
+        <ERPStatusPill value={status} />
+      </div>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {fields.map((field) => (
+          <div key={field.label} className="min-w-0 border-b border-slate-100 pb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-normal text-slate-500">{field.label.startsWith('erp.') ? t(field.label) : field.label}</p>
+            <p className="mt-1 truncate text-sm font-semibold text-slate-900">{field.value || t('common.none')}</p>
+          </div>
+        ))}
+      </div>
+      <div className="mt-4 border-t border-slate-100 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold text-slate-500">{t('erp.business.childRows')}</p>
+          <span className="font-mono text-xs text-slate-500">{childRows.length}</span>
+        </div>
+        {childRows.length > 0 ? (
+          <div className="mt-2 max-h-36 overflow-auto rounded-md border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-100 text-xs">
+              <tbody className="divide-y divide-slate-100">
+                {childRows.map((row) => (
+                  <tr key={row.key}>
+                    <td className="px-2 py-1.5 font-mono text-slate-600">{row.key}</td>
+                    <td className="px-2 py-1.5 text-slate-700">{displayValue(row.ItemCode || row.WhsCode || row.LineStatus || row.Name)}</td>
+                    <td className="px-2 py-1.5 text-right text-slate-600">{displayValue(row.Quantity || row.Price || row.Amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-2 rounded-md border border-dashed border-slate-300 px-3 py-3 text-xs text-slate-500">{t('erp.business.noChildRows')}</p>
+        )}
+      </div>
+      <div className="mt-4 grid gap-3 border-t border-slate-100 pt-3">
+        <div>
+          <p className="text-xs font-semibold text-slate-500">{t('erp.business.generatedRecords')}</p>
+          {generatedRecords.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {generatedRecords.map((item) => (
+                <span key={`${item.table_code}-${item.key}`} className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs text-slate-700">
+                  {item.table_code}:{item.key}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500">{t('common.none')}</p>
+          )}
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-slate-500">{t('erp.business.assistantProposals')}</p>
+          {assistantProposals.length > 0 ? (
+            <div className="mt-2 space-y-1">
+              {assistantProposals.map((item, index) => (
+                <p key={`${displayValue(item.proposal_id)}-${index}`} className="truncate rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                  {displayValue(item.title || item.summary || item.action || item.proposal_type)}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500">{t('common.none')}</p>
+          )}
+        </div>
+      </div>
+      <ERPDocumentTimeline events={businessTimeline} />
+    </section>
+  )
+}
+
+function ERPDocumentTimeline({ events }: { events: ERPTimelineEvent[] }) {
+  const { t } = useI18n()
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <div className="mb-2 flex items-center gap-2">
+        <Clock3 className="h-4 w-4 text-slate-400" />
+        <p className="text-xs font-semibold text-slate-500">{t('erp.business.timeline')}</p>
+      </div>
+      {events.length > 0 ? (
+        <ol className="space-y-2">
+          {events.map((event) => (
+            <li key={event.id} className="flex gap-2 text-xs">
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-800">{t(event.titleKey)}</p>
+                <p className="truncate text-slate-500">{event.detail}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="rounded-md border border-dashed border-slate-300 px-3 py-3 text-xs text-slate-500">{t('erp.business.noTimeline')}</p>
+      )}
+    </div>
+  )
+}
+
+function ERPStatusPill({ value }: { value: string }) {
+  const { t } = useI18n()
+  const tone =
+    ['approved', 'A', 'posted', 'P', 'converted', 'closed', 'C', 'confirmed'].includes(value)
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      : ['S', 'submitted', 'analyzed'].includes(value)
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-slate-200 bg-slate-50 text-slate-700'
+  return <span className={`inline-flex h-7 max-w-[140px] items-center truncate rounded-full border px-2.5 text-xs font-semibold ${tone}`}>{t(value)}</span>
 }
 
 function buildRecordData(document: DocumentConfig, form: { key: string; name: string; cardCode: string; quantity: string; price: string }) {
@@ -391,10 +618,109 @@ function buildActionData(action: string, form: { targetKey: string; amount: stri
   return {}
 }
 
+function isERPActionAvailable(document: DocumentConfig | undefined, record: ERPBusinessRecord | undefined, action: string): ERPActionAvailability {
+  if (!document || !record) {
+    return { action, available: false, reasonKey: 'common.notSelected' }
+  }
+  if (isClosedOrPosted(record) && !['refresh-cost', 'close-feedback'].includes(action)) {
+    return { action, available: false, reasonKey: 'closed' }
+  }
+  const status = normalizedStatus(record)
+  const approvalStatus = normalizedText(record.WddStatus)
+  const posted = normalizedText(record.Posted) === 'y'
+  switch (`${document.tableCode}:${action}`) {
+    case 'MREQ:analyze':
+      return gate(action, !['analyzed', 'approved', 'converted'].includes(status), 'erp.business.statusReason')
+    case 'MREQ:approve':
+      return gate(action, ['analyzed', 'open', 'draft', ''].includes(status), 'erp.business.statusReason')
+    case 'MREQ:convert-to-project':
+      return gate(action, status === 'approved', 'erp.business.statusReason')
+    case 'MPRJ:refresh-cost':
+      return gate(action, normalizedText(record.Active) !== 'n', 'erp.business.statusReason')
+    case 'MPRJ:close-feedback':
+      return gate(action, normalizedText(record.FeedbackStatus) !== 'closed', 'erp.business.statusReason')
+    case 'MPOR:submit':
+      return gate(action, !['s', 'c'].includes(status) && approvalStatus !== 'a', 'erp.business.statusReason')
+    case 'MPOR:approve':
+      return gate(action, status === 's' && approvalStatus !== 'a', 'erp.business.statusReason')
+    case 'MPDN:post':
+    case 'MDLN:post':
+      return gate(action, approvalStatus === 'a' && !posted, 'erp.business.statusReason')
+    case 'MINV:post':
+    case 'MIGN:post':
+    case 'MIGE:post':
+      return gate(action, !posted, 'erp.business.statusReason')
+    case 'MRDR:confirm':
+      return gate(action, normalizedText(record.Confirmed) !== 'y', 'erp.business.statusReason')
+    case 'MRDR:approve':
+      return gate(action, normalizedText(record.Confirmed) === 'y' && approvalStatus !== 'a', 'erp.business.statusReason')
+    case 'MJDT:post':
+      return gate(action, normalizedText(record.BtfStatus) !== 'p', 'erp.business.statusReason')
+    default:
+      return { action, available: true, reasonKey: 'ready' }
+  }
+}
+
+function gate(action: string, available: boolean, reasonKey: string): ERPActionAvailability {
+  return { action, available, reasonKey }
+}
+
+function buildBusinessTimeline(
+  record: ERPBusinessRecord | undefined,
+  childRows: ERPBusinessRecord[],
+  actionResult: ERPActionResult<ERPBusinessRecord> | null,
+  assistantProposals: Array<Record<string, unknown>>,
+): ERPTimelineEvent[] {
+  if (!record) return []
+  const events: ERPTimelineEvent[] = [
+    { id: 'selected', titleKey: 'erp.business.documentDetail', detail: recordTitle(record) },
+  ]
+  if (childRows.length > 0) {
+    events.push({ id: 'childRows', titleKey: 'erp.business.childRows', detail: String(childRows.length) })
+  }
+  if (actionResult) {
+    events.push({
+      id: `action-${actionResult.action}-${actionResult.status}`,
+      titleKey: 'erp.business.actionCompleted',
+      detail: `${actionResult.table_code}:${actionResult.key} / ${actionResult.action} / ${actionResult.status}`,
+    })
+  }
+  for (const [index, proposal] of assistantProposals.entries()) {
+    events.push({
+      id: `proposal-${displayValue(proposal.proposal_id)}-${index}`,
+      titleKey: 'erp.business.assistantProposals',
+      detail: displayValue(proposal.title || proposal.summary || proposal.action || proposal.proposal_type),
+    })
+  }
+  return events
+}
+
+function recordArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item)) : []
+}
+
+function isClosedOrPosted(record: ERPBusinessRecord) {
+  return normalizedStatus(record) === 'c' || normalizedText(record.Posted) === 'y' || normalizedText(record.BtfStatus) === 'p'
+}
+
+function normalizedStatus(record: ERPBusinessRecord) {
+  return normalizedText(record.Status || record.DocStatus || record.WddStatus || record.BtfStatus || record.Active)
+}
+
+function normalizedText(value: unknown) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
 function recordTitle(record: ERPBusinessRecord) {
   return String(record.Name || record.CardCode || record.ItemCode || record.WhsCode || record.PrjCode || record.DocEntry || record.TransId || record.key)
 }
 
 function recordStatus(record: ERPBusinessRecord) {
   return String(record.Status || record.DocStatus || record.WddStatus || record.BtfStatus || record.Active || '')
+}
+
+function displayValue(value: unknown) {
+  if (value === undefined || value === null || value === '') return ''
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
 }

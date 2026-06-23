@@ -41,6 +41,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 export type ERPRecord<T = Record<string, unknown>> = {
+  table_code?: string
+  parent_table_code?: string
+  parent_key?: string
   key: string
   data: T
   created_at?: string
@@ -63,6 +66,20 @@ export async function listERPRecords<T extends Record<string, unknown>>(
   limit = 100,
 ): Promise<Array<T & { key: string }>> {
   const result = await apiRequest<{ records: Array<ERPRecord<T>> }>(`/erp/${encodeURIComponent(tableCode)}?limit=${limit}`, { token })
+  return (result.records ?? []).map((record) => ({ ...(record.data ?? ({} as T)), key: record.key }))
+}
+
+export async function listERPChildRecords<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  key: string,
+  childCode: string,
+  limit = 100,
+): Promise<Array<T & { key: string }>> {
+  const result = await apiRequest<{ records: Array<ERPRecord<T>> }>(
+    `/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/${encodeURIComponent(childCode)}?limit=${limit}`,
+    { token },
+  )
   return (result.records ?? []).map((record) => ({ ...(record.data ?? ({} as T)), key: record.key }))
 }
 
