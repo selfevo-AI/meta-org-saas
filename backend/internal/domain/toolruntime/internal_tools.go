@@ -3,12 +3,16 @@ package toolruntime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
+	domainruntime "github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 )
 
 type ProjectService interface {
@@ -29,7 +33,34 @@ type EvolutionService interface {
 	CreateExperiment(context.Context, evolution.CreateExperimentInput) (*evolution.Experiment, error)
 }
 
+type ERPActionService interface {
+	RunAction(context.Context, string, string, string, erp.ActionInput) (*erp.ActionResult, error)
+}
+
+type SchemaVerifier interface {
+	VerifySchemaChange(context.Context, uuid.UUID, uuid.UUID) (*systemadmin.SchemaVerificationReport, error)
+}
+
+type RuntimeOperationService interface {
+	ExecuteOperation(context.Context, string, domainruntime.RuntimeExecutionRequest) (*domainruntime.RuntimeExecutionResult, error)
+}
+
+type ContextProposalService interface {
+	ApplyContextProposal(context.Context, uuid.UUID, uuid.UUID, string) (map[string]any, error)
+}
+
+type PlatformToolServices struct {
+	ERP             ERPActionService
+	SchemaVerifier  SchemaVerifier
+	Runtime         RuntimeOperationService
+	ContextProposal ContextProposalService
+}
+
 func InternalTools(projectSvc ProjectService, financeSvc FinanceService, evolutionSvc EvolutionService) map[string]ToolAdapter {
+	return InternalToolsWithPlatform(projectSvc, financeSvc, evolutionSvc, PlatformToolServices{})
+}
+
+func InternalToolsWithPlatform(projectSvc ProjectService, financeSvc FinanceService, evolutionSvc EvolutionService, platform PlatformToolServices) map[string]ToolAdapter {
 	tools := map[string]ToolAdapter{
 		"governance.explain_decision": explainGovernanceDecision,
 	}
@@ -53,13 +84,33 @@ func InternalTools(projectSvc ProjectService, financeSvc FinanceService, evoluti
 		tools["project.bind_workflow"] = notConfiguredTool("project service is not configured")
 		tools["project.estimate_cost"] = notConfiguredTool("project service is not configured")
 		tools["project.create_cost_entry"] = notConfiguredTool("project service is not configured")
-		return tools
+	} else {
+		tools["requirement.analyze"] = analyzeRequirementTool(projectSvc)
+		tools["project.match_members"] = matchMembersTool(projectSvc)
+		tools["project.bind_workflow"] = bindWorkflowTool(projectSvc)
+		tools["project.estimate_cost"] = estimateCostTool(projectSvc)
+		tools["project.create_cost_entry"] = createCostEntryTool(projectSvc)
 	}
-	tools["requirement.analyze"] = analyzeRequirementTool(projectSvc)
-	tools["project.match_members"] = matchMembersTool(projectSvc)
-	tools["project.bind_workflow"] = bindWorkflowTool(projectSvc)
-	tools["project.estimate_cost"] = estimateCostTool(projectSvc)
-	tools["project.create_cost_entry"] = createCostEntryTool(projectSvc)
+	if platform.ERP == nil {
+		tools["erp.action.execute"] = notConfiguredTool("ERP action service is not configured")
+	} else {
+		tools["erp.action.execute"] = erpActionExecuteTool(platform.ERP)
+	}
+	if platform.SchemaVerifier == nil {
+		tools["schema.change.preview"] = notConfiguredTool("schema verifier is not configured")
+	} else {
+		tools["schema.change.preview"] = schemaChangePreviewTool(platform.SchemaVerifier)
+	}
+	if platform.Runtime == nil {
+		tools["runtime.operation.execute"] = notConfiguredTool("runtime operation service is not configured")
+	} else {
+		tools["runtime.operation.execute"] = runtimeOperationExecuteTool(platform.Runtime)
+	}
+	if platform.ContextProposal == nil {
+		tools["context.proposal.apply"] = notConfiguredTool("context proposal service is not configured")
+	} else {
+		tools["context.proposal.apply"] = contextProposalApplyTool(platform.ContextProposal)
+	}
 	return tools
 }
 
@@ -75,6 +126,10 @@ func DefaultToolDefinitions() []CreateToolInput {
 		{Name: "evolution.create_knowledge", Description: "Create evolution knowledge entry", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "evolution.create_signal", Description: "Create evolution signal", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "evolution.propose_experiment", Description: "Propose evolution experiment", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
+		{Name: "erp.action.execute", Description: "Execute an ERP business action", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
+		{Name: "schema.change.preview", Description: "Verify a schema change request without applying it", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "low", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
+		{Name: "runtime.operation.execute", Description: "Execute a platform runtime operation", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
+		{Name: "context.proposal.apply", Description: "Apply an approved context change proposal", SourceType: SourceManualApproval, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
 	}
 }
 
@@ -254,6 +309,68 @@ func proposeExperimentTool(evolutionSvc EvolutionService) ToolAdapter {
 	}
 }
 
+func erpActionExecuteTool(erpSvc ERPActionService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		tableCode := stringArg(input.Arguments, "table_code")
+		key := firstNonEmptyString(stringArg(input.Arguments, "key"), stringArg(input.Arguments, "record_key"), stringArg(input.Arguments, "target_key"))
+		action := stringArg(input.Arguments, "action")
+		if tableCode == "" || key == "" || action == "" {
+			return ToolResult{}, fmt.Errorf("%w: table_code, key, and action are required", ErrValidation)
+		}
+		result, err := erpSvc.RunAction(ctx, tableCode, key, action, erp.ActionInput{Data: mapArg(input.Arguments, "data")})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "ERP action executed", Data: map[string]any{"erp_action": result}}, nil
+	}
+}
+
+func schemaChangePreviewTool(verifier SchemaVerifier) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		requestID, err := firstUUIDArg(input.Arguments, "request_id", "schema_change_request_id", "id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		report, err := verifier.VerifySchemaChange(ctx, input.ActorID, requestID)
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Schema change verified", Data: map[string]any{"verification": report}}, nil
+	}
+}
+
+func runtimeOperationExecuteTool(runtimeSvc RuntimeOperationService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		operationID := firstNonEmptyString(stringArg(input.Arguments, "operation_id"), stringArg(input.Arguments, "id"))
+		if operationID == "" {
+			return ToolResult{}, fmt.Errorf("%w: operation_id is required", ErrValidation)
+		}
+		result, err := runtimeSvc.ExecuteOperation(ctx, operationID, domainruntime.RuntimeExecutionRequest{
+			Path:  stringMapArg(input.Arguments, "path"),
+			Query: stringMapArg(input.Arguments, "query"),
+			Body:  mapArg(input.Arguments, "body"),
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Runtime operation executed", Data: map[string]any{"runtime_result": result}}, nil
+	}
+}
+
+func contextProposalApplyTool(proposals ContextProposalService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		proposalID, err := firstUUIDArg(input.Arguments, "proposal_id", "context_proposal_id", "id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		result, err := proposals.ApplyContextProposal(ctx, proposalID, input.ActorID, input.ActorType)
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Context proposal applied", Data: map[string]any{"context_proposal": result}}, nil
+	}
+}
+
 func explainGovernanceDecision(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
 	return ToolResult{
 		Summary: "Governance decision context prepared",
@@ -292,6 +409,21 @@ func optionalUUIDArg(args map[string]any, key string) (*uuid.UUID, error) {
 		return nil, fmt.Errorf("%w: invalid %s", ErrValidation, key)
 	}
 	return &id, nil
+}
+
+func firstUUIDArg(args map[string]any, keys ...string) (uuid.UUID, error) {
+	for _, key := range keys {
+		raw := stringArg(args, key)
+		if raw == "" {
+			continue
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("%w: invalid %s", ErrValidation, key)
+		}
+		return id, nil
+	}
+	return uuid.Nil, fmt.Errorf("%w: %s is required", ErrValidation, strings.Join(keys, " or "))
 }
 
 func stringArg(args map[string]any, key string) string {
@@ -354,4 +486,19 @@ func mapArg(args map[string]any, key string) map[string]any {
 		return value
 	}
 	return map[string]any{}
+}
+
+func stringMapArg(args map[string]any, key string) map[string]string {
+	raw, ok := args[key].(map[string]any)
+	if !ok {
+		if values, ok := args[key].(map[string]string); ok {
+			return values
+		}
+		return map[string]string{}
+	}
+	result := map[string]string{}
+	for itemKey, value := range raw {
+		result[itemKey] = fmt.Sprint(value)
+	}
+	return result
 }
