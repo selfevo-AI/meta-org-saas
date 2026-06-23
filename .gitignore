@@ -11,6 +11,7 @@
 # Go workspace
 go.work
 go.work.sum
+.worktrees/
 
 # Rust workspace
 target/
