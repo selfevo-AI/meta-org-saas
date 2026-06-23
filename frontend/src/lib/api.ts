@@ -367,6 +367,13 @@ export async function approveSchemaChange(token: string, requestID: string, reas
   })
 }
 
+export async function verifySchemaChange(token: string, requestID: string): Promise<SchemaVerificationReport> {
+  return apiRequest<SchemaVerificationReport>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/verify`, {
+    method: 'POST',
+    token,
+  })
+}
+
 export async function applySchemaChange(token: string, requestID: string): Promise<SchemaApplyJob> {
   return apiRequest<SchemaApplyJob>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/apply`, {
     method: 'POST',
@@ -1435,7 +1442,7 @@ export interface SchemaChangeRequest {
   risk_level?: string
   reason: string
   schema_package: SchemaPackage
-  diff?: SchemaDiff
+  diff?: SchemaDiff[]
   statements: string[]
   requested_by?: string
   reviewed_by?: string
@@ -1445,6 +1452,26 @@ export interface SchemaChangeRequest {
   reviewed_at?: string
   applied_at?: string
   updated_at: string
+}
+
+export interface SchemaVerificationReport {
+  change_request_id: string
+  organization_id: string
+  schema_name: string
+  request_status: string
+  status: string
+  risk_level: string
+  statement_count: number
+  blocking_issues: number
+  can_apply: boolean
+  checks: SchemaVerificationCheck[]
+}
+
+export interface SchemaVerificationCheck {
+  key: string
+  status: string
+  message: string
+  metadata?: Record<string, unknown>
 }
 
 export interface SchemaApplyJob {
@@ -1469,43 +1496,12 @@ export interface CreateSchemaChangeRequestInput {
 }
 
 export interface SchemaDiff {
-  summary?: string[]
-  tables_added?: string[]
-  tables_removed?: string[]
-  tables_renamed?: SchemaRenameDiff[]
-  fields_added?: SchemaFieldDiff[]
-  fields_removed?: SchemaFieldDiff[]
-  fields_renamed?: SchemaFieldRenameDiff[]
-  fields_changed?: SchemaFieldChangeDiff[]
-  indexes_added?: SchemaIndexDiff[]
-  destructive?: boolean
-}
-
-export interface SchemaRenameDiff {
-  from: string
-  to: string
-}
-
-export interface SchemaFieldDiff {
-  table: string
-  field: string
-}
-
-export interface SchemaFieldRenameDiff {
-  table: string
-  from: string
-  to: string
-}
-
-export interface SchemaFieldChangeDiff {
-  table: string
-  field: string
-  changes: string[]
-}
-
-export interface SchemaIndexDiff {
-  table: string
-  index: string
+  action: string
+  table?: string
+  field?: string
+  from?: string
+  to?: string
+  risk: string
 }
 
 export interface DataTable {

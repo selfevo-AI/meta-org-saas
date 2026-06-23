@@ -3,6 +3,7 @@ package erp
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key string, action string, input ActionInput) (*ActionResult, error) {
@@ -20,6 +21,9 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 	case "MPOR:submit":
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"DocStatus": "S"})
 	case "MPOR:approve":
+		if err := s.requireDocumentField(ctx, tableCode, key, "DocStatus", "S", "purchase order must be submitted before approval"); err != nil {
+			return nil, err
+		}
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
 	case "MPDN:post":
 		return s.postGoodsReceiptPO(ctx, key)
@@ -141,6 +145,12 @@ func (s *Service) postGoodsReceiptPO(ctx context.Context, key string) (*ActionRe
 	if err != nil {
 		return nil, err
 	}
+	if isPostedDocument(receipt) {
+		return &ActionResult{TableCode: "MPDN", Key: key, Action: "post", Status: "posted", Record: receipt}, nil
+	}
+	if !documentFieldEquals(receipt, "WddStatus", "A") {
+		return nil, fmt.Errorf("%w: goods receipt PO must be approved before posting", ErrValidation)
+	}
 	lines, err := s.listChildPayloads(ctx, "MPDN", key, "PDN1")
 	if err != nil {
 		return nil, err
@@ -178,6 +188,12 @@ func (s *Service) postDelivery(ctx context.Context, key string) (*ActionResult, 
 	delivery, err := s.repo.GetRecord(ctx, deliveryTable, key)
 	if err != nil {
 		return nil, err
+	}
+	if isPostedDocument(delivery) {
+		return &ActionResult{TableCode: "MDLN", Key: key, Action: "post", Status: "posted", Record: delivery}, nil
+	}
+	if !documentFieldEquals(delivery, "WddStatus", "A") {
+		return nil, fmt.Errorf("%w: delivery must be approved before posting", ErrValidation)
 	}
 	lines, err := s.listChildPayloads(ctx, "MDLN", key, "DLN1")
 	if err != nil {
@@ -269,6 +285,13 @@ func (s *Service) allocateIncomingPayment(ctx context.Context, key string, input
 
 func (s *Service) postInventoryDocument(ctx context.Context, tableCode string, key string, direction float64) (*ActionResult, error) {
 	table, _ := s.table(tableCode)
+	current, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if isPostedDocument(current) {
+		return &ActionResult{TableCode: tableCode, Key: key, Action: "post", Status: "posted", Record: current}, nil
+	}
 	childCode := "IGN1"
 	if tableCode == "MIGE" {
 		childCode = "IGE1"
@@ -287,6 +310,39 @@ func (s *Service) postInventoryDocument(ctx context.Context, tableCode string, k
 		return nil, err
 	}
 	return &ActionResult{TableCode: tableCode, Key: key, Action: "post", Status: "posted", Record: record}, nil
+}
+
+func (s *Service) requireDocumentField(ctx context.Context, tableCode string, key string, field string, expected string, message string) error {
+	table, err := s.table(tableCode)
+	if err != nil {
+		return err
+	}
+	record, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return err
+	}
+	if isClosedDocument(record) {
+		return fmt.Errorf("%w: document is already closed", ErrValidation)
+	}
+	if !documentFieldEquals(record, field, expected) {
+		return fmt.Errorf("%w: %s", ErrValidation, message)
+	}
+	return nil
+}
+
+func documentFieldEquals(record *Record, field string, expected string) bool {
+	if record == nil || record.Data == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(fmt.Sprint(record.Data[field])), expected)
+}
+
+func isClosedDocument(record *Record) bool {
+	return documentFieldEquals(record, "DocStatus", "C")
+}
+
+func isPostedDocument(record *Record) bool {
+	return documentFieldEquals(record, "Posted", "Y")
 }
 
 func (s *Service) createDocument(ctx context.Context, tableCode string, key string, payload map[string]any) (*Record, error) {

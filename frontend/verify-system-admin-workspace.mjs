@@ -7,6 +7,7 @@ const authSource = readFileSync(`${frontendRoot}src/lib/auth.ts`, 'utf8')
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
 const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
+const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
 const workspacePath = `${frontendRoot}src/app/system-admin-workspace.tsx`
 const workspaceSource = existsSync(workspacePath) ? readFileSync(workspacePath, 'utf8') : ''
 
@@ -17,6 +18,7 @@ const requiredApiExports = [
   'exportOrganizationSchema',
   'createOrganizationSchemaChange',
   'approveSchemaChange',
+  'verifySchemaChange',
   'applySchemaChange',
   'listPlatformOrganizations',
   'getOrganizationSubscription',
@@ -41,6 +43,8 @@ const requiredApiTypes = [
   'SchemaTableDefinition',
   'SchemaFieldDefinition',
   'SchemaChangeRequest',
+  'SchemaVerificationReport',
+  'SchemaVerificationCheck',
   'SchemaApplyJob',
   'CreateSchemaChangeRequestInput',
   'OrganizationSubscription',
@@ -83,10 +87,35 @@ const requiredI18nKeys = [
   'systemAdmin.importJson',
   'systemAdmin.createChange',
   'systemAdmin.approve',
+  'systemAdmin.verify',
   'systemAdmin.apply',
   'systemAdmin.changeCreated',
   'systemAdmin.changeApproved',
+  'systemAdmin.changeVerified',
   'systemAdmin.changeApplied',
+  'systemAdmin.verificationReport',
+  'systemAdmin.canApply',
+  'systemAdmin.blockingIssues',
+  'systemAdmin.checks',
+  'systemAdmin.packageDiff',
+  'systemAdmin.noPackageDiff',
+  'systemAdmin.check.schema_package',
+  'systemAdmin.check.ddl_plan',
+  'systemAdmin.check.risk_level',
+  'systemAdmin.check.lifecycle_status',
+  'systemAdmin.check.permissions_impact',
+  'systemAdmin.check.runtime_operations',
+  'systemAdmin.check.assistant_context',
+  'systemAdmin.check.tool_policy',
+  'systemAdmin.check.assistant_skills',
+  'systemAdmin.check.quality_gates',
+  'systemAdmin.check.verification_scenarios',
+  'systemAdmin.check.rollback_risk',
+  'systemAdmin.erpAsset.context_rules',
+  'systemAdmin.erpAsset.tool_definitions',
+  'systemAdmin.erpAsset.assistant_skills',
+  'systemAdmin.erpAsset.quality_gates',
+  'systemAdmin.erpAsset.verification_scenarios',
   'systemAdmin.loadFailed',
   'systemAdmin.permissions',
   'systemAdmin.closeOrganization',
@@ -145,7 +174,17 @@ const requiredWorkspaceSnippets = [
   'exportOrganizationSchema',
   'createOrganizationSchemaChange',
   'approveSchemaChange',
+  'verifySchemaChange',
+  'verificationReport',
   'applySchemaChange',
+  'schemaDiffItems',
+  'changeRequest?.diff',
+  "t('systemAdmin.packageDiff')",
+  "'context_rules'",
+  "'tool_definitions'",
+  "'assistant_skills'",
+  "'quality_gates'",
+  "'verification_scenarios'",
   "'saas'",
   "t('systemAdmin.",
 ]
@@ -157,6 +196,16 @@ const requiredAssistantSnippets = [
   "apiScope === 'platform' ? rejectPlatformToolApproval : rejectToolApproval",
   "apiScope === 'platform' ? getPlatformAIInvocation : getAIInvocation",
   "apiScope === 'platform' ? listPlatformModelProviders : listModelProviders",
+]
+
+const requiredOperationSnippets = [
+  "id: 'system-admin-schema-change-verify'",
+  "title: 'operation.systemAdmin.schemaChangeVerify'",
+  "path: '/platform/admin/schema-change-requests/{id}/verify'",
+  "label: 'operation.systemAdmin.schemaChangeRequestId'",
+  "operationKind: 'admin'",
+  "dangerLevel: 'low'",
+  "resultView: 'audit'",
 ]
 
 const movedPlatformDomains = [
@@ -179,6 +228,8 @@ const requiredAuthSnippets = [
 const requiredApiSnippets = [
   'organizationId?: string | null',
   'organizationId: organizationID',
+  'diff?: SchemaDiff[]',
+  'action: string',
 ]
 
 function dictionarySlice(name, nextName) {
@@ -249,6 +300,11 @@ if (!workspaceSource) {
 const missingAssistantSnippets = requiredAssistantSnippets.filter((snippet) => !assistantSource.includes(snippet))
 if (missingAssistantSnippets.length > 0) {
   failures.push(`Missing platform assistant approval snippets:\n${missingAssistantSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+}
+
+const missingOperationSnippets = requiredOperationSnippets.filter((snippet) => !operationsSource.includes(snippet))
+if (missingOperationSnippets.length > 0) {
+  failures.push(`Missing schema verification operation snippets:\n${missingOperationSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
 const missingEnKeys = requiredI18nKeys.filter((key) => !hasDictionaryKey(enDictionary, key))

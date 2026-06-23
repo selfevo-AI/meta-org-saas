@@ -505,6 +505,17 @@ const allApiOperations: ApiOperation[] = [
     },
   },
   {
+    id: 'system-admin-schema-change-verify',
+    domain: 'SystemAdmin',
+    title: 'operation.systemAdmin.schemaChangeVerify',
+    method: 'POST',
+    path: '/platform/admin/schema-change-requests/{id}/verify',
+    pathParams: [{ name: 'id', label: 'operation.systemAdmin.schemaChangeRequestId' }],
+    operationKind: 'admin',
+    dangerLevel: 'low',
+    resultView: 'audit',
+  },
+  {
     id: 'department-create',
     domain: 'Organization',
     title: '创建部门',

@@ -112,6 +112,26 @@ type SchemaApplyJob struct {
 	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
+type SchemaVerificationReport struct {
+	ChangeRequestID uuid.UUID                 `json:"change_request_id"`
+	OrganizationID  uuid.UUID                 `json:"organization_id"`
+	SchemaName      string                    `json:"schema_name"`
+	RequestStatus   string                    `json:"request_status"`
+	Status          string                    `json:"status"`
+	RiskLevel       string                    `json:"risk_level"`
+	StatementCount  int                       `json:"statement_count"`
+	BlockingIssues  int                       `json:"blocking_issues"`
+	CanApply        bool                      `json:"can_apply"`
+	Checks          []SchemaVerificationCheck `json:"checks"`
+}
+
+type SchemaVerificationCheck struct {
+	Key      string         `json:"key"`
+	Status   string         `json:"status"`
+	Message  string         `json:"message"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
 type CreateSchemaChangeRequestInput struct {
 	OrganizationID       uuid.UUID      `json:"organization_id"`
 	RequestType          string         `json:"request_type"`

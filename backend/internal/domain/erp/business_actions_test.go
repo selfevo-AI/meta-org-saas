@@ -212,9 +212,26 @@ func TestPurchaseOrderSubmitAndApprove(t *testing.T) {
 	}
 }
 
+func TestPurchaseOrderApproveRequiresSubmittedOrder(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPOR", "PO-1", map[string]any{"DocEntry": "PO-1", "DocStatus": "O", "WddStatus": "W"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPOR", "PO-1", "approve", ActionInput{})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	if result != nil {
+		t.Fatalf("approve result = %#v, want nil on validation error", result)
+	}
+	if repo.records["MPOR"]["PO-1"].Data["WddStatus"] != "W" {
+		t.Fatalf("WddStatus changed to %v, want unchanged W", repo.records["MPOR"]["PO-1"].Data["WddStatus"])
+	}
+}
+
 func TestGoodsReceiptPostGeneratesInventoryAndPayable(t *testing.T) {
 	repo := newBusinessFakeRepository()
-	repo.seed("MPDN", "GR-1", map[string]any{"DocEntry": "GR-1", "DocStatus": "O", "CardCode": "S-1"})
+	repo.seed("MPDN", "GR-1", map[string]any{"DocEntry": "GR-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "S-1"})
 	repo.seedChild("MPDN", "GR-1", "PDN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 10}})
 	service := NewService(repo, DefaultCatalog())
 
@@ -235,10 +252,28 @@ func TestGoodsReceiptPostGeneratesInventoryAndPayable(t *testing.T) {
 	}
 }
 
+func TestGoodsReceiptPostRequiresApproval(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPDN", "GR-1", map[string]any{"DocEntry": "GR-1", "DocStatus": "O", "WddStatus": "W", "CardCode": "S-1"})
+	repo.seedChild("MPDN", "GR-1", "PDN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 10}})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPDN", "GR-1", "post", ActionInput{})
+	if err == nil {
+		t.Fatalf("post returned nil error and result %#v, want validation error", result)
+	}
+	if result != nil {
+		t.Fatalf("post result = %#v, want nil on validation error", result)
+	}
+	if repo.records["MIGN"] != nil || repo.records["MPCH"] != nil {
+		t.Fatalf("post generated records for unapproved receipt: %#v %#v", repo.records["MIGN"], repo.records["MPCH"])
+	}
+}
+
 func TestSalesDeliveryPaymentLoop(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	repo.seed("MRDR", "SO-1", map[string]any{"DocEntry": "SO-1", "DocStatus": "O", "Confirmed": "N", "WddStatus": "W"})
-	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "CardCode": "C-1"})
+	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "C-1"})
 	repo.seedChild("MDLN", "DLV-1", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 15}})
 	repo.seed("MITW", "I-1|W-1", map[string]any{"ItemCode": "I-1|W-1", "OnHand": 5})
 	service := NewService(repo, DefaultCatalog())
