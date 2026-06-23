@@ -87,6 +87,18 @@ func NewService(repo Repository, governanceSvc GovernanceService, adapters map[s
 	return s
 }
 
+func (s *Service) RegisterAdapters(adapters map[string]ToolAdapter) {
+	if s.adapters == nil {
+		s.adapters = map[string]ToolAdapter{}
+	}
+	for name, adapter := range adapters {
+		if name == "" || adapter == nil {
+			continue
+		}
+		s.adapters[name] = adapter
+	}
+}
+
 type CreateExecutionInput struct {
 	ToolID             uuid.UUID
 	InvocationID       *uuid.UUID

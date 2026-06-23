@@ -1,6 +1,10 @@
 package assistant
 
-import "github.com/google/uuid"
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
 
 const (
 	ContextScopeSaaS         = "saas"
@@ -103,6 +107,21 @@ type ContextMigrationIntentInput struct {
 	EntityKey  string `json:"entity_key" yaml:"entity_key"`
 	FieldKey   string `json:"field_key" yaml:"field_key"`
 	Reason     string `json:"reason" yaml:"reason"`
+}
+
+type ContextRuleRecord struct {
+	ID                  uuid.UUID      `json:"id"`
+	DictionaryVersionID uuid.UUID      `json:"dictionary_version_id"`
+	ModuleKey           string         `json:"module_key"`
+	EntityKey           string         `json:"entity_key"`
+	FieldKey            string         `json:"field_key"`
+	RuleType            string         `json:"rule_type"`
+	Rule                map[string]any `json:"rule"`
+	Status              string         `json:"status"`
+}
+
+type ContextRuleSource interface {
+	ListActiveContextRules(context.Context, ContextRequest) ([]ContextRuleRecord, error)
 }
 
 type ContextRequest struct {

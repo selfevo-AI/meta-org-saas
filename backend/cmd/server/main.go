@@ -186,7 +186,17 @@ func main() {
 	erpHandler := erp.NewHandler(erpSvc)
 
 	toolRepo := toolruntime.NewRepository(db)
-	toolSvc := toolruntime.NewService(toolRepo, govSvc, toolruntime.InternalTools(projectSvc, financeSvc, evoSvc), toolruntime.WithObservability(obsSvc), toolruntime.WithSecurityKernel(securityKernel))
+	toolSvc := toolruntime.NewService(
+		toolRepo,
+		govSvc,
+		toolruntime.InternalToolsWithPlatform(projectSvc, financeSvc, evoSvc, toolruntime.PlatformToolServices{
+			ERP:            erpSvc,
+			SchemaVerifier: systemAdminSvc,
+			Runtime:        runtimeSvc,
+		}),
+		toolruntime.WithObservability(obsSvc),
+		toolruntime.WithSecurityKernel(securityKernel),
+	)
 	toolHandler := toolruntime.NewHandler(toolSvc)
 
 	assistantRepo := assistant.NewRepository(db)
@@ -196,6 +206,7 @@ func main() {
 		Resolver:   contextResolver,
 		Evaluator:  assistant.NewContextRuleEvaluator(assistant.ContextRuleEvaluatorConfig{AttentionCoreRatio: 0.4}),
 		Repository: contextRepo,
+		RuleSource: contextRepo,
 	})
 	dictionarySvc := assistant.NewDictionaryService(contextRepo, nil)
 	assistantSvc := assistant.NewService(
@@ -212,6 +223,9 @@ func main() {
 	eventSink := assistant.NewMemoryEventSink(assistantRepo)
 	assistantRuntime := assistant.NewAssistantRuntime(assistantSvc, contextEngine, toolRunner, eventSink)
 	assistantSvc.SetRuntime(assistantRuntime)
+	toolSvc.RegisterAdapters(toolruntime.InternalToolsWithPlatform(nil, nil, nil, toolruntime.PlatformToolServices{
+		ContextProposal: assistantSvc,
+	}))
 	assistantHandler := assistant.NewHandler(assistantSvc)
 
 	verRepo := verification.NewRepository(db)
