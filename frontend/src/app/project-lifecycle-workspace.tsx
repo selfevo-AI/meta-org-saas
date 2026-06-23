@@ -491,14 +491,14 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
     Promise.all([
       apiRequest<Requirement[]>('/requirements?limit=100', { token }),
       apiRequest<Project[]>('/projects?limit=100', { token }),
-      apiRequest<Organization[]>('/organizations?limit=100', { token }),
+      apiRequest<{ organization: Organization }>('/organization/current', { token }),
       apiRequest<WorkflowTemplate[]>('/workflows/templates', { token }),
     ])
       .then(([requirementData, projectData, organizationData, workflowTemplateData]) => {
         if (cancelled) return
         const safeRequirements = asArray(requirementData)
         const safeProjects = asArray(projectData)
-        const safeOrganizations = asArray(organizationData)
+        const safeOrganizations = organizationData.organization ? [organizationData.organization] : []
         const safeWorkflowTemplates = asArray(workflowTemplateData)
         setRequirements(safeRequirements)
         setProjects(safeProjects)
@@ -619,14 +619,23 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
     const [requirementData, projectData, organizationData, workflowTemplateData] = await Promise.all([
       apiRequest<Requirement[]>('/requirements?limit=100', { token }),
       apiRequest<Project[]>('/projects?limit=100', { token }),
-      apiRequest<Organization[]>('/organizations?limit=100', { token }),
+      apiRequest<{ organization: Organization }>('/organization/current', { token }),
       apiRequest<WorkflowTemplate[]>('/workflows/templates', { token }),
     ])
     const safeRequirements = asArray(requirementData)
     const safeProjects = asArray(projectData)
     setRequirements(safeRequirements)
     setProjects(safeProjects)
-    setOrganizations(asArray(organizationData))
+    const safeOrganizations = organizationData.organization ? [organizationData.organization] : []
+    setOrganizations(safeOrganizations)
+    setRequirementForm((current) => ({
+      ...current,
+      organization_id: current.organization_id || safeOrganizations[0]?.id || '',
+    }))
+    setProjectForm((current) => ({
+      ...current,
+      organization_id: current.organization_id || safeOrganizations[0]?.id || '',
+    }))
     setWorkflowTemplates(asArray(workflowTemplateData))
     setSelectedRequirementId((current) => current || (safeRequirements[0] ? recordKey(safeRequirements[0]) : ''))
     setSelectedProjectId((current) => current || (safeProjects[0] ? recordKey(safeProjects[0]) : ''))

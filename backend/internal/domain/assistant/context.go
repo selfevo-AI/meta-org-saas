@@ -30,6 +30,34 @@ type ContextResolver interface {
 	Resolve(context.Context, *Session) WorkRecordContext
 }
 
+var erpContextTargetTypes = map[string]string{
+	"MREQ": "requirement",
+	"MPRJ": "project",
+	"MPOR": "purchase_order",
+	"MRDR": "sales_order",
+	"MINV": "ar_invoice",
+	"MPCH": "ap_invoice",
+	"MPDN": "goods_receipt_po",
+	"MDLN": "delivery",
+	"MIGN": "goods_receipt",
+	"MIGE": "goods_issue",
+	"MJDT": "journal_entry",
+}
+
+func erpContextTargetsForCatalog(tableCodes []string) []string {
+	targets := []string{}
+	seen := map[string]bool{}
+	for _, tableCode := range tableCodes {
+		target, ok := erpContextTargetTypes[strings.ToUpper(strings.TrimSpace(tableCode))]
+		if !ok || seen[target] {
+			continue
+		}
+		seen[target] = true
+		targets = append(targets, target)
+	}
+	return targets
+}
+
 type DBContextResolver struct {
 	db *pgxpool.Pool
 }
@@ -61,7 +89,13 @@ func (r *DBContextResolver) Resolve(ctx context.Context, session *Session) WorkR
 }
 
 func (r *DBContextResolver) queryRecords(ctx context.Context, moduleKey string, targetType string, organizationID *uuid.UUID) ([]WorkRecord, error) {
-	query := targetContextQuery(targetType)
+	query := ""
+	if strings.EqualFold(strings.TrimSpace(moduleKey), "erp") {
+		query = erpTargetContextQuery(targetType)
+	}
+	if query == "" {
+		query = targetContextQuery(targetType)
+	}
 	if query == "" {
 		query = contextQuery(moduleKey)
 	}
@@ -272,6 +306,35 @@ func targetContextQuery(targetType string) string {
 			ORDER BY c.created_at DESC LIMIT 12`
 	case "cost_ledger_entry", "ledger_entry":
 		return `SELECT id::text, 'cost_ledger_entry', cost_category || ':' || source_type, status, created_at::text FROM cost_ledger_entries WHERE ($1::uuid IS NULL OR organization_id IS NOT DISTINCT FROM $1) ORDER BY created_at DESC LIMIT 12`
+	default:
+		return ""
+	}
+}
+
+func erpTargetContextQuery(targetType string) string {
+	switch strings.ToLower(strings.TrimSpace(targetType)) {
+	case "requirement", "erp_requirement":
+		return `SELECT "ReqCode"::text, 'requirement', COALESCE(NULLIF("Payload"->>'Name', ''), "ReqCode"::text), COALESCE(NULLIF("Payload"->>'Status', ''), ''), "CreatedAt"::text FROM "MREQ" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "project", "erp_project":
+		return `SELECT "PrjCode"::text, 'project', COALESCE(NULLIF("Payload"->>'Name', ''), "PrjCode"::text), COALESCE(NULLIF("Payload"->>'Status', ''), ''), "CreatedAt"::text FROM "MPRJ" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "purchase_order":
+		return `SELECT "DocEntry"::text, 'purchase_order', COALESCE(NULLIF("CardCode", ''), "DocEntry"::text), COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MPOR" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "goods_receipt_po":
+		return `SELECT "DocEntry"::text, 'goods_receipt_po', COALESCE(NULLIF("CardCode", ''), "DocEntry"::text), COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MPDN" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "sales_order":
+		return `SELECT "DocEntry"::text, 'sales_order', COALESCE(NULLIF("CardCode", ''), "DocEntry"::text), COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MRDR" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "delivery":
+		return `SELECT "DocEntry"::text, 'delivery', COALESCE(NULLIF("CardCode", ''), "DocEntry"::text), COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MDLN" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "ar_invoice":
+		return `SELECT "DocEntry"::text, 'ar_invoice', COALESCE(NULLIF("CardCode", ''), "DocEntry"::text), COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MINV" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "ap_invoice":
+		return `SELECT "DocEntry"::text, 'ap_invoice', COALESCE(NULLIF("CardCode", ''), "DocEntry"::text), COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MPCH" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "goods_receipt":
+		return `SELECT "DocEntry"::text, 'goods_receipt', "DocEntry"::text, COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MIGN" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "goods_issue":
+		return `SELECT "DocEntry"::text, 'goods_issue', "DocEntry"::text, COALESCE(NULLIF("DocStatus", ''), ''), "CreatedAt"::text FROM "MIGE" ORDER BY "CreatedAt" DESC LIMIT 12`
+	case "journal_entry":
+		return `SELECT "TransId"::text, 'journal_entry', "TransId"::text, COALESCE(NULLIF("BtfStatus", ''), ''), "CreatedAt"::text FROM "MJDT" ORDER BY "CreatedAt" DESC LIMIT 12`
 	default:
 		return ""
 	}

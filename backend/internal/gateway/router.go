@@ -5,33 +5,34 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/assistant"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/capability"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/costing"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/dashboard"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/evolution"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/industry"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/inventory"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/layer"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaorg"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaresource"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/procurement"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/runtime"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/assistant"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/governance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/identity"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/industry"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/inventory"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/layer"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaorg"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/procurement"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/sales"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/verification"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 )
 
 type Dependencies struct {
@@ -63,6 +64,7 @@ type Dependencies struct {
 	VerificationHandler  *verification.Handler
 	GovernanceHandler    *governance.Handler
 	EvolutionHandler     *evolution.Handler
+	ErpHandler           *erp.Handler
 }
 
 func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
@@ -73,9 +75,6 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		r.Get("/health", healthCheck)
 		if deps.IdentityHandler != nil {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
-		}
-		if deps.FinanceHandler != nil {
-			deps.FinanceHandler.RegisterPublicRoutes(r)
 		}
 		if deps.SaaSHandler != nil {
 			deps.SaaSHandler.RegisterPublicRoutes(r)
@@ -152,6 +151,12 @@ func registerPlatformAdminRoutes(r chi.Router, deps *Dependencies) {
 			}
 		})
 		r.Group(func(r chi.Router) {
+			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionOrganizationManage))
+			if deps.OrganizationHandler != nil {
+				deps.OrganizationHandler.RegisterPlatformManagementRoutes(r)
+			}
+		})
+		r.Group(func(r chi.Router) {
 			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionModelManage))
 			if deps.AIGatewayHandler != nil {
 				deps.AIGatewayHandler.RegisterRoutes(r)
@@ -164,50 +169,17 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	if deps.SaaSHandler != nil {
 		deps.SaaSHandler.RegisterTenantRoutes(r)
 	}
-	if deps.OrganizationHandler != nil {
-		deps.OrganizationHandler.RegisterRoutes(r)
-	}
-	if deps.CostingHandler != nil {
-		deps.CostingHandler.RegisterRoutes(r)
-	}
 	if deps.DashboardHandler != nil {
 		deps.DashboardHandler.RegisterRoutes(r)
 	}
 	if deps.MetaOrgHandler != nil {
 		deps.MetaOrgHandler.RegisterRoutes(r)
 	}
-	if deps.MetaResourceHandler != nil {
-		deps.MetaResourceHandler.RegisterRoutes(r)
+	if deps.OrganizationHandler != nil {
+		deps.OrganizationHandler.RegisterTenantDepartmentRoutes(r)
 	}
-	if deps.AssistantHandler != nil {
-		deps.AssistantHandler.RegisterRoutes(r)
-	}
-	if deps.AIGatewayHandler != nil {
-		deps.AIGatewayHandler.RegisterTenantRoutes(r)
-	}
-	if deps.WorkflowHandler != nil {
-		deps.WorkflowHandler.RegisterRoutes(r)
-	}
-	if deps.ProjectHandler != nil {
-		deps.ProjectHandler.RegisterRoutes(r)
-	}
-	if deps.FinanceHandler != nil {
-		deps.FinanceHandler.RegisterRoutes(r)
-	}
-	if deps.InventoryHandler != nil {
-		deps.InventoryHandler.RegisterRoutes(r)
-	}
-	if deps.ProcurementHandler != nil {
-		deps.ProcurementHandler.RegisterRoutes(r)
-	}
-	if deps.SalesHandler != nil {
-		deps.SalesHandler.RegisterRoutes(r)
-	}
-	if deps.RuntimeHandler != nil {
-		deps.RuntimeHandler.RegisterRoutes(r)
-	}
-	if deps.ToolRuntimeHandler != nil {
-		deps.ToolRuntimeHandler.RegisterRoutes(r)
+	if deps.ErpHandler != nil {
+		deps.ErpHandler.RegisterRoutes(r)
 	}
 }
 

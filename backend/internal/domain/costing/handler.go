@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
 )
 
 type Handler struct {

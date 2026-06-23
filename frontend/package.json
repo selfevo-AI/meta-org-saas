@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test:erp-operations": "node verify-erp-operations.mjs",
     "test:operations": "node verify-operations-i18n.mjs",
     "test:system-admin": "node verify-system-admin-workspace.mjs",
     "test:runtime-workbench": "node verify-runtime-workbench.mjs",

@@ -49,7 +49,7 @@ Canonical identity:
 
 - Product name: `Meta-Org`
 - GitHub repository: `https://github.com/selfevo-AI/meta-org`
-- Go module: `github.com/selfevo-AI/meta-org/backend`
+- Go module: `github.com/selfevo-AI/meta-org-saas/backend`
 - Frontend package: `meta-org-frontend`
 - PostgreSQL database: `meta_org`
 - Default local database URL: `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable`

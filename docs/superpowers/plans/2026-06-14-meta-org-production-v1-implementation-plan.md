@@ -133,7 +133,7 @@ Expected: matches in README files, Go imports, frontend package metadata, localS
 Edit `backend/go.mod`:
 
 ```go
-module github.com/selfevo-AI/meta-org/backend
+module github.com/selfevo-AI/meta-org-saas/backend
 ```
 
 Replace every Go import prefix:
@@ -145,7 +145,7 @@ github.com/harness-org/backend/
 with:
 
 ```go
-github.com/selfevo-AI/meta-org/backend/
+github.com/selfevo-AI/meta-org-saas/backend/
 ```
 
 Run:
@@ -268,7 +268,7 @@ Update README files to use:
 ```text
 Meta-Org
 https://github.com/selfevo-AI/meta-org
-github.com/selfevo-AI/meta-org/backend
+github.com/selfevo-AI/meta-org-saas/backend
 meta_org
 meta-org-frontend
 ```

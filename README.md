@@ -164,49 +164,16 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 
 ## 数据库迁移
 
-后端启动时会执行根目录 `migrations/` 中的 SQL 文件。当前迁移已到 `039`：
+后端启动时会按文件名顺序执行根目录 `migrations/` 中的 SQL 文件。当前版本只保留重整后的阶段基线：
 
 | 迁移 | 主题 |
 |---|---|
-| `001_identity.sql` | schema migrations、users、ai_agents、roles、user_roles、agent_roles。 |
-| `002_seed_roles.sql` | 初始化 planner、executor、reviewer 角色。 |
-| `003_organization.sql` | organizations、muvrs、teams、mvru_members、mvru_relationships。 |
-| `004_layer.sql` | layer_configs、layer_routing_rules。 |
-| `005_capability.sql` | capabilities、capability_bindings、capability_invocations。 |
-| `006_workflow.sql` | workflow_templates、workflow_instances、tasks、decisions、workflow_contexts。 |
-| `007_observability.sql` | traces、spans、metrics。 |
-| `008_verification.sql` | verification_reports、review_assignments。 |
-| `009_governance.sql` | permissions、principles、control_rules。 |
-| `010_evolution.sql` | weight_scores、weight_alphas、experiments、knowledge_entries、signals。 |
-| `011_organization_tree.sql` | departments、external_members、organization_memberships、department_mvru_links。 |
-| `012_policy_weight_evaluation.sql` | Agent 治理字段、employee_profiles、access_decisions、context_weight_scores、capability_evaluations。 |
-| `013_project_lifecycle.sql` | requirements、projects、project_members、project_workflows、deliverables、project_cost_entries、project_evaluations。 |
-| `014_requirement_documents_workflow_analysis.sql` | requirement_documents、requirement_analysis_workflows。 |
-| `015_single_org_positions_workflow_graph.sql` | positions、position_assignments，并为工作流和项目成员补充组织、部门、岗位关联。 |
-| `016_ai_gateway.sql` | 模型供应商、模型目录、价格版本、AI 调用和 AI 使用流水。 |
-| `017_tool_runtime.sql` | 工具定义、接口文件、工具执行、工具审批和首批内部工具。 |
-| `018_finance_exports.sql` | 财务适配器、导出批次、导出行、Webhook 事件和 AI 成本入账约束。 |
-| `019_costing_framework.sql` | 统一成本币种、汇率、费率卡、预算和成本账本。 |
-| `020_ai_gateway_internal_ops.sql` | AI Gateway 通道/key 池、多维模型计费、模型路由、调用归因和成本分析字段。 |
-| `021_meta_resource_pdca.sql` | Meta Resource、Demand Profile、PDCA Cycle 和 PDCA Event，用于需求驱动的统一资源画像和持续进化记录。 |
-| `022_assistant_runtime.sql` | AI Assistant 会话、消息、运行记录和工具调用上下文。 |
-| `023_org_meta_task_matrix.sql` | 组织 Meta 任务矩阵和业务上下文映射。 |
-| `024_strong_base_data_uniqueness.sql` | 基础数据强唯一性约束。 |
-| `025_authority_tiers_agent_governance.sql` | 权限层级、Agent 治理和审批约束增强。 |
-| `026_master_detail_permissions.sql` | 主从数据权限和访问控制。 |
-| `027_finance_expense_ingestion.sql` | 财务费用导入、拉取批次和失败记录。 |
-| `028_finance_receivables_accounting_crud.sql` | 应收、应付、收付款和核销 CRUD。 |
-| `029_assistant_business_interaction.sql` | Assistant 与业务工作台交互记录。 |
-| `030_assistant_business_interaction_patch.sql` | Assistant 业务交互字段补丁。 |
-| `031_master_key_defaults.sql` | 主数据 master key 默认值。 |
-| `032_module_master_detail_unification.sql` | 模块主从模型统一。 |
-| `033_user_ui_preferences.sql` | 用户 UI 偏好。 |
-| `034_saas_foundation.sql` | SaaS 组织、租户模块和订阅基础。 |
-| `035_assistant_context_engine.sql` | Assistant 上下文引擎、语义上下文和运行记忆。 |
-| `036_unified_skill.sql` | 统一技能目录和技能导入结构。 |
-| `037_security_kernel.sql` | 安全内核策略、决策记录和外部授权集成。 |
-| `038_supply_chain_core.sql` | 库存、采购、销售供应链核心表。 |
-| `039_supply_chain_posting_idempotency.sql` | 供应链过账幂等唯一索引，避免重试重复写入库存流水、应收和应付。 |
+| `000_saas_platform_management_baseline.sql` | SaaS 管理平台、平台账号、权限治理、订阅、模块、租户和平台主从数据基础。 |
+| `001_erp_code_baseline.sql` | ERP/行业业务基线，包含组织、项目、工作流、财务、成本、供应链等行业解决方案表。 |
+| `002_erp_platform_integration_baseline.sql` | ERP 与平台管理的运行期投影、模块集成和平台主数据同步。 |
+| `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、上下文、skill、AI 用量，以及跨阶段外键重建。 |
+
+阶段原则：先有 SaaS 管理平台，再由平台创建或调整行业解决方案，最后落到 ERP 基线和 AI 能力基线。未来任何数据库结构、表关系、外键、索引、种子数据或 schema 生成逻辑调整，都必须同步更新对应阶段 SQL 和 `migrations/BASELINE_RESTRUCTURE.md`。
 
 ## API 概览
 
@@ -345,11 +312,11 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 返回 `{"status":"ok"}`。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
 
-AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必须确认迁移已执行到 `039_supply_chain_posting_idempotency.sql`。若后端启动、模型设置、Meta Resource、SaaS 模块或供应链页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`、`relation inventory_items does not exist` 等错误，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。处理顺序：
+AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必须确认四个阶段基线 `000/001/002/004` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或供应链页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`、`relation inventory_items does not exist` 等错误，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。处理顺序：
 
 1. 确认 `DATABASE_URL` 指向当前 `meta_org` 数据库。
 2. 确认从 `backend/` 本地运行时使用 `MIGRATIONS_PATH=../migrations`。
-3. 重启后端，让迁移器执行到 `039`。
+3. 重启后端，让迁移器执行 `000_saas_platform_management_baseline.sql`、`001_erp_code_baseline.sql`、`002_erp_platform_integration_baseline.sql` 和 `004_ai_capability_baseline.sql`。
 4. 再打开模型设置，检查 Channels / Keys、Routing、Usage Analysis 页面是否能加载。
 5. 打开 Meta Resource 工作区，先执行一次“同步现有资源”，确认 human、agent、external_human、model_channel、tool、capability 资源能进入统一资源视图。
 
@@ -398,7 +365,7 @@ backend/
 frontend/
   src/app/                    Next.js App Router 页面和工作台
   src/lib/                    API、认证、i18n、API Workbench 元数据
-migrations/                   PostgreSQL SQL 迁移 001-039
+migrations/                   PostgreSQL SQL 阶段基线 000、001、002、004
 docs/operations/              生产运维、财务适配器协议和排障文档
 .github/workflows/            GitHub Actions CI
 docker-compose.yml            本地完整环境编排

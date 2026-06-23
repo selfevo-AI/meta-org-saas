@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/tenantdb"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 const SchemaPackageFormatVersion = "meta-org.schema.v1"

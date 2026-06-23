@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/runtime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
 )
 
 func TestRegisterRoutesDoesNotPanicWithPlatformAdminHandlers(t *testing.T) {

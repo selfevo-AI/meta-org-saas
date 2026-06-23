@@ -11,13 +11,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/costing"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/evolution"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaresource"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/governance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 var (

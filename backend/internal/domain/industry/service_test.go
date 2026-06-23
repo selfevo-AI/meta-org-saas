@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 )
 
 func TestValidatePackageRejectsDuplicateAssets(t *testing.T) {

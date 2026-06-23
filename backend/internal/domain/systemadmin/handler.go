@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -28,6 +28,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Get("/platform/admin/organizations/{id}/schema/export", h.exportOrganizationSchema)
 	r.Post("/platform/admin/organizations/{id}/schema/import", h.createOrganizationSchemaChange)
 	r.Post("/platform/admin/organizations/{id}/schema/change-requests", h.createOrganizationSchemaChange)
+	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/erp-standard", h.createERPSolutionFlow)
 	r.Post("/platform/admin/schema-change-requests/{id}/approve", h.approveSchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/apply", h.applySchemaChange)
 }
@@ -91,6 +92,20 @@ func (h *Handler) createOrganizationSchemaChange(w http.ResponseWriter, r *http.
 		input.SchemaPackage = DefaultOrganizationSchemaPackage()
 	}
 	result, err := h.service.CreateSchemaChangeRequest(r.Context(), actorID, input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) createERPSolutionFlow(w http.ResponseWriter, r *http.Request) {
+	actorID, orgID, ok := h.actorAndOrganization(w, r)
+	if !ok {
+		return
+	}
+	var input ERPSolutionFlowRequest
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.OrganizationID = orgID
+	result, err := h.service.BuildERPSolutionFlow(r.Context(), actorID, input)
 	writeResult(w, http.StatusCreated, result, err)
 }
 

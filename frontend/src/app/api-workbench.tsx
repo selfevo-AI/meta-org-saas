@@ -23,10 +23,34 @@ const platformOperationDomains = new Set([
   'DeveloperTools',
 ])
 const platformIdentityPaths = new Set(['/agents/register', '/agents'])
+const deprecatedTenantPathPrefixes = [
+  '/finance/',
+  '/inventory/',
+  '/procurement/',
+  '/sales/',
+  '/organizations',
+  '/organization/',
+  '/requirements',
+  '/projects',
+  '/workflows/',
+  '/capabilities',
+  '/verification/',
+  '/governance/',
+  '/evolution/',
+  '/meta-resources',
+  '/tools',
+  '/tool-executions',
+  '/runtime/entities/',
+  '/runtime/operations',
+]
 
 function platformOperationAvailable(operation: ApiOperation): boolean {
   if (operation.domain === 'Identity') return platformIdentityPaths.has(operation.path)
   return platformOperationDomains.has(operation.domain)
+}
+
+function tenantOperationAvailable(operation: ApiOperation): boolean {
+  return !deprecatedTenantPathPrefixes.some((prefix) => operation.path.startsWith(prefix))
 }
 
 function formatRuntimeDomainLabel(domain: string, translate: (key: string) => string) {
@@ -41,11 +65,11 @@ export function ApiWorkbench({ token, domain, showDomainMenu = true, apiScope = 
   const { t } = useI18n()
   const [runtimeOperations, setRuntimeOperations] = useState<ApiOperation[]>([])
   const scopedRuntimeOperations = useMemo(
-    () => (apiScope === 'platform' ? runtimeOperations.filter(platformOperationAvailable) : runtimeOperations),
+    () => (apiScope === 'platform' ? runtimeOperations.filter(platformOperationAvailable) : runtimeOperations.filter(tenantOperationAvailable)),
     [apiScope, runtimeOperations],
   )
   const scopedFallbackOperations = useMemo(
-    () => (apiScope === 'platform' ? apiOperations.filter(platformOperationAvailable) : apiOperations),
+    () => (apiScope === 'platform' ? apiOperations.filter(platformOperationAvailable) : apiOperations.filter(tenantOperationAvailable)),
     [apiScope],
   )
   const operationCatalog = scopedRuntimeOperations.length > 0 ? scopedRuntimeOperations : scopedFallbackOperations

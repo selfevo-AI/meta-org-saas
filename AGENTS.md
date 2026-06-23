@@ -44,6 +44,14 @@ Pull requests should include a short description, affected backend/frontend doma
 
 Configuration is environment-driven in `backend/internal/pkg/config/config.go`. Do not commit real secrets; override `DATABASE_URL`, `JWT_SECRET`, `SERVER_PORT`, `CORS_ORIGINS`, and `NEXT_PUBLIC_API_URL` per environment.
 
+## Database Baseline Governance
+
+Any feature or refactor that changes database structure, table relationships, foreign keys, indexes, seed metadata, schema-generation logic, or table ownership must update the corresponding file in `migrations/` in the same change.
+
+Use the current staged baseline as the source of truth: SaaS management platform first, ERP/industry baseline next, ERP-platform integration after that, and AI capability stages separately when applicable. Do not place schema changes only in backend/frontend code or informal notes. The relevant migration stage SQL and the migration-stage documentation must be updated together, and fresh-database migration verification must be run before claiming the change is complete.
+
+SaaS platform management owns tenant organizations. Tenant runtime is single-organization, so tenant-facing base data must model the business hierarchy as departments, not an organization tree. Organization profile, subscription, entitlement, invitation, schema, AI/assistant, governance, and platform administration schema changes belong in `000_saas_platform_management_baseline.sql`; tenant department and ERP/industry-solution structures belong in `001_erp_code_baseline.sql` unless the staged baseline document explicitly assigns them elsewhere.
+
 ## Agent-Specific Instructions
 
 Do not use scripts to batch delete files or directories. Delete files only one at a time with `Remove-Item`. If bulk deletion is required, stop and ask the user to confirm manually.

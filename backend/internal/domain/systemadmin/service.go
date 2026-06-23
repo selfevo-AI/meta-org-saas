@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/tenantdb"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 var (
@@ -154,6 +156,109 @@ func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UU
 		Diff:           diff,
 		RequestedBy:    actorID,
 	})
+}
+
+func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*SchemaChangeRequest, error) {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "standard_erp"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "erp_standard"
+	}
+	if input.Name == "" {
+		input.Name = "ERP Standard"
+	}
+	if len(input.EnabledModules) == 0 {
+		input.EnabledModules = []string{"project", "procurement", "inventory", "sales", "finance"}
+	}
+	pkg := BuildERPSolutionSchemaPackage(input)
+	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
+		OrganizationID:       input.OrganizationID,
+		RequestType:          "erp_solution_flow",
+		Reason:               "Create ERP standard industry solution flow",
+		SchemaPackage:        pkg,
+		CurrentSchemaPackage: input.CurrentTemplate,
+	})
+}
+
+func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
+	catalog := erp.DefaultCatalog()
+	actions := erp.DefaultActionRegistry().List()
+	databaseAssets := make([]map[string]any, 0, len(catalog.Tables))
+	for _, table := range catalog.Tables {
+		childTables := make([]string, 0, len(table.Children))
+		for _, child := range table.Children {
+			childTables = append(childTables, child.Code)
+		}
+		databaseAssets = append(databaseAssets, map[string]any{
+			"table_code":   table.Code,
+			"name":         table.Name,
+			"module":       table.Module,
+			"primary_key":  table.PrimaryKey,
+			"child_tables": childTables,
+		})
+	}
+	businessFunctions := make([]map[string]any, 0, len(actions))
+	apiOperations := make([]string, 0, len(actions)+3)
+	apiOperations = append(apiOperations, "/erp/catalog", "/erp/actions", "/erp/{tableCode}")
+	for _, action := range actions {
+		businessFunctions = append(businessFunctions, map[string]any{
+			"table_code":  action.TableCode,
+			"action":      action.Action,
+			"label":       action.Label,
+			"next_tables": action.NextTables,
+		})
+		apiOperations = append(apiOperations, fmt.Sprintf("/erp/%s/{key}/actions/%s", action.TableCode, action.Action))
+	}
+	enabled := make([]string, 0, len(input.EnabledModules))
+	for _, module := range input.EnabledModules {
+		trimmed := strings.TrimSpace(module)
+		if trimmed != "" {
+			enabled = append(enabled, trimmed)
+		}
+	}
+	return SchemaPackage{
+		FormatVersion: SchemaPackageFormatVersion,
+		ModuleKey:     "erp_standard",
+		Tables: []SchemaTableDefinition{
+			erpSolutionAssetTable("erp_solution_database_assets"),
+			erpSolutionAssetTable("erp_solution_business_functions"),
+			erpSolutionAssetTable("erp_solution_process_loops"),
+			erpSolutionAssetTable("erp_solution_ui_metadata"),
+			erpSolutionAssetTable("erp_solution_assistant_targets"),
+		},
+		Metadata: map[string]any{
+			"industry_key":       input.IndustryKey,
+			"package_key":        input.PackageKey,
+			"name":               input.Name,
+			"enabled_modules":    enabled,
+			"database_assets":    databaseAssets,
+			"business_functions": businessFunctions,
+			"process_loops": []map[string]any{
+				{"key": "requirement_to_project", "steps": []string{"MREQ.analyze", "MREQ.approve", "MREQ.convert-to-project", "MPRJ.refresh-cost", "MPRJ.close-feedback"}},
+				{"key": "procure_to_pay", "steps": []string{"MPOR.submit", "MPOR.approve", "MPDN.post", "MPCH"}},
+				{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
+				{"key": "inventory_to_finance", "steps": []string{"MIGN.post", "MIGE.post", "MJDT.post"}},
+			},
+			"permissions":       []string{"erp:read", "erp:write", "erp:action", "erp:admin", "assistant:erp"},
+			"api_operations":    apiOperations,
+			"ui_workspaces":     []string{"project", "procurement", "sales", "inventory", "finance", "developer_erp_code"},
+			"assistant_targets": []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "journal_entry"},
+		},
+	}
+}
+
+func erpSolutionAssetTable(name string) SchemaTableDefinition {
+	return SchemaTableDefinition{
+		Name: name,
+		Fields: []SchemaFieldDefinition{
+			{Name: "id", DataType: "uuid", PrimaryKey: true, Default: "gen_random_uuid()"},
+			{Name: "asset_key", DataType: "varchar(120)", Nullable: false},
+			{Name: "payload", DataType: "jsonb", Nullable: false, Default: "'{}'::jsonb"},
+			{Name: "created_at", DataType: "timestamptz", Nullable: false, Default: "now()"},
+		},
+		Indexes: []SchemaIndexDefinition{{Name: name + "_asset_key_idx", Fields: []string{"asset_key"}, Unique: true}},
+	}
 }
 
 func (s *Service) ApproveSchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID, reason string) (*SchemaChangeRequest, error) {

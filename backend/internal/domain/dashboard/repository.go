@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Repository struct {
@@ -396,7 +396,28 @@ func (r *Repository) RecentEvents(ctx context.Context, limit int) ([]RecentEvent
 	}
 
 	orgID := nullableUUID(currentTenantOrganizationID(ctx))
-	rows, err := r.db.Query(ctx, `
+	rows, err := r.db.Query(ctx, recentEventsQuery(), limit, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("query recent events: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]RecentEvent, 0, limit)
+	for rows.Next() {
+		var event RecentEvent
+		if err := rows.Scan(&event.ID, &event.Type, &event.Title, &event.Status, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan recent event: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent events: %w", err)
+	}
+	return events, nil
+}
+
+func recentEventsQuery() string {
+	return `
 		SELECT id, type, title, status, created_at
 		FROM (
 			SELECT id::text, 'workflow' AS type, 'Workflow instance' AS title, status::text, created_at
@@ -432,9 +453,10 @@ func (r *Repository) RecentEvents(ctx context.Context, limit int) ([]RecentEvent
 			FROM tool_executions
 			WHERE $2::uuid IS NULL OR organization_id = $2
 			UNION ALL
-			SELECT id::text, 'finance_export' AS type, 'Finance export batch' AS title, status, updated_at AS created_at
-			FROM finance_export_batches
-			WHERE $2::uuid IS NULL OR organization_id = $2
+			SELECT b.id::text, 'finance_export' AS type, 'Finance export batch' AS title, b.status, b.updated_at AS created_at
+			FROM finance_export_batches b
+			WHERE $2::uuid IS NULL
+			   OR EXISTS (SELECT 1 FROM finance_export_lines l WHERE l.batch_id = b.id AND l.organization_id = $2)
 			UNION ALL
 			SELECT id::text, 'finance_webhook' AS type, event_type AS title, CASE WHEN processed THEN 'processed' ELSE 'failed' END AS status, created_at
 			FROM finance_webhook_events
@@ -442,24 +464,7 @@ func (r *Repository) RecentEvents(ctx context.Context, limit int) ([]RecentEvent
 		) events
 		ORDER BY created_at DESC
 		LIMIT $1
-	`, limit, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("query recent events: %w", err)
-	}
-	defer rows.Close()
-
-	events := make([]RecentEvent, 0, limit)
-	for rows.Next() {
-		var event RecentEvent
-		if err := rows.Scan(&event.ID, &event.Type, &event.Title, &event.Status, &event.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan recent event: %w", err)
-		}
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate recent events: %w", err)
-	}
-	return events, nil
+	`
 }
 
 func (r *Repository) countBy(ctx context.Context, query string, args ...any) (map[string]int64, error) {

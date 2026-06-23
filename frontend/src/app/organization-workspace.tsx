@@ -21,6 +21,7 @@ import { useI18n } from '@/lib/i18n'
 interface OrganizationWorkspaceProps {
   token: string
   currentUserId?: string | null
+  currentOrganizationID?: string | null
   externalSelection?: {
     targetType: string
     targetID?: string
@@ -173,7 +174,6 @@ interface AgentPlan {
   }>
 }
 
-const emptyOrgForm = { name: '', description: '' }
 const emptyDepartmentForm = { name: '', code: '', description: '', status: 'active', sort_order: '10' }
 const emptyPositionForm = {
   name: '',
@@ -207,10 +207,10 @@ function deferStateUpdate(callback: () => void): () => void {
   return () => window.clearTimeout(timeout)
 }
 
-export function OrganizationWorkspace({ token, currentUserId, externalSelection }: OrganizationWorkspaceProps) {
+export function OrganizationWorkspace({ token, currentUserId, currentOrganizationID, externalSelection }: OrganizationWorkspaceProps) {
   const { t } = useI18n()
-  const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [selectedOrgId, setSelectedOrgId] = useState<string>('')
+  const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null)
+  const [selectedOrgId, setSelectedOrgId] = useState<string>(currentOrganizationID ?? '')
   const [departmentTree, setDepartmentTree] = useState<Department[]>([])
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>('')
   const [selectedPositionId, setSelectedPositionId] = useState<string>('')
@@ -220,7 +220,6 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
   const [externalMembers, setExternalMembers] = useState<ExternalMember[]>([])
   const [agents, setAgents] = useState<AIAgent[]>([])
   const [metaResources, setMetaResources] = useState<MetaResource[]>([])
-  const [orgForm, setOrgForm] = useState(emptyOrgForm)
   const [departmentForm, setDepartmentForm] = useState(emptyDepartmentForm)
   const [positionForm, setPositionForm] = useState(emptyPositionForm)
   const [positionAssignments, setPositionAssignments] = useState<PositionAssignment[]>([])
@@ -285,7 +284,7 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const selectedOrganization = asArray<Organization>(organizations).find((org) => org.id === selectedOrgId)
+  const selectedOrganization = currentOrganization
   const selectedDepartment = useMemo(
     () => findDepartment(asArray<Department>(departmentTree), selectedDepartmentId),
     [departmentTree, selectedDepartmentId],
@@ -334,21 +333,24 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
   useEffect(() => {
     let cancelled = false
 
-    apiRequest<Organization[]>('/organizations?limit=100', { token })
+    apiRequest<{ organization: Organization; departments: Department[] }>('/organization/current', {
+      token,
+      organizationId: currentOrganizationID ?? undefined,
+    })
       .then((data) => {
         if (cancelled) return
-        const organizations = asArray<Organization>(data)
-        setOrganizations(organizations)
-        if (organizations.length > 0) {
-          setSelectedOrgId(organizations[0].id)
-          setOrgForm({
-            name: organizations[0].name,
-            description: organizations[0].description ?? '',
-          })
+        if (data.organization) {
+          setCurrentOrganization(data.organization)
+          setSelectedOrgId(data.organization.id)
+        }
+        const tree = asArray<Department>(data.departments)
+        setDepartmentTree(tree)
+        if (tree.length > 0) {
+          setDepartmentSelection(tree[0])
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('加载组织失败'))
+        if (!cancelled) setError(err instanceof Error ? err.message : t('加载当前组织失败'))
       })
 
     apiRequest<ExternalMember[]>('/external-members?limit=100', { token })
@@ -383,7 +385,7 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     return () => {
       cancelled = true
     }
-  }, [t, token])
+  }, [currentOrganizationID, t, token])
 
   useEffect(() => {
     if (!selectedOrgId) return
@@ -467,25 +469,6 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     const targetType = externalSelection.targetType
     const record = externalSelection.record
     return deferStateUpdate(() => {
-      if (targetType === 'organization') {
-        const org = asArray<Organization>(organizations).find((item) => item.id === targetID)
-        if (org) {
-          setSelectedOrgId(org.id)
-          setSelectedDepartmentId('')
-          setSelectedPositionId('')
-          setPositionAssignments([])
-          setOrgForm({
-            name: org.name,
-            description: org.description ?? '',
-          })
-          setDepartmentForm(emptyDepartmentForm)
-          setPositionForm(emptyPositionForm)
-        } else {
-          setSelectedOrgId(targetID)
-        }
-        return
-      }
-
       if (targetType === 'department') {
         const organizationID = typeof record?.organization_id === 'string' ? record.organization_id : ''
         if (organizationID && organizationID !== selectedOrgId) setSelectedOrgId(organizationID)
@@ -516,7 +499,7 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
         setSelectedPositionId(targetID)
       }
     })
-  }, [departmentTree, externalSelection?.record, externalSelection?.targetID, externalSelection?.targetType, organizations, selectedOrgId])
+  }, [departmentTree, externalSelection?.record, externalSelection?.targetID, externalSelection?.targetType, selectedOrgId])
 
   async function runAction(action: () => Promise<void>, success: string) {
     setLoading(true)
@@ -530,19 +513,6 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     } finally {
       setLoading(false)
     }
-  }
-
-  function selectOrganization(org: Organization) {
-    setSelectedOrgId(org.id)
-    setSelectedDepartmentId('')
-    setSelectedPositionId('')
-    setPositionAssignments([])
-    setOrgForm({
-      name: org.name,
-      description: org.description ?? '',
-    })
-    setDepartmentForm(emptyDepartmentForm)
-    setPositionForm(emptyPositionForm)
   }
 
   function setDepartmentSelection(department: Department) {
@@ -588,13 +558,19 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     setPositionAssignmentForm((current) => ({ ...current, actor_type: actorType, actor_id: nextActorId, meta_resource_id: '' }))
   }
 
-  async function loadOrganizations() {
-    const data = await apiRequest<Organization[]>('/organizations?limit=100', { token })
-    const organizations = asArray<Organization>(data)
-    setOrganizations(organizations)
-    if (!selectedOrgId && organizations.length > 0) {
-      selectOrganization(organizations[0])
+  async function loadCurrentOrganization(): Promise<Organization> {
+    const data = await apiRequest<{ organization: Organization; departments: Department[] }>('/organization/current', {
+      token,
+      organizationId: currentOrganizationID ?? undefined,
+    })
+    setCurrentOrganization(data.organization)
+    setSelectedOrgId(data.organization.id)
+    const tree = asArray<Department>(data.departments)
+    setDepartmentTree(tree)
+    if (!selectedDepartmentId && tree.length > 0) {
+      setDepartmentSelection(tree[0])
     }
+    return data.organization
   }
 
   async function loadDepartmentTree(orgId = selectedOrgId) {
@@ -647,33 +623,6 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     setPositionAssignments(assignments)
     const first = assignments.find((assignment) => assignment.meta_resource_id && assignment.status !== 'archived')
     if (first) setTaskMatrixForm((current) => ({ ...current, position_assignment_id: current.position_assignment_id || first.id }))
-  }
-
-  async function createOrganization(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    await runAction(async () => {
-      const org = await apiRequest<Organization>('/organizations', {
-        method: 'POST',
-        token,
-        body: orgForm,
-      })
-      await loadOrganizations()
-      setSelectedOrgId(org.id)
-      setOrgForm(emptyOrgForm)
-    }, '组织已创建')
-  }
-
-  async function updateOrganization(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!selectedOrgId) return
-    await runAction(async () => {
-      const org = await apiRequest<Organization>(`/organizations/${selectedOrgId}`, {
-        method: 'PATCH',
-        token,
-        body: orgForm,
-      })
-      setOrganizations((current) => current.map((item) => (item.id === org.id ? org : item)))
-    }, '组织已更新')
   }
 
   async function createDepartment(event: FormEvent<HTMLFormElement>) {
@@ -965,16 +914,11 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
     await runAction(async () => {
       let orgId = selectedOrgId
       if (!orgId) {
-        const org = await apiRequest<Organization>('/organizations', {
-          method: 'POST',
-          token,
-          body: {
-            name: agentPlan.organizationName,
-            description: agentPlan.description,
-          },
-        })
-        orgId = org.id
-        setSelectedOrgId(org.id)
+        const organization = await loadCurrentOrganization()
+        orgId = organization.id
+      }
+      if (!orgId) {
+        throw new Error(t('加载当前组织失败'))
       }
       for (const department of agentPlan.departments) {
         await apiRequest<Department>(`/organizations/${orgId}/departments`, {
@@ -988,7 +932,6 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
           },
         })
       }
-      await loadOrganizations()
       await loadDepartmentTree(orgId)
     }, 'Agent 方案已创建')
   }
@@ -1021,33 +964,27 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-slate-500" />
-              <h2 className="text-base font-semibold text-slate-950">{t('组织')}</h2>
+              <h2 className="text-base font-semibold text-slate-950">{t('tenant.currentOrganization')}</h2>
             </div>
             <button
               type="button"
-              onClick={() => runAction(loadOrganizations, '组织已刷新')}
+              onClick={() => runAction(async () => {
+                await loadCurrentOrganization()
+              }, 'tenant.departmentWorkspaceRefreshed')}
               className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-100"
             >
               <RefreshCw className="h-4 w-4" />
             </button>
           </div>
           <div className="mt-4 space-y-2">
-            {asArray<Organization>(organizations).map((org) => (
-              <button
-                key={org.id}
-                type="button"
-                onClick={() => selectOrganization(org)}
-                className={`w-full rounded-lg border px-3 py-2 text-left transition ${
-                  selectedOrgId === org.id
-                    ? 'border-slate-950 bg-slate-50'
-                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                }`}
-              >
-                <p className="truncate text-sm font-semibold text-slate-950">{org.name}</p>
-                <p className="mt-1 truncate text-xs text-slate-500">{org.description || org.id}</p>
-              </button>
-            ))}
-            {asArray<Organization>(organizations).length === 0 && <p className="text-sm text-slate-500">{t('暂无组织')}</p>}
+            {currentOrganization ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                <p className="truncate text-sm font-semibold text-slate-950">{currentOrganization.name}</p>
+                <p className="mt-1 truncate text-xs text-slate-500">{currentOrganization.description || currentOrganization.id}</p>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-500">{t('tenant.currentOrganizationMissing')}</p>
+            )}
           </div>
         </section>
 
@@ -1087,32 +1024,6 @@ export function OrganizationWorkspace({ token, currentUserId, externalSelection 
             {error || message}
           </div>
         )}
-
-        <div className="space-y-5">
-          <Panel icon={Plus} title="创建组织">
-            <form className="space-y-3" onSubmit={createOrganization}>
-              <TextInput label="组织名称" value={orgForm.name} onChange={(value) => setOrgForm({ ...orgForm, name: value })} />
-              <TextArea
-                label="组织描述"
-                value={orgForm.description}
-                onChange={(value) => setOrgForm({ ...orgForm, description: value })}
-              />
-              <SubmitButton loading={loading} label="创建组织" />
-            </form>
-          </Panel>
-
-          <Panel icon={Save} title="修改当前组织">
-            <form className="space-y-3" onSubmit={updateOrganization}>
-              <TextInput label="组织名称" value={orgForm.name} onChange={(value) => setOrgForm({ ...orgForm, name: value })} />
-              <TextArea
-                label="组织描述"
-                value={orgForm.description}
-                onChange={(value) => setOrgForm({ ...orgForm, description: value })}
-              />
-              <SubmitButton loading={loading || !selectedOrgId} label="保存组织" />
-            </form>
-          </Panel>
-        </div>
 
         <div className="space-y-5">
           <Panel icon={GitBranch} title={selectedDepartment ? '修改部门' : '创建部门'}>

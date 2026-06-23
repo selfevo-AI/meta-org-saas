@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 )
 
 func TestToolRunnerBlocksToolOutsideAllowlist(t *testing.T) {
