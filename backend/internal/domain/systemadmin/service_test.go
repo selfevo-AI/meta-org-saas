@@ -63,9 +63,10 @@ func TestApplySchemaChangeRejectsAuditorRole(t *testing.T) {
 }
 
 type fakeRepository struct {
-	role    string
-	request *SchemaChangeRequest
-	applied bool
+	role          string
+	request       *SchemaChangeRequest
+	createdRecord *CreateSchemaChangeRequestRecord
+	applied       bool
 }
 
 func (f *fakeRepository) GetPlatformRole(context.Context, uuid.UUID) (string, error) {
@@ -88,8 +89,21 @@ func (f *fakeRepository) GetSchemaTarget(context.Context, uuid.UUID) (*Organizat
 	return nil, nil
 }
 
-func (f *fakeRepository) CreateSchemaChangeRequest(context.Context, CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error) {
-	return nil, nil
+func (f *fakeRepository) CreateSchemaChangeRequest(_ context.Context, record CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error) {
+	f.createdRecord = &record
+	return &SchemaChangeRequest{
+		ID:             uuid.New(),
+		OrganizationID: record.OrganizationID,
+		SchemaName:     record.SchemaName,
+		RequestType:    record.RequestType,
+		Status:         SchemaChangePending,
+		Reason:         record.Reason,
+		SchemaPackage:  record.SchemaPackage,
+		Statements:     record.Statements,
+		RiskLevel:      record.RiskLevel,
+		Diff:           record.Diff,
+		RequestedBy:    &record.RequestedBy,
+	}, nil
 }
 
 func (f *fakeRepository) GetSchemaChangeRequest(context.Context, uuid.UUID) (*SchemaChangeRequest, error) {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
 )
 
 func TestNewAssistantHarnessFreezesRunScope(t *testing.T) {

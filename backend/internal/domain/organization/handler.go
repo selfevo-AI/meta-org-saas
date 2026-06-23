@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/dberrors"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -66,6 +66,48 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/muvrs/{id}/members", h.addMember)
 	r.Delete("/muvrs/{id}/members", h.removeMember)
 	r.Post("/relationships", h.createRelationship)
+}
+
+func (h *Handler) RegisterPlatformManagementRoutes(r chi.Router) {
+	r.Post("/organizations", h.createOrganization)
+	r.Get("/organizations/{id}", h.getOrganization)
+	r.Patch("/organizations/{id}", h.updateOrganization)
+}
+
+func (h *Handler) RegisterTenantDepartmentRoutes(r chi.Router) {
+	r.Get("/organization/current", h.getCurrentOrganization)
+	r.Post("/organizations/{id}/departments", h.createDepartment)
+	r.Get("/organizations/{id}/departments", h.listDepartments)
+	r.Get("/organizations/{id}/departments/tree", h.getDepartmentTree)
+	r.Get("/organizations/{id}/members", h.listOrganizationMembers)
+	r.Get("/organizations/{id}/permission-change-requests", h.listPermissionChangeRequests)
+	r.Post("/organizations/{id}/permission-change-requests", h.createPermissionChangeRequest)
+	r.Get("/organizations/{id}/permission-rules", h.listAccessRules)
+	r.Post("/organizations/{id}/permission-rules", h.createAccessRule)
+	r.Get("/departments/{id}", h.getDepartment)
+	r.Patch("/departments/{id}", h.updateDepartment)
+	r.Post("/departments/{id}/positions", h.createPosition)
+	r.Get("/departments/{id}/positions", h.listDepartmentPositions)
+	r.Get("/positions/{id}", h.getPosition)
+	r.Patch("/positions/{id}", h.updatePosition)
+	r.Post("/positions/{id}/assignments", h.createPositionAssignment)
+	r.Get("/positions/{id}/assignments", h.listPositionAssignments)
+	r.Patch("/position-assignments/{id}", h.updatePositionAssignment)
+	r.Delete("/position-assignments/{id}", h.removePositionAssignment)
+	r.Post("/departments/{id}/members", h.addOrganizationMember)
+	r.Get("/departments/{id}/members", h.listDepartmentMembers)
+	r.Post("/departments/{id}/mvru-links", h.linkDepartmentMVRU)
+	r.Get("/departments/{id}/mvru-links", h.listDepartmentMVRULinks)
+	r.Post("/external-members", h.createExternalMember)
+	r.Get("/external-members", h.listExternalMembers)
+	r.Get("/external-members/{id}", h.getExternalMember)
+	r.Patch("/external-members/{id}", h.updateExternalMember)
+	r.Patch("/memberships/{id}", h.updateOrganizationMembership)
+	r.Delete("/memberships/{id}", h.removeOrganizationMembership)
+	r.Post("/permission-change-requests/{id}/approve", h.approvePermissionChangeRequest)
+	r.Post("/permission-change-requests/{id}/reject", h.rejectPermissionChangeRequest)
+	r.Post("/organization/match-members", h.matchMembers)
+	r.Post("/organization/match-capabilities", h.matchCapabilities)
 }
 
 func (h *Handler) createOrganization(w http.ResponseWriter, r *http.Request) {

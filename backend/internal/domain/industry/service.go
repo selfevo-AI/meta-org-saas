@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 )
 
 var (

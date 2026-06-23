@@ -1810,7 +1810,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 )
 
 func TestToolRunnerBlocksToolOutsideAllowlist(t *testing.T) {
@@ -1872,7 +1872,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 )
 
 type ToolCallRequest struct {
@@ -2510,7 +2510,7 @@ func (f *fakeAIInvoker) Invoke(context.Context, aigateway.InvokeInput) (*aigatew
 }
 ```
 
-Add imports for `time` and `github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway` when needed.
+Add imports for `time` and `github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway` when needed.
 
 - [ ] **Step 5: Run runtime context test**
 

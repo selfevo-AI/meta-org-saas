@@ -9,10 +9,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 )
 
 var (

@@ -24,6 +24,7 @@ import {
   applyIndustryPackageToOrganization,
   approveSchemaChange,
   closePlatformOrganization,
+  createERPStandardSolutionFlow,
   createIndustryExtension,
   createOrganizationSchemaChange,
   createOrganizationInvitation,
@@ -61,6 +62,7 @@ import {
   type SchemaChangeRequest,
   type SchemaPackage,
   type SessionOrganization,
+  updatePlatformOrganizationProfile,
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 
@@ -96,6 +98,8 @@ const platformPermissionCatalog = [
   'runtime.manage',
   'assistant.platform.run',
 ]
+const erpSolutionModules = ['project', 'procurement', 'inventory', 'sales', 'finance']
+const erpSolutionAssets = ['database_assets', 'business_functions', 'process_loops', 'permissions', 'api_operations', 'ui_workspaces', 'assistant_targets']
 const platformFeatureTabs = [
   { id: 'capability', label: 'systemAdmin.feature.capability', permission: 'platform.read', moduleKey: 'capability' },
   { id: 'governance', label: 'systemAdmin.feature.governance', permission: 'platform.read', moduleKey: 'governance' },
@@ -150,6 +154,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [selectedIndustryKey, setSelectedIndustryKey] = useState('general')
   const [selectedPackageID, setSelectedPackageID] = useState('')
   const [industryModuleDraft, setIndustryModuleDraft] = useState<string[]>([])
+  const [erpSolutionModuleDraft, setERPSolutionModuleDraft] = useState<string[]>(erpSolutionModules)
   const [extensionKey, setExtensionKey] = useState('')
   const [extensionName, setExtensionName] = useState('')
   const [extensionModuleKey, setExtensionModuleKey] = useState('')
@@ -161,6 +166,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
   const [inviteAuthority, setInviteAuthority] = useState('organization_admin')
+  const [organizationProfileForm, setOrganizationProfileForm] = useState({ name: '', description: '' })
   const [showClosedOrganizations, setShowClosedOrganizations] = useState(false)
   const [closeReason, setCloseReason] = useState('')
   const [masters, setMasters] = useState<PlatformMaster[]>([])
@@ -402,6 +408,16 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      setOrganizationProfileForm({
+        name: selectedOrganization?.name ?? '',
+        description: selectedOrganization?.description ?? '',
+      })
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [selectedOrganization?.description, selectedOrganization?.name])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
       void loadCatalog()
     }, 0)
     return () => window.clearTimeout(timer)
@@ -470,6 +486,17 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }, 'systemAdmin.modulesUpdated')
   }
 
+  async function saveOrganizationProfile() {
+    if (!activeOrganizationID || !organizationProfileForm.name.trim() || !canPlatform('organization.manage')) return
+    await runSaaS(async () => {
+      await updatePlatformOrganizationProfile(token, activeOrganizationID, {
+        name: organizationProfileForm.name.trim(),
+        description: organizationProfileForm.description.trim(),
+      })
+      await loadSaaSManagement()
+    }, 'systemAdmin.organizationProfileUpdated')
+  }
+
   async function applySelectedIndustryPackage() {
     if (!activeOrganizationID || !selectedIndustryPackage) return
     await run(async () => {
@@ -477,6 +504,22 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setIndustryAdoption(adoption)
       await loadIndustryManagement()
     }, 'systemAdmin.industryApplied')
+  }
+
+  async function createERPSolutionFlow() {
+    if (!activeOrganizationID || !canPlatform('schema.manage')) return
+    await run(async () => {
+      const request = await createERPStandardSolutionFlow(token, activeOrganizationID, {
+        industry_key: selectedIndustryKey || 'standard_erp',
+        package_key: 'erp_standard',
+        name: 'ERP Standard',
+        enabled_modules: erpSolutionModuleDraft,
+      })
+      setChangeRequest(request)
+      setSchemaPackage(request.schema_package)
+      setSchemaJson(jsonText(request.schema_package))
+      setActiveTab('schema')
+    }, 'systemAdmin.erpSolutionCreated')
   }
 
   async function createPrivateIndustryExtension() {
@@ -756,6 +799,31 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <Metric label={t('systemAdmin.status')} value={selectedOrganization?.status ? t(selectedOrganization.status) : subscription?.status ? t(subscription.status) : t('common.notSelected')} />
                 <Metric label={t('systemAdmin.enabledModules')} value={String(Object.values(entitlements).filter(Boolean).length)} />
               </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                <input
+                  value={organizationProfileForm.name}
+                  onChange={(event) => setOrganizationProfileForm((current) => ({ ...current, name: event.target.value }))}
+                  placeholder={t('systemAdmin.organizationName')}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                />
+                <input
+                  value={organizationProfileForm.description}
+                  onChange={(event) => setOrganizationProfileForm((current) => ({ ...current, description: event.target.value }))}
+                  placeholder={t('systemAdmin.organizationDescription')}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => void saveOrganizationProfile()}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || !organizationProfileForm.name.trim() || loading || !canPlatform('organization.manage')}
+                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Check className="h-4 w-4" />
+                  {t('systemAdmin.saveOrganizationProfile')}
+                </button>
+              </div>
               <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
                 <input
                   value={closeReason}
@@ -982,6 +1050,50 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <Check className="h-4 w-4" />
                 {t('systemAdmin.applyIndustry')}
               </button>
+              <div className="rounded-lg border border-[#F1D7C7] bg-[#fff8f3] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.erpSolutionFlow')}</h3>
+                    <p className="mt-1 text-xs text-slate-600">{t('systemAdmin.erpSolutionSummary')}</p>
+                  </div>
+                  <Database className="h-5 w-5 text-[#AD4714]" />
+                </div>
+                <div className="mt-3 space-y-2">
+                  <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.enabledModules')}</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {erpSolutionModules.map((moduleKeyValue) => (
+                      <label key={moduleKeyValue} className="flex items-center gap-2 rounded-md border border-[#F1D7C7] bg-white px-3 py-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={erpSolutionModuleDraft.includes(moduleKeyValue)}
+                          onChange={(event) => {
+                            setERPSolutionModuleDraft((current) =>
+                              event.target.checked ? [...new Set([...current, moduleKeyValue])] : current.filter((item) => item !== moduleKeyValue),
+                            )
+                          }}
+                        />
+                        {t(`erp.module.${moduleKeyValue}`)}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {erpSolutionAssets.map((asset) => (
+                    <span key={asset} className="rounded-md bg-white px-2 py-1 text-xs font-semibold text-slate-600">
+                      {t(`systemAdmin.erpAsset.${asset}`)}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void createERPSolutionFlow()}
+                  disabled={!activeOrganizationID || loading || !canPlatform('schema.manage') || erpSolutionModuleDraft.length === 0}
+                  className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-4 text-sm font-semibold text-white transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Braces className="h-4 w-4" />
+                  {t('systemAdmin.createERPSolution')}
+                </button>
+              </div>
             </div>
           </section>
 

@@ -79,6 +79,26 @@ type SchemaChangeRequest struct {
 	UpdatedAt      time.Time     `json:"updated_at"`
 }
 
+func (r *SchemaChangeRequest) SchemaPackageHas(key string) bool {
+	if r == nil || r.SchemaPackage.Metadata == nil {
+		return false
+	}
+	value, ok := r.SchemaPackage.Metadata[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case []map[string]any:
+		return len(typed) > 0
+	case []string:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
 type SchemaApplyJob struct {
 	ID              uuid.UUID      `json:"id"`
 	ChangeRequestID uuid.UUID      `json:"change_request_id"`
@@ -98,6 +118,15 @@ type CreateSchemaChangeRequestInput struct {
 	Reason               string         `json:"reason,omitempty"`
 	SchemaPackage        SchemaPackage  `json:"schema_package"`
 	CurrentSchemaPackage *SchemaPackage `json:"current_schema_package,omitempty"`
+}
+
+type ERPSolutionFlowRequest struct {
+	OrganizationID  uuid.UUID      `json:"organization_id"`
+	IndustryKey     string         `json:"industry_key"`
+	PackageKey      string         `json:"package_key"`
+	Name            string         `json:"name"`
+	EnabledModules  []string       `json:"enabled_modules"`
+	CurrentTemplate *SchemaPackage `json:"current_template,omitempty"`
 }
 
 type CreateSchemaChangeRequestRecord struct {

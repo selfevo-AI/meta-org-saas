@@ -164,49 +164,16 @@ Shared packages live under `backend/internal/pkg/` and cover configuration, data
 
 ## Database Migrations
 
-The backend applies SQL files from the root `migrations/` directory at startup. The current migration set goes through `039`:
+The backend applies SQL files from the root `migrations/` directory at startup in filename order. The current release keeps only the restructured staged baselines:
 
 | Migration | Topic |
 |---|---|
-| `001_identity.sql` | schema migrations, users, ai_agents, roles, user_roles, agent_roles. |
-| `002_seed_roles.sql` | Seed planner, executor, and reviewer roles. |
-| `003_organization.sql` | organizations, muvrs, teams, mvru_members, mvru_relationships. |
-| `004_layer.sql` | layer_configs, layer_routing_rules. |
-| `005_capability.sql` | capabilities, capability_bindings, capability_invocations. |
-| `006_workflow.sql` | workflow_templates, workflow_instances, tasks, decisions, workflow_contexts. |
-| `007_observability.sql` | traces, spans, metrics. |
-| `008_verification.sql` | verification_reports, review_assignments. |
-| `009_governance.sql` | permissions, principles, control_rules. |
-| `010_evolution.sql` | weight_scores, weight_alphas, experiments, knowledge_entries, signals. |
-| `011_organization_tree.sql` | departments, external_members, organization_memberships, department_mvru_links. |
-| `012_policy_weight_evaluation.sql` | Agent governance fields, employee_profiles, access_decisions, context_weight_scores, capability_evaluations. |
-| `013_project_lifecycle.sql` | requirements, projects, project_members, project_workflows, deliverables, project_cost_entries, project_evaluations. |
-| `014_requirement_documents_workflow_analysis.sql` | requirement_documents, requirement_analysis_workflows. |
-| `015_single_org_positions_workflow_graph.sql` | positions, position_assignments, plus organization, department, and position links for workflows and project members. |
-| `016_ai_gateway.sql` | Model providers, model catalog, price versions, AI invocations, and AI usage ledger. |
-| `017_tool_runtime.sql` | Tool definitions, interface files, tool executions, approvals, and initial internal tools. |
-| `018_finance_exports.sql` | Finance adapters, export batches, export lines, webhook events, and AI cost posting constraints. |
-| `019_costing_framework.sql` | Shared currencies, exchange rates, rate cards, budgets, and cost ledger. |
-| `020_ai_gateway_internal_ops.sql` | AI Gateway channel/key pool, multidimensional pricing, model routing, invocation attribution, and usage analysis fields. |
-| `021_meta_resource_pdca.sql` | Meta Resource, Demand Profile, PDCA Cycle, and PDCA Event tables for demand-driven resource profiling and continuous evolution records. |
-| `022_assistant_runtime.sql` | AI Assistant sessions, messages, runs, and tool-call context. |
-| `023_org_meta_task_matrix.sql` | Organization meta-task matrix and business-context mappings. |
-| `024_strong_base_data_uniqueness.sql` | Strong uniqueness constraints for base data. |
-| `025_authority_tiers_agent_governance.sql` | Authority tiers, agent governance, and approval guardrails. |
-| `026_master_detail_permissions.sql` | Master/detail data permissions and access control. |
-| `027_finance_expense_ingestion.sql` | Finance expense imports, pull batches, and failed records. |
-| `028_finance_receivables_accounting_crud.sql` | Receivables, payables, receipts, payments, and allocations CRUD. |
-| `029_assistant_business_interaction.sql` | Assistant and business-workspace interaction records. |
-| `030_assistant_business_interaction_patch.sql` | Assistant business-interaction field patch. |
-| `031_master_key_defaults.sql` | Master-data master key defaults. |
-| `032_module_master_detail_unification.sql` | Module master/detail model unification. |
-| `033_user_ui_preferences.sql` | User UI preferences. |
-| `034_saas_foundation.sql` | SaaS organizations, tenant modules, and subscription foundation. |
-| `035_assistant_context_engine.sql` | Assistant context engine, semantic context, and runtime memory. |
-| `036_unified_skill.sql` | Unified skill catalog and skill import structures. |
-| `037_security_kernel.sql` | Security-kernel policies, decision records, and external authorization integration. |
-| `038_supply_chain_core.sql` | Inventory, procurement, and sales supply-chain core tables. |
-| `039_supply_chain_posting_idempotency.sql` | Supply-chain posting idempotency indexes to prevent duplicate inventory movements, receivables, and payables on retry. |
+| `000_saas_platform_management_baseline.sql` | SaaS management platform, platform accounts, permission governance, subscriptions, modules, tenants, and platform master/detail foundation. |
+| `001_erp_code_baseline.sql` | ERP and industry business baseline, including organization, project, workflow, finance, costing, and supply-chain solution tables. |
+| `002_erp_platform_integration_baseline.sql` | Runtime projection, module integration, and platform master-data synchronization between ERP and platform management. |
+| `004_ai_capability_baseline.sql` | Models, providers/channels, agents, tool runtime, AI Assistant, context, skills, AI usage, and cross-stage foreign-key rebuilds. |
+
+The stage principle is SaaS management platform first, then platform-created or platform-adjusted industry solutions, then the ERP baseline and AI capability baseline. Future database structure, relationship, foreign-key, index, seed-data, or schema-generation changes must update the matching stage SQL and `migrations/BASELINE_RESTRUCTURE.md`.
 
 ## API Overview
 
@@ -345,7 +312,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health returning `{"status":"ok"}`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
 
-After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply migrations through `039_supply_chain_posting_idempotency.sql`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. Confirm `DATABASE_URL`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so migrations apply through `039`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
+After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply all four staged baselines: `000/001/002/004`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. Confirm `DATABASE_URL`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so the migration runner applies `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
 
 ## Configuration
 
@@ -393,7 +360,7 @@ frontend/
   src/app/                    Next.js App Router pages and workspaces
   src/lib/                    API, auth, i18n, API Workbench metadata
 docker-compose.yml            Full local environment orchestration
-migrations/                   PostgreSQL SQL migrations 001-039
+migrations/                   PostgreSQL staged SQL baselines 000, 001, 002, 004
 docs/operations/              Production operations and finance adapter protocol docs
 .github/workflows/            GitHub Actions CI
 ```

@@ -1093,9 +1093,9 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    apiRequest<Organization[]>('/organizations?limit=100', { token })
+    apiRequest<{ organization: Organization }>('/organization/current', { token })
       .then((data) => {
-        const nextOrganizations = asArray(data)
+        const nextOrganizations = data.organization ? [data.organization] : []
         setOrganizations(nextOrganizations)
         if (nextOrganizations.length > 0) {
           setForm((current) => (current.organization_id ? current : { ...current, organization_id: nextOrganizations[0].id }))

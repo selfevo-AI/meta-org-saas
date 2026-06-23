@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/evolution"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 )
 
 type ProjectService interface {

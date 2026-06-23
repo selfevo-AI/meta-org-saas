@@ -54,7 +54,7 @@ Keep both values in the deployment secret manager. Do not commit them.
 1. Create an empty PostgreSQL database named `meta_org`.
 2. Set backend environment variables, including `DATABASE_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, and `MIGRATIONS_PATH`.
 3. If using an external security kernel, set `SECURITY_KERNEL_URL`, `SECURITY_KERNEL_SHARED_SECRET`, and choose `SECURITY_KERNEL_ENFORCEMENT_MODE`.
-4. Start the backend. It applies SQL migrations automatically through `039_supply_chain_posting_idempotency.sql`.
+4. Start the backend. It applies the staged SQL baselines automatically in filename order: `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`.
 5. Start the frontend with `NEXT_PUBLIC_API_URL` pointing at `/api/v1`.
 6. Create the first human user through the frontend registration flow.
 7. Open Meta-Org Home and confirm overview and inbox data load.
@@ -118,13 +118,13 @@ Channel key rotation:
 
 ## Startup and Migration Troubleshooting
 
-The current production schema baseline depends on migrations through `039_supply_chain_posting_idempotency.sql`. The later migrations add AI Gateway internal ops, Meta Resource / PDCA, Assistant runtime context, SaaS module entitlements, security-kernel policies and decision records, inventory/procurement/sales supply-chain tables, and idempotency indexes for posting retries.
+The current production schema baseline is staged as SaaS platform management first, ERP/industry business baseline second, ERP-platform integration third, and AI capability baseline after both platform and ERP tables exist. The active migration files are `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`.
 
 If startup, Developer Tools, Meta Resource, SaaS module pages, supply-chain pages, or AI Assistant calls fail with errors such as `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `column cost_breakdown does not exist`, `relation meta_resources does not exist`, `relation demand_profiles does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`:
 
 1. Confirm `DATABASE_URL` points to the intended `meta_org` database.
 2. Confirm `MIGRATIONS_PATH` points to the root `migrations/` directory. When running from `backend/`, use `../migrations`.
-3. Restart the backend so the migration runner applies SQL through `039`.
+3. Restart the backend so the migration runner applies `000/001/002/004` in order.
 4. Re-run `cd backend && go test ./...` and `cd frontend && npm run build`.
 5. Open Developer Tools and verify Providers, Channels / Keys, Routing, Invocations, and Usage Analysis all load.
 6. Open Meta Resource, run Sync Existing Resources, and verify the summary includes at least the existing human, agent, tool, and capability counts.

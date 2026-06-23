@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -45,551 +46,252 @@ func main() {
 	must(userID != "", "missing user id")
 
 	orgID := c.ensureTenantOrganization(login, stamp)
-	dept := c.post("/organizations/"+orgID+"/departments", responseMap{
-		"name":        "Delivery",
-		"code":        "DEL",
-		"description": "Delivery department",
-	})
-	deptID := stringField(dept, "id")
-	template := c.post("/workflows/templates", responseMap{
-		"name":            "Smoke PDCA Workflow " + stamp,
-		"description":     "Plan, execute, review",
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"stages": []responseMap{
-			{"type": "plan", "name": "Plan", "assignee_type": "internal", "required_permission_level": "L1", "risk_level": "low"},
-			{"type": "execute", "name": "Do", "assignee_type": "either", "required_permission_level": "L2", "risk_level": "medium"},
-			{"type": "review", "name": "Accept", "assignee_type": "internal", "required_permission_level": "L2", "risk_level": "medium"},
-		},
-	})
-	templateID := stringField(template, "id")
-
-	requirement := c.post("/requirements", responseMap{
-		"title":           "Smoke PDCA Requirement " + stamp,
-		"description":     "Verify requirement, project, workflow, delivery, cost, feedback, and PDCA evidence.",
-		"priority":        "medium",
-		"risk_level":      "medium",
-		"required_level":  "L2",
-		"budget_amount":   5000,
-		"budget_currency": "CNY",
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"created_by_id":   userID,
-		"created_by_type": "internal_human",
-	})
-	requirementID := stringField(requirement, "id")
-	c.upload("/requirements/"+requirementID+"/documents", "smoke-requirement.txt", "text/plain", []byte("smoke requirement evidence"))
-	requirement = c.post("/requirements/"+requirementID+"/analyze", responseMap{"notes": "smoke analysis"})
-	must(stringField(requirement, "status") == "analyzed", "requirement was not analyzed")
-	requirement = c.post("/requirements/"+requirementID+"/approve", responseMap{})
-	must(stringField(requirement, "status") == "approved", "requirement was not approved")
-	project := c.post("/requirements/"+requirementID+"/convert-to-project", responseMap{})
-	projectID := stringField(project, "id")
-
-	c.post("/projects/"+projectID+"/members", responseMap{
-		"member_actor_id":    userID,
-		"member_actor_type":  "internal_human",
-		"role":               "owner",
-		"title":              "Smoke owner",
-		"allocation_percent": 100,
-		"cost_rate":          800,
-		"permission_level":   "L2",
-		"capabilities":       []string{"planning", "delivery", "review"},
-		"actor_id":           userID,
-		"actor_type":         "internal_human",
-	})
-	projectWorkflow := c.post("/projects/"+projectID+"/workflows", responseMap{
-		"workflow_template_id": templateID,
-		"purpose":              "delivery",
-		"actor_id":             userID,
-		"actor_type":           "internal_human",
-	})
-	workflowID := stringField(projectWorkflow, "workflow_id")
-	workflow := c.get("/workflows/instances/" + workflowID)
-	for _, rawTask := range listField(workflow, "tasks") {
-		task, ok := rawTask.(map[string]any)
-		must(ok, "invalid workflow task")
-		c.patch("/tasks/"+stringField(task, "id")+"/status", responseMap{
-			"output": responseMap{"smoke": true, "stage": numberField(task, "stage")},
-		})
-	}
-
-	project = c.post("/projects/"+projectID+"/status", responseMap{"status": "active", "actor_id": userID, "actor_type": "internal_human"})
-	must(stringField(project, "status") == "active", "project was not activated")
-	deliverable := c.post("/projects/"+projectID+"/deliverables", responseMap{
-		"name":             "Smoke Deliverable",
-		"deliverable_type": "document",
-		"version":          "1.0",
-		"status":           "draft",
-		"actor_id":         userID,
-		"actor_type":       "internal_human",
-	})
-	deliverableID := stringField(deliverable, "id")
-	c.post("/deliverables/"+deliverableID+"/submit", responseMap{"actor_id": userID, "actor_type": "internal_human"})
-	c.post("/deliverables/"+deliverableID+"/accept", responseMap{"actor_id": userID, "actor_type": "internal_human"})
-	c.post("/projects/"+projectID+"/cost-refresh", responseMap{"actor_id": userID, "actor_type": "internal_human"})
-	c.post("/projects/"+projectID+"/cost-entries", responseMap{
-		"source_type":      "manual",
-		"entry_actor_id":   userID,
-		"entry_actor_type": "internal_human",
-		"amount":           120,
-		"currency":         "CNY",
-		"description":      "smoke manual cost",
-		"actor_id":         userID,
-		"actor_type":       "internal_human",
-	})
-	project = c.post("/projects/"+projectID+"/status", responseMap{"status": "delivering", "actor_id": userID, "actor_type": "internal_human"})
-	must(stringField(project, "status") == "delivering", "project was not delivering")
-	project = c.post("/projects/"+projectID+"/status", responseMap{"status": "completed", "actor_id": userID, "actor_type": "internal_human"})
-	must(stringField(project, "status") == "completed", "project was not completed")
-	c.post("/projects/"+projectID+"/evaluations", responseMap{
-		"evaluated_actor_id":   userID,
-		"evaluated_actor_type": "internal_human",
-		"quality_score":        0.9,
-		"delivery_score":       0.85,
-		"cost_score":           0.8,
-		"collaboration_score":  0.9,
-		"conclusion":           "smoke evaluation passed",
-		"actor_id":             userID,
-		"actor_type":           "internal_human",
-	})
-	closeResult := c.post("/projects/"+projectID+"/close-feedback", responseMap{
-		"outcome_score": 0.88,
-		"conclusion":    "smoke feedback closed",
-		"actor_id":      userID,
-		"actor_type":    "internal_human",
-	})
-	closedProject, _ := closeResult["project"].(map[string]any)
-	must(stringField(closedProject, "status") == "closed", "project was not closed")
-
-	overview := c.get("/projects/" + projectID + "/overview")
-	lifecycle, _ := overview["lifecycle"].(map[string]any)
-	cycleID := stringField(lifecycle, "pdca_cycle_id")
-	must(cycleID != "", "missing pdca cycle id")
-	events := c.get("/pdca-events?cycle_id=" + cycleID)
-	must(len(asList(events["items"])) > 0, "missing pdca events")
-
-	supply := runSupplyChainSmoke(c, stamp, orgID, deptID)
-	runCostingSmoke(c, stamp, orgID, deptID, projectID, userID)
-	runFinanceSmoke(c, stamp, orgID, deptID, projectID, requirementID, deliverableID)
-	runSystemAdminSmoke(base, orgID, stamp)
+	erp := runERPSmoke(c, stamp, orgID, userID)
 
 	fmt.Printf(
-		"smoke ok: requirement=%s project=%s pdca_cycle=%s item=%s purchase_receipt=%s sales_shipment=%s\n",
-		requirementID,
-		projectID,
-		cycleID,
-		supply.ItemID,
-		supply.PurchaseReceiptID,
-		supply.SalesShipmentID,
+		"smoke ok: org=%s user=%s partner=%s item=%s order=%s invoice=%s\n",
+		orgID,
+		userID,
+		erp.PartnerKey,
+		erp.ItemKey,
+		erp.SalesOrderKey,
+		erp.InvoiceKey,
 	)
 }
 
-type supplyChainSmokeResult struct {
-	SupplierID        string
-	CustomerID        string
-	ItemID            string
-	WarehouseID       string
-	LocationID        string
-	PurchaseReceiptID string
-	PurchasePayableID string
-	SalesShipmentID   string
-	SalesReceivableID string
+type erpSmokeResult struct {
+	PartnerKey    string
+	ItemKey       string
+	WarehouseKey  string
+	ProjectKey    string
+	PurchaseKey   string
+	SalesOrderKey string
+	InvoiceKey    string
 }
 
-func runSupplyChainSmoke(c *client, stamp string, orgID string, deptID string) supplyChainSmokeResult {
-	supplierName := "Smoke Supplier " + stamp
-	customerName := "Smoke Customer " + stamp
-	supplier := c.post("/inventory/partners", responseMap{
-		"partner_type":    "supplier",
-		"name":            supplierName,
-		"email":           "supplier-" + stamp + "@meta-org.local",
-		"organization_id": orgID,
-	})
-	customer := c.post("/inventory/partners", responseMap{
-		"partner_type":    "customer",
-		"name":            customerName,
-		"email":           "customer-" + stamp + "@meta-org.local",
-		"organization_id": orgID,
-	})
-	item := c.post("/inventory/items", responseMap{
-		"name":            "Smoke Item " + stamp,
-		"item_type":       "material",
-		"base_uom":        "pcs",
-		"organization_id": orgID,
-	})
-	warehouse := c.post("/inventory/warehouses", responseMap{
-		"name":            "Smoke Main Warehouse " + stamp,
-		"organization_id": orgID,
-		"department_id":   deptID,
-	})
-	backupWarehouse := c.post("/inventory/warehouses", responseMap{
-		"name":            "Smoke Backup Warehouse " + stamp,
-		"organization_id": orgID,
-		"department_id":   deptID,
-	})
-	itemID := stringField(item, "id")
-	warehouseID := stringField(warehouse, "id")
-	backupWarehouseID := stringField(backupWarehouse, "id")
-	location := c.post("/inventory/locations", responseMap{
-		"warehouse_id": warehouseID,
-		"name":         "Default Bin",
-	})
-	locationID := stringField(location, "id")
-	must(itemID != "" && warehouseID != "" && locationID != "", "missing inventory setup ids")
+func runERPSmoke(c *client, stamp string, orgID string, userID string) erpSmokeResult {
+	catalog := c.get("/erp/catalog")
+	must(len(asList(catalog["tables"])) > 0, "missing ERP catalog")
 
-	c.post("/inventory/movements", responseMap{
-		"movement_type":   "adjustment_in",
-		"source_type":     "smoke_seed",
-		"item_id":         itemID,
-		"warehouse_id":    warehouseID,
-		"location_id":     locationID,
-		"quantity":        5,
-		"unit_cost":       10,
-		"currency":        "CNY",
-		"organization_id": orgID,
-		"department_id":   deptID,
-	})
-	c.post("/inventory/transfers", responseMap{
-		"from_warehouse_id": warehouseID,
-		"to_warehouse_id":   backupWarehouseID,
-		"organization_id":   orgID,
-		"department_id":     deptID,
-		"lines": []responseMap{
-			{"item_id": itemID, "quantity": 1, "unit_cost": 10},
-		},
-	})
-	c.post("/inventory/adjustments", responseMap{
-		"warehouse_id":    warehouseID,
-		"reason":          "smoke adjustment",
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"lines": []responseMap{
-			{"item_id": itemID, "quantity_delta": 1, "unit_cost": 10},
-		},
-	})
-	c.post("/inventory/counts", responseMap{
-		"warehouse_id":    warehouseID,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"lines": []responseMap{
-			{"item_id": itemID, "book_qty": 5, "counted_qty": 5},
-		},
-	})
+	partnerKey := "C-" + stamp
+	supplierKey := "S-" + stamp
+	itemKey := "I-" + stamp
+	warehouseKey := "W-" + stamp
+	requirementKey := "REQ-" + stamp
+	projectKey := "PRJ-" + stamp
+	purchaseOrderKey := stamp + "PO"
+	goodsReceiptKey := stamp + "GR"
+	salesOrderKey := stamp + "01"
+	deliveryKey := stamp + "DL"
+	paymentKey := stamp + "PY"
 
-	supplierID := stringField(supplier, "id")
-	requisition := c.post("/procurement/requisitions", responseMap{
-		"title":           "Smoke Requisition " + stamp,
-		"supplier_id":     supplierID,
-		"supplier_name":   supplierName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "quantity": 3, "unit_cost": 20},
+	c.post("/erp/MCRD", responseMap{
+		"key": partnerKey,
+		"data": responseMap{
+			"CardCode": partnerKey,
+			"CardName": "Smoke Customer " + stamp,
+			"CardType": "C",
+			"Payload":  responseMap{"organization_id": orgID, "created_by": userID},
 		},
 	})
-	requisitionID := stringField(requisition, "id")
-	requisition = c.post("/procurement/requisitions/"+requisitionID+"/submit", responseMap{})
-	must(stringField(requisition, "status") == "submitted", "purchase requisition was not submitted")
-	requisition = c.post("/procurement/requisitions/"+requisitionID+"/approve", responseMap{})
-	must(stringField(requisition, "status") == "approved", "purchase requisition was not approved")
+	c.post("/erp/MCRD", responseMap{
+		"key": supplierKey,
+		"data": responseMap{
+			"CardCode": supplierKey,
+			"CardName": "Smoke Supplier " + stamp,
+			"CardType": "S",
+		},
+	})
+	c.post("/erp/MITM", responseMap{
+		"key": itemKey,
+		"data": responseMap{
+			"ItemCode":  itemKey,
+			"ItemName":  "Smoke Item " + stamp,
+			"InvntItem": "Y",
+			"SellItem":  "Y",
+		},
+	})
+	c.post("/erp/MWHS", responseMap{
+		"key": warehouseKey,
+		"data": responseMap{
+			"WhsCode": warehouseKey,
+			"WhsName": "Smoke Warehouse " + stamp,
+		},
+	})
+	c.post("/erp/MREQ", responseMap{
+		"key": requirementKey,
+		"data": responseMap{
+			"ReqCode": requirementKey,
+			"Name":    "Smoke Requirement " + stamp,
+			"Status":  "draft",
+		},
+	})
+	c.post("/erp/MREQ/"+requirementKey+"/actions/analyze", responseMap{})
+	c.post("/erp/MREQ/"+requirementKey+"/actions/approve", responseMap{"data": responseMap{"approver": userID}})
+	converted := c.post("/erp/MREQ/"+requirementKey+"/actions/convert-to-project", responseMap{"data": responseMap{"PrjCode": projectKey}})
+	must(len(asList(converted["generated_records"])) > 0, "requirement conversion did not generate project")
 
-	order := c.post("/procurement/orders", responseMap{
-		"requisition_id":  requisitionID,
-		"supplier_id":     supplierID,
-		"supplier_name":   supplierName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "quantity": 3, "unit_cost": 20, "tax_rate": 0.06},
+	c.post("/erp/MPOR", responseMap{
+		"key": purchaseOrderKey,
+		"data": responseMap{
+			"DocEntry":  purchaseOrderKey,
+			"DocNum":    purchaseOrderKey,
+			"CardCode":  supplierKey,
+			"DocStatus": "O",
+			"WddStatus": "W",
+			"Project":   projectKey,
 		},
 	})
-	orderID := stringField(order, "id")
-	order = c.post("/procurement/orders/"+orderID+"/submit", responseMap{})
-	must(stringField(order, "status") == "submitted", "purchase order was not submitted")
-	order = c.post("/procurement/orders/"+orderID+"/approve", responseMap{})
-	must(stringField(order, "status") == "approved", "purchase order was not approved")
-
-	receipt := c.post("/procurement/receipts", responseMap{
-		"order_id":        orderID,
-		"supplier_id":     supplierID,
-		"supplier_name":   supplierName,
-		"warehouse_id":    warehouseID,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "location_id": locationID, "quantity": 3, "unit_cost": 20, "tax_rate": 0.06},
-		},
-	})
-	receiptID := stringField(receipt, "id")
-	receipt = c.post("/procurement/receipts/"+receiptID+"/post", responseMap{})
-	must(stringField(receipt, "status") == "posted", "purchase receipt was not posted")
-	payableID := stringField(receipt, "payable_id")
-	must(payableID != "", "purchase receipt did not create payable")
-	c.post("/procurement/returns", responseMap{
-		"receipt_id":      receiptID,
-		"supplier_id":     supplierID,
-		"supplier_name":   supplierName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "location_id": locationID, "quantity": 1, "unit_cost": 20, "tax_rate": 0.06},
-		},
-	})
-
-	customerID := stringField(customer, "id")
-	quotation := c.post("/sales/quotations", responseMap{
-		"customer_id":     customerID,
-		"customer_name":   customerName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "quantity": 2, "unit_price": 35, "tax_rate": 0.06},
-		},
-	})
-	quotationID := stringField(quotation, "id")
-	salesOrder := c.post("/sales/orders", responseMap{
-		"quotation_id":    quotationID,
-		"customer_id":     customerID,
-		"customer_name":   customerName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "quantity": 2, "unit_price": 35, "tax_rate": 0.06},
-		},
-	})
-	salesOrderID := stringField(salesOrder, "id")
-	salesOrder = c.post("/sales/orders/"+salesOrderID+"/confirm", responseMap{})
-	must(stringField(salesOrder, "status") == "confirmed", "sales order was not confirmed")
-	salesOrder = c.post("/sales/orders/"+salesOrderID+"/approve", responseMap{})
-	must(stringField(salesOrder, "status") == "approved", "sales order was not approved")
-
-	shipment := c.post("/sales/shipments", responseMap{
-		"order_id":        salesOrderID,
-		"customer_id":     customerID,
-		"customer_name":   customerName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "location_id": locationID, "quantity": 2, "unit_price": 35, "tax_rate": 0.06},
-		},
-	})
-	shipmentID := stringField(shipment, "id")
-	shipment = c.post("/sales/shipments/"+shipmentID+"/post", responseMap{})
-	must(stringField(shipment, "status") == "posted", "sales shipment was not posted")
-	receivableID := stringField(shipment, "receivable_id")
-	must(receivableID != "", "sales shipment did not create receivable")
-	c.post("/sales/returns", responseMap{
-		"shipment_id":     shipmentID,
-		"customer_id":     customerID,
-		"customer_name":   customerName,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"currency":        "CNY",
-		"lines": []responseMap{
-			{"item_id": itemID, "warehouse_id": warehouseID, "location_id": locationID, "quantity": 1, "unit_price": 35, "tax_rate": 0.06},
-		},
-	})
-
-	must(len(asList(c.get("/inventory/balances")["items"])) > 0, "missing inventory balances")
-	must(len(asList(c.get("/procurement/receipts")["items"])) > 0, "missing purchase receipts")
-	must(len(asList(c.get("/sales/shipments")["items"])) > 0, "missing sales shipments")
-	return supplyChainSmokeResult{
-		SupplierID:        supplierID,
-		CustomerID:        customerID,
-		ItemID:            itemID,
-		WarehouseID:       warehouseID,
-		LocationID:        locationID,
-		PurchaseReceiptID: receiptID,
-		PurchasePayableID: payableID,
-		SalesShipmentID:   shipmentID,
-		SalesReceivableID: receivableID,
-	}
-}
-
-func runCostingSmoke(c *client, stamp string, orgID string, deptID string, projectID string, userID string) {
-	c.post("/costing/currencies", responseMap{
-		"code":          "USD",
-		"name":          "US Dollar",
-		"currency_type": "fiat",
-		"symbol":        "$",
-	})
-	rate := c.post("/costing/exchange-rates", responseMap{
-		"from_currency": "USD",
-		"to_currency":   "CNY",
-		"rate":          7.2,
-		"source":        "manual",
-		"provider":      "smoke",
-	})
-	must(stringField(rate, "id") != "", "missing exchange rate id")
-	converted := c.post("/costing/convert", responseMap{
-		"amount":        10,
-		"from_currency": "USD",
-		"to_currency":   "CNY",
-	})
-	must(numberField(converted, "converted_amount") > 0, "currency conversion failed")
-	c.post("/costing/rate-cards", responseMap{
-		"subject_type": "human",
-		"subject_id":   userID,
-		"scope_type":   "organization",
-		"scope_id":     orgID,
-		"rate_type":    "hourly",
-		"amount":       100,
-		"currency":     "CNY",
-		"metadata":     responseMap{"stamp": stamp},
-	})
-	c.post("/costing/budgets", responseMap{
-		"scope_type": "organization",
-		"scope_id":   orgID,
-		"amount":     10000,
-		"currency":   "CNY",
-		"metadata":   responseMap{"stamp": stamp},
-	})
-	ledger := c.post("/costing/ledger-entries", responseMap{
-		"ledger_type":     "actual",
-		"cost_category":   "manual",
-		"source_type":     "smoke",
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"project_id":      projectID,
-		"actor_id":        userID,
-		"actor_type":      "internal_human",
-		"amount":          88,
-		"currency":        "CNY",
-		"description":     "smoke costing ledger",
-	})
-	must(stringField(ledger, "id") != "", "missing costing ledger id")
-	summary := c.get("/costing/summary?currency=CNY")
-	must(numberField(summary, "entry_count") > 0, "missing costing summary entries")
-}
-
-func runFinanceSmoke(c *client, stamp string, orgID string, deptID string, projectID string, requirementID string, deliverableID string) {
-	adapter := c.post("/finance/adapters", responseMap{
-		"name":         "Smoke Finance Adapter " + stamp,
-		"endpoint_url": "http://127.0.0.1:8080/api/v1/health",
-		"auth_type":    "hmac",
-		"secret":       "smoke-secret-" + stamp,
-		"status":       "active",
-		"field_mapping": responseMap{
-			"external_record_id": "external_record_id",
-			"amount":             "amount",
-		},
-	})
-	adapterID := stringField(adapter, "id")
-	must(adapterID != "", "missing finance adapter id")
-
-	imported := c.post("/finance/imports", responseMap{
-		"adapter_id":  adapterID,
-		"source_type": "api",
-		"records": []responseMap{
-			{
-				"external_record_id": "smoke-expense-" + stamp,
-				"expense_type":       "project_expense",
-				"amount":             12.5,
-				"currency":           "CNY",
-				"occurred_at":        smokeDate(0),
-				"invoice_number":     "SMOKE-INV-" + stamp,
-				"vendor_id":          "smoke-vendor",
-				"vendor_name":        "Smoke Vendor",
-				"organization_id":    orgID,
-				"department_id":      deptID,
-				"project_id":         projectID,
-				"requirement_id":     requirementID,
+	c.post("/erp/MPOR/"+purchaseOrderKey+"/POR1", responseMap{
+		"key": "1",
+		"data": responseMap{
+			"LineNum":    1,
+			"LineStatus": "O",
+			"Payload": responseMap{
+				"ItemCode": itemKey,
+				"Quantity": 5,
+				"WhsCode":  warehouseKey,
+				"Price":    20,
 			},
 		},
 	})
-	importBatch, _ := imported["batch"].(map[string]any)
-	must(numberField(importBatch, "processed_records") > 0, "finance import did not process records")
-	must(len(asList(imported["records"])) > 0, "finance import returned no records")
-
-	exportBatch := c.post("/finance/export-batches", responseMap{
-		"adapter_id":      adapterID,
-		"period_start":    smokeDate(0),
-		"period_end":      smokeDate(0),
-		"currency":        "CNY",
-		"idempotency_key": "smoke-export-" + stamp,
-	})
-	must(stringField(exportBatch, "id") != "", "missing finance export batch id")
-
-	settlement := c.post("/finance/settlement-orders", responseMap{
-		"project_id":     projectID,
-		"requirement_id": requirementID,
-		"deliverable_id": deliverableID,
-		"customer_id":    "smoke-customer",
-		"customer_name":  "Smoke Customer",
-		"title":          "Smoke Settlement " + stamp,
-		"currency":       "CNY",
-		"lines": []responseMap{
-			{"line_type": "service", "description": "Smoke service", "quantity": 1, "unit_price": 50, "amount": 50},
+	c.post("/erp/MPOR/"+purchaseOrderKey+"/actions/submit", responseMap{})
+	c.post("/erp/MPOR/"+purchaseOrderKey+"/actions/approve", responseMap{})
+	c.post("/erp/MPDN", responseMap{
+		"key": goodsReceiptKey,
+		"data": responseMap{
+			"DocEntry":  goodsReceiptKey,
+			"DocNum":    goodsReceiptKey,
+			"CardCode":  supplierKey,
+			"DocStatus": "O",
+			"Project":   projectKey,
 		},
 	})
-	settlementID := stringField(settlement, "id")
-	settlementReceivable := c.post("/finance/settlement-orders/"+settlementID+"/post", responseMap{})
-	must(stringField(settlementReceivable, "id") != "", "settlement order did not create receivable")
+	c.post("/erp/MPDN/"+goodsReceiptKey+"/PDN1", responseMap{
+		"key": "1",
+		"data": responseMap{
+			"LineNum":    1,
+			"LineStatus": "O",
+			"Payload": responseMap{
+				"ItemCode": itemKey,
+				"Quantity": 5,
+				"WhsCode":  warehouseKey,
+				"Price":    20,
+			},
+		},
+	})
+	receiptPost := c.post("/erp/MPDN/"+goodsReceiptKey+"/actions/post", responseMap{})
+	must(hasGeneratedRecord(receiptPost, "MIGN"), "goods receipt did not generate MIGN")
+	must(hasGeneratedRecord(receiptPost, "MPCH"), "goods receipt did not generate MPCH")
+	balanceKey := url.PathEscape(itemKey + "|" + warehouseKey)
+	must(numberField(c.get("/erp/MITW/" + balanceKey)["data"].(map[string]any), "OnHand") == 5, "inventory balance after receipt is not 5")
 
-	receivable := c.post("/finance/receivables", responseMap{
-		"receivable_type": "manual",
-		"customer_id":     "smoke-customer",
-		"customer_name":   "Smoke Customer",
-		"project_id":      projectID,
-		"requirement_id":  requirementID,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"amount":          42,
-		"tax_amount":      0,
-		"currency":        "CNY",
+	c.post("/erp/MRDR", responseMap{
+		"key": salesOrderKey,
+		"data": responseMap{
+			"DocEntry":  salesOrderKey,
+			"DocNum":    salesOrderKey,
+			"CardCode":  partnerKey,
+			"CardName":  "Smoke Customer " + stamp,
+			"DocStatus": "O",
+			"WddStatus": "W",
+			"Confirmed": "N",
+			"DocTotal":  100,
+			"Project":   projectKey,
+		},
 	})
-	receivableID := stringField(receivable, "id")
-	receipt := c.post("/finance/receipts", responseMap{
-		"payment_method":   "bank_transfer",
-		"customer_id":      "smoke-customer",
-		"customer_name":    "Smoke Customer",
-		"payer_account":    "smoke-payer",
-		"receiver_account": "smoke-receiver",
-		"amount":           42,
-		"currency":         "CNY",
+	c.post("/erp/MRDR/"+salesOrderKey+"/RDR1", responseMap{
+		"key": "1",
+		"data": responseMap{
+			"LineNum":    1,
+			"LineStatus": "O",
+			"Payload": responseMap{
+				"ItemCode": itemKey,
+				"Quantity": 2,
+				"WhsCode":  warehouseKey,
+				"Price":    25,
+			},
+		},
 	})
-	receiptID := stringField(receipt, "id")
-	c.post("/finance/receipts/"+receiptID+"/allocate", responseMap{
-		"receivable_id": receivableID,
-		"amount":        42,
-		"currency":      "CNY",
+	c.post("/erp/MRDR/"+salesOrderKey+"/actions/confirm", responseMap{})
+	c.post("/erp/MRDR/"+salesOrderKey+"/actions/approve", responseMap{})
+	c.post("/erp/MDLN", responseMap{
+		"key": deliveryKey,
+		"data": responseMap{
+			"DocEntry":  deliveryKey,
+			"DocNum":    deliveryKey,
+			"CardCode":  partnerKey,
+			"DocStatus": "O",
+			"Project":   projectKey,
+		},
 	})
+	c.post("/erp/MDLN/"+deliveryKey+"/DLN1", responseMap{
+		"key": "1",
+		"data": responseMap{
+			"LineNum":    1,
+			"LineStatus": "O",
+			"Payload": responseMap{
+				"BaseType":  "MRDR",
+				"BaseEntry": salesOrderKey,
+				"ItemCode":  itemKey,
+				"Quantity":  2,
+				"WhsCode":   warehouseKey,
+				"Price":     25,
+			},
+		},
+	})
+	deliveryPost := c.post("/erp/MDLN/"+deliveryKey+"/actions/post", responseMap{})
+	must(hasGeneratedRecord(deliveryPost, "MIGE"), "delivery did not generate MIGE")
+	must(hasGeneratedRecord(deliveryPost, "MINV"), "delivery did not generate MINV")
+	invoiceKey := generatedRecordKey(deliveryPost, "MINV")
+	must(invoiceKey != "", "missing generated invoice key")
+	must(numberField(c.get("/erp/MITW/" + balanceKey)["data"].(map[string]any), "OnHand") == 3, "inventory balance after delivery is not 3")
+	c.post("/erp/MINV/"+invoiceKey+"/actions/post", responseMap{})
+	c.post("/erp/MRCT", responseMap{
+		"key": paymentKey,
+		"data": responseMap{
+			"DocEntry": paymentKey,
+			"DocNum":   paymentKey,
+			"CardCode": partnerKey,
+			"DocTotal": 50,
+			"OpenBal":  50,
+		},
+	})
+	allocation := c.post("/erp/MRCT/"+paymentKey+"/actions/allocate", responseMap{
+		"data": responseMap{
+			"TargetTable": "MINV",
+			"TargetKey":   invoiceKey,
+			"Amount":      50,
+		},
+	})
+	must(numberField(allocation["effects"].(map[string]any), "allocated_amount") == 50, "payment allocation failed")
+	c.post("/erp/MPRJ/"+projectKey+"/actions/refresh-cost", responseMap{})
+	feedback := c.post("/erp/MPRJ/"+projectKey+"/actions/close-feedback", responseMap{"data": responseMap{"result": "accepted"}})
+	must(hasGeneratedRecord(feedback, "MFDB"), "project feedback close did not generate MFDB")
+	must(stringField(c.get("/erp/MCRD/"+partnerKey), "key") == partnerKey, "missing ERP partner")
+	must(len(asList(c.get("/erp/MINV/" + invoiceKey + "/INV1")["records"])) > 0, "missing ERP invoice rows")
 
-	payable := c.post("/finance/payables", responseMap{
-		"payable_type":    "expense",
-		"vendor_id":       "smoke-vendor",
-		"vendor_name":     "Smoke Vendor",
-		"project_id":      projectID,
-		"organization_id": orgID,
-		"department_id":   deptID,
-		"amount":          33,
-		"currency":        "CNY",
-	})
-	payableID := stringField(payable, "id")
-	payment := c.post("/finance/payments", responseMap{
-		"payment_method": "bank_transfer",
-		"payer_account":  "smoke-payer",
-		"payee_account":  "smoke-payee",
-		"vendor_id":      "smoke-vendor",
-		"vendor_name":    "Smoke Vendor",
-		"amount":         33,
-		"currency":       "CNY",
-	})
-	paymentID := stringField(payment, "id")
-	c.post("/finance/payments/"+paymentID+"/allocate", responseMap{
-		"payable_id": payableID,
-		"amount":     33,
-		"currency":   "CNY",
-	})
-	must(len(asList(c.get("/finance/reconciliation")["items"])) >= 0, "finance reconciliation failed")
+	return erpSmokeResult{
+		PartnerKey:    partnerKey,
+		ItemKey:       itemKey,
+		WarehouseKey:  warehouseKey,
+		ProjectKey:    projectKey,
+		PurchaseKey:   purchaseOrderKey,
+		SalesOrderKey: salesOrderKey,
+		InvoiceKey:    invoiceKey,
+	}
+}
+
+func runSupplyChainSmoke(c *client, stamp string, orgID string, deptID string) erpSmokeResult {
+	return runERPSmoke(c, stamp, orgID, "")
+}
+
+func runCostingSmoke(c *client, stamp string, orgID string, deptID string, projectID string, userID string) {
+	_ = runERPSmoke(c, stamp, orgID, userID)
+}
+
+func runFinanceSmoke(c *client, stamp string, orgID string, deptID string, projectID string, requirementID string, deliverableID string) {
+	_ = runERPSmoke(c, stamp, orgID, "")
 }
 
 func runSystemAdminSmoke(base string, orgID string, stamp string) {
@@ -646,50 +348,16 @@ func (c *client) post(path string, payload responseMap) responseMap {
 func expectsCreated(path string) bool {
 	return path == "/auth/register" ||
 		path == "/onboarding/organization" ||
+		(strings.HasPrefix(path, "/erp/") && !strings.Contains(path, "/actions/")) ||
 		path == "/organizations" ||
 		path == "/workflows/templates" ||
-		path == "/requirements" ||
-		path == "/inventory/partners" ||
-		path == "/inventory/items" ||
-		path == "/inventory/warehouses" ||
-		path == "/inventory/locations" ||
-		path == "/inventory/movements" ||
-		path == "/inventory/transfers" ||
-		path == "/inventory/adjustments" ||
-		path == "/inventory/counts" ||
-		path == "/procurement/requisitions" ||
-		path == "/procurement/orders" ||
-		path == "/procurement/receipts" ||
-		path == "/procurement/returns" ||
-		path == "/sales/quotations" ||
-		path == "/sales/orders" ||
-		path == "/sales/shipments" ||
-		path == "/sales/returns" ||
 		path == "/costing/currencies" ||
 		path == "/costing/exchange-rates" ||
 		path == "/costing/rate-cards" ||
 		path == "/costing/ledger-entries" ||
 		path == "/costing/budgets" ||
-		path == "/finance/adapters" ||
-		path == "/finance/export-batches" ||
-		path == "/finance/imports" ||
-		path == "/finance/settlement-orders" ||
-		path == "/finance/receivables" ||
-		path == "/finance/receipts" ||
-		path == "/finance/payables" ||
-		path == "/finance/payments" ||
-		(strings.HasPrefix(path, "/finance/receipts/") && strings.HasSuffix(path, "/allocate")) ||
-		(strings.HasPrefix(path, "/finance/payments/") && strings.HasSuffix(path, "/allocate")) ||
-		(strings.HasPrefix(path, "/finance/settlement-orders/") && strings.HasSuffix(path, "/post")) ||
 		(strings.HasPrefix(path, "/platform/admin/organizations/") && strings.HasSuffix(path, "/schema/change-requests")) ||
-		(strings.HasPrefix(path, "/organizations/") && strings.HasSuffix(path, "/departments")) ||
-		strings.HasSuffix(path, "/convert-to-project") ||
-		(strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/members")) ||
-		(strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/workflows")) ||
-		(strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/deliverables")) ||
-		(strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/cost-entries")) ||
-		(strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/cost-refresh")) ||
-		(strings.HasPrefix(path, "/projects/") && strings.HasSuffix(path, "/evaluations"))
+		(strings.HasPrefix(path, "/organizations/") && strings.HasSuffix(path, "/departments"))
 }
 
 func (c *client) patch(path string, payload responseMap) responseMap {
@@ -885,6 +553,23 @@ func listField(m map[string]any, key string) []any {
 func asList(value any) []any {
 	list, _ := value.([]any)
 	return list
+}
+
+func hasGeneratedRecord(result responseMap, tableCode string) bool {
+	return generatedRecordKey(result, tableCode) != ""
+}
+
+func generatedRecordKey(result responseMap, tableCode string) string {
+	for _, raw := range asList(result["generated_records"]) {
+		record, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if stringField(record, "table_code") == tableCode {
+			return stringField(record, "key")
+		}
+	}
+	return ""
 }
 
 func must(ok bool, message string) {

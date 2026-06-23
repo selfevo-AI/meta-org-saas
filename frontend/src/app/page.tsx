@@ -93,21 +93,18 @@ import { apiOperations, getOperationProfile, operationDomains } from '@/lib/oper
 import type { ApiOperation } from '@/lib/operations'
 import { AIAssistant } from './ai-assistant'
 import {
-  CapabilityEvaluationWorkspace,
-  GovernanceWorkspace,
-  WeightWorkspace,
-  WorkflowDesignerWorkspace,
-  WorkflowMatchingWorkspace,
+	CapabilityEvaluationWorkspace,
+	GovernanceWorkspace,
+	WeightWorkspace,
+	WorkflowDesignerWorkspace,
+	WorkflowMatchingWorkspace,
 } from './control-workspaces'
 import { CostingWorkspace } from './costing-workspace'
 import { DeveloperToolsWorkspace } from './developer-tools-workspace'
-import { FinanceWorkspace } from './finance-workspace'
-import { InventoryWorkspace } from './inventory-workspace'
+import { ERPBusinessModuleWorkspace } from './erp-business-module-workspace'
+import { ERPCodeWorkspace } from './erp-workspace'
 import { MetaResourceWorkspace } from './meta-resource-workspace'
 import { OrganizationWorkspace } from './organization-workspace'
-import { ProcurementWorkspace } from './procurement-workspace'
-import { ProjectLifecycleWorkspace } from './project-lifecycle-workspace'
-import { SalesWorkspace } from './sales-workspace'
 import { SystemAdminWorkspace } from './system-admin-workspace'
 
 type AuthMode = 'login' | 'register'
@@ -119,7 +116,7 @@ const domainLabels: Record<string, string> = {
   MetaOrg: 'Meta-Org',
   Dashboard: '系统',
   Identity: '身份',
-  Organization: '组织',
+  Organization: '部门',
   Layer: '分层',
   Capability: '能力',
   Workflow: '工作流',
@@ -293,15 +290,6 @@ type OverviewBusinessFunction = {
   icon: typeof Gauge
 }
 
-type OrganizationTreeRecord = {
-  id: string
-  name: string
-  description?: string
-  status?: string
-  created_at?: string
-  updated_at?: string
-}
-
 type DepartmentTreeRecord = {
   id: string
   organization_id: string
@@ -376,7 +364,7 @@ const workspaceLayoutPreferenceKey = 'workspace.layout.widths.v1'
 const modelPreferenceKey = 'meta_org.assistant.model_by_module.v1'
 const legacyMenuStorageKey = 'harness.menu.groups.v1'
 const legacyExpandedMenuStorageKey = 'harness.menu.expanded.v1'
-const projectGithubURL = 'https://github.com/selfevo-AI/meta-org'
+const projectGithubURL = 'https://github.com/selfevo-AI/meta-org-saas'
 
 const defaultWorkspaceLayoutWidths: WorkspaceLayoutWidths = {
   menu: 248,
@@ -546,6 +534,27 @@ function asRecords(value: unknown): BusinessRecord[] {
   return Array.isArray(value) ? value.map(asRecord) : []
 }
 
+type ERPListPayload = {
+  records?: Array<{
+    key: string
+    data?: Record<string, unknown>
+    created_at?: string
+    updated_at?: string
+  }>
+}
+
+async function loadERPRecords(token: string, tableCode: string): Promise<BusinessRecord[]> {
+  const payload = await apiRequest<ERPListPayload>(`/erp/${encodeURIComponent(tableCode)}?limit=100`, { token })
+  return (payload.records ?? []).map((record) => ({
+    ...(record.data ?? {}),
+    id: record.key,
+    master_key: record.key,
+    table_code: tableCode,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+  }))
+}
+
 function textValue(record: BusinessRecord, keys: string[], fallback = ''): string {
   for (const key of keys) {
     const value = record[key]
@@ -640,20 +649,6 @@ function buildDepartmentNodes(domain: string, departments: DepartmentTreeRecord[
   })
 }
 
-function buildOrganizationNode(organization: OrganizationTreeRecord, departments: DepartmentTreeRecord[]): BusinessTreeNode {
-  return {
-    id: `organization:${organization.id}`,
-    domain: 'Organization',
-    targetType: 'organization',
-    targetID: organization.id,
-    label: organization.name,
-    description: organization.description || organization.id,
-    status: organization.status,
-    record: asRecord(organization),
-    children: buildDepartmentNodes('Organization', departments),
-  }
-}
-
 function supplyChainFunctionsForDomain(domain: string): SupplyChainFunction[] {
   return domain === 'Procurement' || domain === 'Sales' || domain === 'Inventory' ? supplyChainFunctionGroups[domain] : []
 }
@@ -672,33 +667,38 @@ function filterBusinessNodesBySupplyChainFunction(nodes: BusinessTreeNode[], act
   return nodes.filter((node) => targetTypes.has(node.targetType))
 }
 
-async function loadBusinessTreeNodes(token: string, domain: string, activeSupplyChainFunction?: SupplyChainFunction | null): Promise<BusinessTreeNode[]> {
+async function loadBusinessTreeNodes(
+  token: string,
+  domain: string,
+  currentOrganizationID?: string | null,
+  activeSupplyChainFunction?: SupplyChainFunction | null,
+): Promise<BusinessTreeNode[]> {
   if (domain === 'Requirement') {
-    const data = await apiRequest<unknown>('/requirements?limit=100', { token })
-    return buildRecordNodes(domain, asRecords(data), 'requirement', {
-      labelKeys: ['title', 'name'],
-      descriptionKeys: ['description', 'source', 'id'],
-      statusKeys: ['status', 'priority'],
+    const data = await loadERPRecords(token, 'MREQ')
+    return buildRecordNodes(domain, data, 'requirement', {
+      labelKeys: ['Name', 'ReqCode', 'master_key'],
+      descriptionKeys: ['Status', 'Payload', 'id'],
+      statusKeys: ['Status'],
     })
   }
 
   if (['Project', 'Delivery', 'Cost', 'Feedback'].includes(domain)) {
-    const data = await apiRequest<unknown>('/projects?limit=100', { token })
+    const tableCode = domain === 'Project' ? 'MPRJ' : domain === 'Delivery' ? 'MDLN' : domain === 'Cost' ? 'MCST' : 'MFDB'
+    const data = await loadERPRecords(token, tableCode)
     return buildRecordNodes(domain, asRecords(data), 'project', {
-      labelKeys: ['name', 'title'],
-      descriptionKeys: ['description', 'requirement_id', 'id'],
-      statusKeys: ['status', 'risk_level'],
+      labelKeys: ['Name', 'PrjCode', 'DocNum', 'CostCode', 'FeedbackCode', 'master_key'],
+      descriptionKeys: ['Status', 'DocStatus', 'Payload', 'id'],
+      statusKeys: ['Status', 'DocStatus', 'Active'],
     })
   }
 
   if (domain === 'Organization') {
-    const organizations = (await apiRequest<OrganizationTreeRecord[]>('/organizations?limit=100', { token })) ?? []
-    const departmentTrees = await Promise.all(
-      organizations.map((organization) =>
-        apiRequest<DepartmentTreeRecord[]>(`/organizations/${organization.id}/departments/tree`, { token }).catch(() => []),
-      ),
-    )
-    return organizations.map((organization, index) => buildOrganizationNode(organization, departmentTrees[index] ?? []))
+    if (!currentOrganizationID) return []
+    const departments = await apiRequest<DepartmentTreeRecord[]>(`/organizations/${currentOrganizationID}/departments/tree`, {
+      token,
+      organizationId: currentOrganizationID,
+    })
+    return buildDepartmentNodes('Organization', departments ?? [])
   }
 
   if (domain === 'MetaResource') {
@@ -711,14 +711,14 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
 
   if (domain === 'Inventory') {
     const [partners, items, warehouses, balances, movements, transfers, adjustments, counts] = await Promise.all([
-      apiRequest<unknown>('/inventory/partners?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/items?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/warehouses?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/balances?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/movements?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/transfers?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/adjustments?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/inventory/counts?limit=100', { token }).catch(() => []),
+      loadERPRecords(token, 'MCRD').catch(() => []),
+      loadERPRecords(token, 'MITM').catch(() => []),
+      loadERPRecords(token, 'MWHS').catch(() => []),
+      loadERPRecords(token, 'MITW').catch(() => []),
+      loadERPRecords(token, 'MIGE').catch(() => []),
+      loadERPRecords(token, 'MIGN').catch(() => []),
+      loadERPRecords(token, 'MIGE').catch(() => []),
+      loadERPRecords(token, 'MIGN').catch(() => []),
     ])
     return filterBusinessNodesBySupplyChainFunction([
       {
@@ -727,8 +727,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'business_partner',
         label: 'inventory.partners',
         children: buildRecordNodes(domain, asRecords(partners), 'business_partner', {
-          labelKeys: ['name', 'partner_code'],
-          descriptionKeys: ['partner_type', 'email', 'id'],
+          labelKeys: ['CardName', 'CardCode', 'master_key'],
+          descriptionKeys: ['CardType', 'E_Mail', 'id'],
         }),
       },
       {
@@ -737,8 +737,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'inventory_item',
         label: 'inventory.items',
         children: buildRecordNodes(domain, asRecords(items), 'inventory_item', {
-          labelKeys: ['name', 'item_code'],
-          descriptionKeys: ['item_type', 'base_uom', 'id'],
+          labelKeys: ['ItemName', 'ItemCode', 'master_key'],
+          descriptionKeys: ['InvntItem', 'InvntryUom', 'id'],
         }),
       },
       {
@@ -747,8 +747,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'warehouse',
         label: 'inventory.warehouses',
         children: buildRecordNodes(domain, asRecords(warehouses), 'warehouse', {
-          labelKeys: ['name', 'warehouse_code'],
-          descriptionKeys: ['status', 'id'],
+          labelKeys: ['WhsName', 'WhsCode', 'master_key'],
+          descriptionKeys: ['Inactive', 'id'],
         }),
       },
       {
@@ -757,8 +757,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'inventory_balance',
         label: 'inventory.balances',
         children: buildRecordNodes(domain, asRecords(balances), 'inventory_balance', {
-          labelKeys: ['master_key', 'item_id', 'id'],
-          descriptionKeys: ['warehouse_id', 'currency'],
+          labelKeys: ['ItemCode', 'master_key', 'id'],
+          descriptionKeys: ['WhsCode', 'Locked'],
         }),
       },
       {
@@ -767,8 +767,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'inventory_movement',
         label: 'inventory.movements',
         children: buildRecordNodes(domain, asRecords(movements), 'inventory_movement', {
-          labelKeys: ['movement_type', 'master_key', 'id'],
-          descriptionKeys: ['source_type', 'item_id', 'warehouse_id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['DocStatus', 'CardCode', 'Project'],
         }),
       },
       {
@@ -777,8 +777,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'inventory_transfer',
         label: 'inventory.transfers',
         children: buildRecordNodes(domain, asRecords(transfers), 'inventory_transfer', {
-          labelKeys: ['transfer_number', 'master_key'],
-          descriptionKeys: ['from_warehouse_id', 'to_warehouse_id', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['DocStatus', 'CardCode', 'Project'],
         }),
       },
       {
@@ -787,8 +787,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'inventory_adjustment',
         label: 'inventory.adjustments',
         children: buildRecordNodes(domain, asRecords(adjustments), 'inventory_adjustment', {
-          labelKeys: ['adjustment_number', 'master_key'],
-          descriptionKeys: ['warehouse_id', 'reason', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['DocStatus', 'CardCode', 'Project'],
         }),
       },
       {
@@ -797,8 +797,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'inventory_count',
         label: 'inventory.counts',
         children: buildRecordNodes(domain, asRecords(counts), 'inventory_count', {
-          labelKeys: ['count_number', 'master_key'],
-          descriptionKeys: ['warehouse_id', 'status', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['DocStatus', 'CardCode', 'Project'],
         }),
       },
     ], activeSupplyChainFunction)
@@ -806,10 +806,10 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
 
   if (domain === 'Procurement') {
     const [requisitions, orders, receipts, returns] = await Promise.all([
-      apiRequest<unknown>('/procurement/requisitions?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/procurement/orders?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/procurement/receipts?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/procurement/returns?limit=100', { token }).catch(() => []),
+      loadERPRecords(token, 'MPOR').catch(() => []),
+      loadERPRecords(token, 'MPOR').catch(() => []),
+      loadERPRecords(token, 'MPDN').catch(() => []),
+      loadERPRecords(token, 'MRPD').catch(() => []),
     ])
     return filterBusinessNodesBySupplyChainFunction([
       {
@@ -818,8 +818,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'purchase_requisition',
         label: 'procurement.requisitions',
         children: buildRecordNodes(domain, asRecords(requisitions), 'purchase_requisition', {
-          labelKeys: ['title', 'master_key'],
-          descriptionKeys: ['supplier_name', 'currency', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocCur', 'id'],
         }),
       },
       {
@@ -828,8 +828,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'purchase_order',
         label: 'procurement.orders',
         children: buildRecordNodes(domain, asRecords(orders), 'purchase_order', {
-          labelKeys: ['order_number', 'master_key'],
-          descriptionKeys: ['supplier_name', 'currency', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocCur', 'id'],
         }),
       },
       {
@@ -838,8 +838,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'purchase_receipt',
         label: 'procurement.receipts',
         children: buildRecordNodes(domain, asRecords(receipts), 'purchase_receipt', {
-          labelKeys: ['receipt_number', 'master_key'],
-          descriptionKeys: ['supplier_name', 'payable_id', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocStatus', 'id'],
         }),
       },
       {
@@ -848,8 +848,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'purchase_return',
         label: 'procurement.returns',
         children: buildRecordNodes(domain, asRecords(returns), 'purchase_return', {
-          labelKeys: ['return_number', 'master_key'],
-          descriptionKeys: ['supplier_name', 'receipt_id', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocStatus', 'id'],
         }),
       },
     ], activeSupplyChainFunction)
@@ -857,10 +857,10 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
 
   if (domain === 'Sales') {
     const [quotations, orders, shipments, returns] = await Promise.all([
-      apiRequest<unknown>('/sales/quotations?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/sales/orders?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/sales/shipments?limit=100', { token }).catch(() => []),
-      apiRequest<unknown>('/sales/returns?limit=100', { token }).catch(() => []),
+      loadERPRecords(token, 'MQUT').catch(() => []),
+      loadERPRecords(token, 'MRDR').catch(() => []),
+      loadERPRecords(token, 'MDLN').catch(() => []),
+      loadERPRecords(token, 'MRDN').catch(() => []),
     ])
     return filterBusinessNodesBySupplyChainFunction([
       {
@@ -869,8 +869,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'sales_quotation',
         label: 'sales.quotations',
         children: buildRecordNodes(domain, asRecords(quotations), 'sales_quotation', {
-          labelKeys: ['quotation_number', 'master_key'],
-          descriptionKeys: ['customer_name', 'currency', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocCur', 'id'],
         }),
       },
       {
@@ -879,8 +879,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'sales_order',
         label: 'sales.orders',
         children: buildRecordNodes(domain, asRecords(orders), 'sales_order', {
-          labelKeys: ['order_number', 'master_key'],
-          descriptionKeys: ['customer_name', 'currency', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocCur', 'id'],
         }),
       },
       {
@@ -889,8 +889,8 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'sales_shipment',
         label: 'sales.shipments',
         children: buildRecordNodes(domain, asRecords(shipments), 'sales_shipment', {
-          labelKeys: ['shipment_number', 'master_key'],
-          descriptionKeys: ['customer_name', 'receivable_id', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocStatus', 'id'],
         }),
       },
       {
@@ -899,34 +899,34 @@ async function loadBusinessTreeNodes(token: string, domain: string, activeSupply
         targetType: 'sales_return',
         label: 'sales.returns',
         children: buildRecordNodes(domain, asRecords(returns), 'sales_return', {
-          labelKeys: ['return_number', 'master_key'],
-          descriptionKeys: ['customer_name', 'shipment_id', 'id'],
+          labelKeys: ['DocNum', 'DocEntry', 'master_key'],
+          descriptionKeys: ['CardName', 'DocStatus', 'id'],
         }),
       },
     ], activeSupplyChainFunction)
   }
 
   if (domain === 'Finance' || domain === 'FinanceAccounting') {
-    const data = await apiRequest<unknown>('/finance/settlement-orders', { token })
-    return buildRecordNodes(domain, asRecords(data), 'finance_settlement', {
-      labelKeys: ['title', 'settlement_number'],
-      descriptionKeys: ['customer_name', 'description', 'id'],
+    const data = await loadERPRecords(token, 'MJDT')
+    return buildRecordNodes(domain, data, 'finance_settlement', {
+      labelKeys: ['TransId', 'master_key'],
+      descriptionKeys: ['TransType', 'Project', 'id'],
     })
   }
 
   if (domain === 'FinanceReceivables') {
-    const data = await apiRequest<unknown>('/finance/receivables', { token })
-    return buildRecordNodes(domain, asRecords(data), 'finance_receivable', {
-      labelKeys: ['invoice_number', 'external_receivable_id', 'customer_name'],
-      descriptionKeys: ['customer_name', 'account_name', 'source_type'],
+    const data = await loadERPRecords(token, 'MINV')
+    return buildRecordNodes(domain, data, 'finance_receivable', {
+      labelKeys: ['DocNum', 'DocEntry', 'CardName'],
+      descriptionKeys: ['CardCode', 'DocStatus', 'DocCur'],
     })
   }
 
   if (domain === 'FinancePayables') {
-    const data = await apiRequest<unknown>('/finance/payables', { token })
-    return buildRecordNodes(domain, asRecords(data), 'finance_payable', {
-      labelKeys: ['invoice_number', 'external_payable_id', 'vendor_name'],
-      descriptionKeys: ['vendor_name', 'employee_name', 'account_name'],
+    const data = await loadERPRecords(token, 'MPCH')
+    return buildRecordNodes(domain, data, 'finance_payable', {
+      labelKeys: ['DocNum', 'DocEntry', 'CardName'],
+      descriptionKeys: ['CardCode', 'DocStatus', 'DocCur'],
     })
   }
 
@@ -1176,8 +1176,8 @@ const overviewBusinessFunctions: OverviewBusinessFunction[] = [
     id: 'organization',
     domain: 'Organization',
     moduleKey: 'organization',
-    targetType: 'organization',
-    label: 'Organization',
+    targetType: 'department',
+    label: 'Department',
     intentKey: 'overview.business.organizationIntent',
     icon: Users,
   },
@@ -1587,7 +1587,12 @@ export default function Home() {
     currentSupplyChainFunctionID && supplyChainFunctionByID.get(currentSupplyChainFunctionID)?.domain === activeDomain
       ? supplyChainFunctionByID.get(currentSupplyChainFunctionID) ?? null
       : defaultSupplyChainFunction(activeDomain)
-  const businessTreeCacheKey = activeSupplyChainFunction ? `${activeDomain}:${activeSupplyChainFunction.id}` : activeDomain
+  const businessTreeCacheKey =
+    activeDomain === 'Organization'
+      ? `${activeDomain}:${currentOrganizationID ?? 'none'}`
+      : activeSupplyChainFunction
+        ? `${activeDomain}:${activeSupplyChainFunction.id}`
+        : activeDomain
 
   useEffect(() => {
     if (!token || effectiveWorkspaceView === 'overview' || isPlatformAdminSession) {
@@ -1603,7 +1608,7 @@ export default function Home() {
       if (cancelled) return
       setBusinessTreeLoading(true)
       setBusinessTreeError(null)
-      loadBusinessTreeNodes(token, activeDomain, activeSupplyChainFunction)
+      loadBusinessTreeNodes(token, activeDomain, currentOrganizationID, activeSupplyChainFunction)
         .then((nodes) => {
           if (!cancelled) {
             setBusinessNodesByDomain((current) => ({ ...current, [businessTreeCacheKey]: nodes }))
@@ -1624,7 +1629,17 @@ export default function Home() {
       cancelled = true
       cancelDeferred()
     }
-  }, [activeDomain, activeSupplyChainFunction, businessNodesByDomain, businessTreeCacheKey, effectiveWorkspaceView, isPlatformAdminSession, t, token])
+  }, [
+    activeDomain,
+    activeSupplyChainFunction,
+    businessNodesByDomain,
+    businessTreeCacheKey,
+    currentOrganizationID,
+    effectiveWorkspaceView,
+    isPlatformAdminSession,
+    t,
+    token,
+  ])
 
   const healthRatio = useMemo(() => {
     if (!overview) return 0
@@ -1788,20 +1803,6 @@ export default function Home() {
     setBusinessSelection(null)
     setError(null)
     setWorkspaceView('overview')
-  }
-
-  function handleOrganizationChange(organizationID: string) {
-    if (isPlatformAdminSession) {
-      setCurrentOrganizationId(null)
-      setCurrentOrganizationID(null)
-      return
-    }
-    setCurrentOrganizationId(organizationID)
-    setCurrentOrganizationID(organizationID)
-    setBusinessNodesByDomain({})
-    setBusinessSelection(null)
-    setOverview(null)
-    loadOverview(token)
   }
 
   function toggleMenuGroup(groupID: string) {
@@ -2349,7 +2350,6 @@ export default function Home() {
               platformRole={platformRole}
               organizations={organizations}
               currentOrganizationID={currentOrganizationID}
-              onOrganizationChange={handleOrganizationChange}
               overview={overview}
               overviewLoading={overviewLoading}
               onRefresh={() => loadOverview()}
@@ -2452,7 +2452,12 @@ export default function Home() {
                   </div>
                 )
               ) : effectiveWorkspaceView === 'domain:Organization' ? (
-                <OrganizationWorkspace token={token} currentUserId={userId} externalSelection={activeBusinessSelection} />
+                <OrganizationWorkspace
+                  token={token}
+                  currentUserId={userId}
+                  currentOrganizationID={currentOrganizationID}
+                  externalSelection={activeBusinessSelection}
+                />
               ) : effectiveWorkspaceView === 'domain:MetaResource' ? (
                 <MetaResourceWorkspace token={token} />
               ) : effectiveWorkspaceView === 'domain:Governance' ? (
@@ -2466,47 +2471,32 @@ export default function Home() {
                   <WorkflowDesignerWorkspace token={token} currentUserId={userId} />
                   <WorkflowMatchingWorkspace token={token} currentUserId={userId} />
                 </div>
-              ) : ['domain:Requirement', 'domain:Project', 'domain:Delivery', 'domain:Cost', 'domain:Feedback'].includes(
-                  effectiveWorkspaceView,
-                ) ? (
-                <ProjectLifecycleWorkspace
-                  token={token}
-                  currentUserId={userId}
-                  mode={effectiveWorkspaceView.replace('domain:', '') as 'Requirement' | 'Project' | 'Delivery' | 'Cost' | 'Feedback'}
-                  externalSelection={activeBusinessSelection}
-                  onOperationContextChange={handleOperationContextChange}
-                />
-              ) : effectiveWorkspaceView === 'domain:DeveloperTools' ? (
-                <DeveloperToolsWorkspace token={token} />
-              ) : effectiveWorkspaceView === 'domain:SystemAdmin' ? (
-                <SystemAdminWorkspace token={token} organizations={organizations} currentOrganizationID={currentOrganizationID} />
-              ) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
-                <CostingWorkspace token={token} />
-              ) : effectiveWorkspaceView === 'domain:Inventory' ? (
-                <InventoryWorkspace
-                  token={token}
-                  currentSupplyChainFunctionID={activeSupplyChainFunction?.id}
-                  externalSelection={activeBusinessSelection}
-                />
-              ) : effectiveWorkspaceView === 'domain:Procurement' ? (
-                <ProcurementWorkspace
-                  token={token}
-                  currentSupplyChainFunctionID={activeSupplyChainFunction?.id}
-                  externalSelection={activeBusinessSelection}
-                />
-              ) : effectiveWorkspaceView === 'domain:Sales' ? (
-                <SalesWorkspace
-                  token={token}
-                  currentSupplyChainFunctionID={activeSupplyChainFunction?.id}
-                  externalSelection={activeBusinessSelection}
-                />
-              ) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
-                <FinanceWorkspace token={token} mode="accounting" />
-              ) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (
-                <FinanceWorkspace token={token} mode="receivables" />
-              ) : effectiveWorkspaceView === 'domain:FinancePayables' ? (
-                <FinanceWorkspace token={token} mode="payables" />
-              ) : (
+				) : ['domain:Requirement', 'domain:Project', 'domain:Delivery', 'domain:Cost', 'domain:Feedback'].includes(
+					  effectiveWorkspaceView,
+				) ? (
+					<ERPBusinessModuleWorkspace token={token} module="project" externalSelection={activeBusinessSelection} />
+				) : effectiveWorkspaceView === 'domain:DeveloperTools' ? (
+					<div className="space-y-5">
+						<DeveloperToolsWorkspace token={token} />
+						<ERPCodeWorkspace token={token} module="platform" />
+					</div>
+				) : effectiveWorkspaceView === 'domain:SystemAdmin' ? (
+					<SystemAdminWorkspace token={token} organizations={organizations} currentOrganizationID={currentOrganizationID} />
+				) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
+					<CostingWorkspace token={token} />
+				) : effectiveWorkspaceView === 'domain:Inventory' ? (
+					<ERPBusinessModuleWorkspace token={token} module="inventory" externalSelection={activeBusinessSelection} />
+				) : effectiveWorkspaceView === 'domain:Procurement' ? (
+					<ERPBusinessModuleWorkspace token={token} module="procurement" externalSelection={activeBusinessSelection} />
+				) : effectiveWorkspaceView === 'domain:Sales' ? (
+					<ERPBusinessModuleWorkspace token={token} module="sales" externalSelection={activeBusinessSelection} />
+				) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
+					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} />
+				) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (
+					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} />
+				) : effectiveWorkspaceView === 'domain:FinancePayables' ? (
+					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} />
+				) : (
                 <AgentOnlyWorkspace domain={effectiveWorkspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
               )}
               <div className="xl:hidden">
@@ -2664,7 +2654,6 @@ function Topbar({
   platformRole,
   organizations,
   currentOrganizationID,
-  onOrganizationChange,
   overview,
   overviewLoading,
   onRefresh,
@@ -2684,7 +2673,6 @@ function Topbar({
   platformRole: string | null
   organizations: SessionOrganization[]
   currentOrganizationID: string | null
-  onOrganizationChange: (organizationID: string) => void
   overview: MetaOrgOverview | null
   overviewLoading: boolean
   onRefresh: () => void
@@ -2735,20 +2723,12 @@ function Topbar({
             <span>{activeDomain}</span>
           </div>
           {!platformRole && organizations.length > 0 && (
-            <label className="hidden items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2 text-xs font-semibold text-slate-400 md:flex">
+            <div className="hidden max-w-64 items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2 text-xs font-semibold text-slate-400 md:flex">
               <span>{t('organization.current')}</span>
-              <select
-                value={currentOrganizationID ?? organizations[0]?.id ?? ''}
-                onChange={(event) => onOrganizationChange(event.target.value)}
-                className="h-7 max-w-44 rounded-md border border-slate-700 bg-slate-950 px-2 text-xs font-semibold text-slate-100 outline-none"
-              >
-                {organizations.map((organization) => (
-                  <option key={organization.id} value={organization.id}>
-                    {organization.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <span className="truncate text-slate-100">
+                {organizations.find((organization) => organization.id === currentOrganizationID)?.name ?? organizations[0]?.name}
+              </span>
+            </div>
           )}
           {platformRole && <StatusPill label={platformRole} tone="green" />}
           {userType && <StatusPill label={userType === 'ai' ? 'AI Agent' : 'Human'} tone="blue" />}
@@ -3349,18 +3329,8 @@ function BusinessStatusPanel({
     if (selection?.targetType !== 'project' || !selection.targetID) {
       return deferStateUpdate(() => setProjectOverview(null))
     }
-    let cancelled = false
-    apiRequest<BusinessRecord>(`/projects/${selection.targetID}/overview`, { token })
-      .then((data) => {
-        if (!cancelled) setProjectOverview(data)
-      })
-      .catch(() => {
-        if (!cancelled) setProjectOverview(null)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selection?.targetID, selection?.targetType, token])
+    return deferStateUpdate(() => setProjectOverview(selection.record ?? null))
+  }, [selection?.record, selection?.targetID, selection?.targetType])
 
   return (
     <section className="sticky top-[60px] max-h-[calc(100vh-60px)] overflow-y-auto p-4">

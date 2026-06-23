@@ -40,6 +40,77 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   return response.json()
 }
 
+export type ERPRecord<T = Record<string, unknown>> = {
+  key: string
+  data: T
+  created_at?: string
+  updated_at?: string
+}
+
+export type ERPActionResult<T = Record<string, unknown>> = {
+  table_code: string
+  key: string
+  action: string
+  status: string
+  record?: ERPRecord<T>
+  generated_records?: ERPRecord[]
+  effects?: Record<string, unknown>
+}
+
+export async function listERPRecords<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  limit = 100,
+): Promise<Array<T & { key: string }>> {
+  const result = await apiRequest<{ records: Array<ERPRecord<T>> }>(`/erp/${encodeURIComponent(tableCode)}?limit=${limit}`, { token })
+  return (result.records ?? []).map((record) => ({ ...(record.data ?? ({} as T)), key: record.key }))
+}
+
+export async function createERPRecord<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  key: string,
+  data: T,
+): Promise<ERPRecord<T>> {
+  return apiRequest<ERPRecord<T>>(`/erp/${encodeURIComponent(tableCode)}`, {
+    method: 'POST',
+    token,
+    body: { key, data },
+  })
+}
+
+export async function createERPChildRecord<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  key: string,
+  childCode: string,
+  lineKey: string,
+  data: T,
+): Promise<ERPRecord<T>> {
+  return apiRequest<ERPRecord<T>>(`/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/${encodeURIComponent(childCode)}`, {
+    method: 'POST',
+    token,
+    body: { key: lineKey, data },
+  })
+}
+
+export async function runERPAction<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  key: string,
+  action: string,
+  data: Record<string, unknown> = {},
+): Promise<ERPActionResult<T>> {
+  return apiRequest<ERPActionResult<T>>(
+    `/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/actions/${encodeURIComponent(action)}`,
+    {
+      method: 'POST',
+      token,
+      body: { data },
+    },
+  )
+}
+
 export async function login(email: string, password: string): Promise<AuthResponse> {
   return apiRequest<AuthResponse>('/auth/login', {
     method: 'POST',
@@ -166,6 +237,18 @@ export async function closePlatformOrganization(token: string, organizationID: s
   })
 }
 
+export async function updatePlatformOrganizationProfile(
+  token: string,
+  organizationID: string,
+  input: { name: string; description?: string },
+): Promise<SessionOrganization> {
+  return apiRequest<SessionOrganization>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}`, {
+    method: 'PATCH',
+    token,
+    body: input,
+  })
+}
+
 export async function getOrganizationSubscription(token: string, organizationID: string): Promise<OrganizationSubscription> {
   return apiRequest<OrganizationSubscription>(`/organizations/${encodeURIComponent(organizationID)}/subscription`, {
     token,
@@ -254,6 +337,26 @@ export async function createOrganizationSchemaChange(
     token,
     body: input,
   })
+}
+
+export async function createERPStandardSolutionFlow(
+  token: string,
+  organizationID: string,
+  input: {
+    industry_key: string
+    package_key: string
+    name: string
+    enabled_modules: string[]
+  },
+): Promise<SchemaChangeRequest> {
+  return apiRequest<SchemaChangeRequest>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-flows/erp-standard`,
+    {
+      method: 'POST',
+      token,
+      body: input,
+    },
+  )
 }
 
 export async function approveSchemaChange(token: string, requestID: string, reason = ''): Promise<SchemaChangeRequest> {

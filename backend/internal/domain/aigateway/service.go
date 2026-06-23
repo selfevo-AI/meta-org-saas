@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/costing"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/middleware"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 )
 
 var (

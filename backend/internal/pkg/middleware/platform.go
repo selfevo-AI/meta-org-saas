@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/platformauth"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 )
 
 type PlatformRoleResolver interface {

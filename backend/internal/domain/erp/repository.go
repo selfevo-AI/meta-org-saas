@@ -1,0 +1,256 @@
+package erp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type PostgresRepository struct {
+	db *pgxpool.Pool
+}
+
+func NewRepository(db *pgxpool.Pool) *PostgresRepository {
+	return &PostgresRepository{db: db}
+}
+
+func (r *PostgresRepository) ListRecords(ctx context.Context, table TableDefinition, limit int) ([]Record, error) {
+	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t ORDER BY "UpdatedAt" DESC LIMIT $1`,
+		quoteIdent(table.PrimaryKey), quoteIdent(table.Code))
+	rows, err := r.db.Query(ctx, query, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", table.Code, err)
+	}
+	defer rows.Close()
+	return scanRecords(rows, table.Code, "", "")
+}
+
+func (r *PostgresRepository) CreateRecord(ctx context.Context, table TableDefinition, input RecordInput) (*Record, error) {
+	key := input.Key
+	if key == "" {
+		key = fmt.Sprint(input.Data[table.PrimaryKey])
+	}
+	if key == "" || key == "<nil>" {
+		return nil, fmt.Errorf("%w: %s key is required", ErrValidation, table.PrimaryKey)
+	}
+	payload := copyData(input.Data)
+	payload[table.PrimaryKey] = key
+	record, err := r.insertRecord(ctx, table.Code, table.PrimaryKey, map[string]any{
+		table.PrimaryKey: key,
+		"Payload":        payload,
+	})
+	if err != nil {
+		return nil, err
+	}
+	record.TableCode = table.Code
+	return record, nil
+}
+
+func (r *PostgresRepository) GetRecord(ctx context.Context, table TableDefinition, key string) (*Record, error) {
+	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t WHERE %s::TEXT = $1`,
+		quoteIdent(table.PrimaryKey), quoteIdent(table.Code), quoteIdent(table.PrimaryKey))
+	record, err := scanRecord(table.Code, "", "", r.db.QueryRow(ctx, query, key))
+	if err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) UpdateRecord(ctx context.Context, table TableDefinition, key string, input RecordInput) (*Record, error) {
+	if len(input.Data) == 0 {
+		return r.GetRecord(ctx, table, key)
+	}
+	payload, _ := json.Marshal(input.Data)
+	query := fmt.Sprintf(`UPDATE %s SET "Payload" = "Payload" || $1::jsonb, "UpdatedAt" = NOW() WHERE %s::TEXT = $2 RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
+		quoteIdent(table.Code), quoteIdent(table.PrimaryKey), quoteIdent(table.PrimaryKey), quoteIdent(table.Code))
+	record, err := scanRecord(table.Code, "", "", r.db.QueryRow(ctx, query, payload, key))
+	if err != nil {
+		return nil, err
+	}
+	return record, nil
+}
+
+func (r *PostgresRepository) DeleteRecord(ctx context.Context, table TableDefinition, key string) error {
+	tag, err := r.db.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE %s::TEXT = $1`, quoteIdent(table.Code), quoteIdent(table.PrimaryKey)), key)
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", table.Code, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) ListChildRecords(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, limit int) ([]Record, error) {
+	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t WHERE %s::TEXT = $1 ORDER BY %s LIMIT $2`,
+		quoteIdent(child.LineKey), quoteIdent(child.Code), quoteIdent(child.ParentKey), quoteIdent(child.LineKey))
+	rows, err := r.db.Query(ctx, query, parentKey, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", child.Code, err)
+	}
+	defer rows.Close()
+	return scanRecords(rows, child.Code, parent.Code, parentKey)
+}
+
+func (r *PostgresRepository) CreateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, input RecordInput) (*Record, error) {
+	key := input.Key
+	if key == "" {
+		key = fmt.Sprint(input.Data[child.LineKey])
+	}
+	if key == "" || key == "<nil>" {
+		return nil, fmt.Errorf("%w: %s key is required", ErrValidation, child.LineKey)
+	}
+	payload := copyData(input.Data)
+	payload[child.ParentKey] = parentKey
+	payload[child.LineKey] = key
+	values := map[string]any{
+		child.ParentKey: parentKey,
+		child.LineKey:   key,
+		"Payload":       payload,
+	}
+	if lineStatus, ok := input.Data["LineStatus"]; ok {
+		values["LineStatus"] = lineStatus
+	}
+	record, err := r.insertRecord(ctx, child.Code, child.LineKey, values)
+	if err != nil {
+		return nil, err
+	}
+	record.TableCode = child.Code
+	record.ParentTableCode = parent.Code
+	record.ParentKey = parentKey
+	return record, nil
+}
+
+func (r *PostgresRepository) insertRecord(ctx context.Context, tableCode, keyColumn string, values map[string]any) (*Record, error) {
+	names := sortedKeys(values)
+	columns := make([]string, 0, len(names))
+	placeholders := make([]string, 0, len(names))
+	args := make([]any, 0, len(names))
+	for i, name := range names {
+		columns = append(columns, quoteIdent(name))
+		placeholders = append(placeholders, "$"+strconv.Itoa(i+1))
+		args = append(args, normalizeValue(values[name]))
+	}
+	query := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
+		quoteIdent(tableCode), strings.Join(columns, ", "), strings.Join(placeholders, ", "), quoteIdent(keyColumn), quoteIdent(tableCode))
+	return scanRecord(tableCode, "", "", r.db.QueryRow(ctx, query, args...))
+}
+
+func scanRecords(rows pgx.Rows, tableCode, parentTableCode, parentKey string) ([]Record, error) {
+	records := []Record{}
+	for rows.Next() {
+		record, err := scanRecord(tableCode, parentTableCode, parentKey, rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, *record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func scanRecord(tableCode, parentTableCode, parentKey string, row interface{ Scan(dest ...any) error }) (*Record, error) {
+	var key string
+	var dataJSON []byte
+	var record Record
+	if err := row.Scan(&key, &dataJSON, &record.CreatedAt, &record.UpdatedAt); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	record.TableCode = tableCode
+	record.ParentTableCode = parentTableCode
+	record.ParentKey = parentKey
+	record.Key = key
+	record.Data = map[string]any{}
+	_ = json.Unmarshal(dataJSON, &record.Data)
+	if payload, ok := record.Data["Payload"].(map[string]any); ok {
+		for k, v := range payload {
+			record.Data[k] = v
+		}
+		delete(record.Data, "Payload")
+	}
+	return &record, nil
+}
+
+var identPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func quoteIdent(value string) string {
+	if !identPattern.MatchString(value) {
+		return `""`
+	}
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+
+func sortedKeys(values map[string]any) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func normalizeLimit(limit int) int {
+	if limit <= 0 {
+		return 100
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func normalizeValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		b, _ := json.Marshal(typed)
+		return string(b)
+	case []any:
+		b, _ := json.Marshal(typed)
+		return string(b)
+	default:
+		return typed
+	}
+}
+
+func copyData(values map[string]any) map[string]any {
+	copied := map[string]any{}
+	for k, v := range values {
+		copied[k] = v
+	}
+	return copied
+}
+
+func postgresColumnType(field FieldDefinition) string {
+	switch strings.ToLower(field.DataType) {
+	case "int":
+		return "BIGINT"
+	case "numeric", "decimal":
+		if field.Size != "" {
+			return "NUMERIC(" + field.Size + ")"
+		}
+		return "NUMERIC"
+	case "date":
+		return "DATE"
+	case "jsonb":
+		return "JSONB"
+	case "varchar", "nvarchar":
+		if field.Size != "" {
+			return "VARCHAR(" + field.Size + ")"
+		}
+		return "TEXT"
+	default:
+		return "TEXT"
+	}
+}

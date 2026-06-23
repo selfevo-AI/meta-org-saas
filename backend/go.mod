@@ -1,4 +1,4 @@
-module github.com/selfevo-AI/meta-org/backend
+module github.com/selfevo-AI/meta-org-saas/backend
 
 go 1.22
 

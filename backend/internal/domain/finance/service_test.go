@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 )
 
 func TestSignAndVerifyPayload(t *testing.T) {

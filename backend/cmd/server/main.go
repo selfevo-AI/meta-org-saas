@@ -9,37 +9,38 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/aigateway"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/assistant"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/capability"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/costing"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/dashboard"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/evolution"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/finance"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/governance"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/identity"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/industry"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/inventory"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/layer"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaorg"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/metaresource"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/observability"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/organization"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/procurement"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/project"
-	domainruntime "github.com/selfevo-AI/meta-org/backend/internal/domain/runtime"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/saas"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/sales"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/systemadmin"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/toolruntime"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/verification"
-	"github.com/selfevo-AI/meta-org/backend/internal/domain/workflow"
-	"github.com/selfevo-AI/meta-org/backend/internal/gateway"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/config"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/database"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/secretbox"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/securitykernel"
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/server"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/assistant"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/governance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/identity"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/industry"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/inventory"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/layer"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaorg"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/procurement"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
+	domainruntime "github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/sales"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/verification"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/gateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/config"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/database"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/server"
 )
 
 func main() {
@@ -180,6 +181,10 @@ func main() {
 	runtimeSvc := domainruntime.NewService(runtimeRepo)
 	runtimeHandler := domainruntime.NewHandler(runtimeSvc)
 
+	erpRepo := erp.NewRepository(db)
+	erpSvc := erp.NewService(erpRepo, erp.DefaultCatalog())
+	erpHandler := erp.NewHandler(erpSvc)
+
 	toolRepo := toolruntime.NewRepository(db)
 	toolSvc := toolruntime.NewService(toolRepo, govSvc, toolruntime.InternalTools(projectSvc, financeSvc, evoSvc), toolruntime.WithObservability(obsSvc), toolruntime.WithSecurityKernel(securityKernel))
 	toolHandler := toolruntime.NewHandler(toolSvc)
@@ -243,6 +248,7 @@ func main() {
 		VerificationHandler:  verHandler,
 		GovernanceHandler:    govHandler,
 		EvolutionHandler:     evoHandler,
+		ErpHandler:           erpHandler,
 	})
 
 	srv := server.New(router, cfg.ServerPort)

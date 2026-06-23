@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/selfevo-AI/meta-org/backend/internal/pkg/passwordhash"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/passwordhash"
 	"golang.org/x/crypto/bcrypt"
 )
 

@@ -1,0 +1,314 @@
+package erp
+
+import (
+	"context"
+	"fmt"
+	"testing"
+)
+
+type businessFakeRepository struct {
+	records  map[string]map[string]Record
+	children map[string][]Record
+}
+
+func newBusinessFakeRepository() *businessFakeRepository {
+	return &businessFakeRepository{
+		records:  map[string]map[string]Record{},
+		children: map[string][]Record{},
+	}
+}
+
+func (r *businessFakeRepository) seed(tableCode string, key string, data map[string]any) {
+	if r.records[tableCode] == nil {
+		r.records[tableCode] = map[string]Record{}
+	}
+	r.records[tableCode][key] = Record{TableCode: tableCode, Key: key, Data: copyData(data)}
+}
+
+func (r *businessFakeRepository) seedChild(parentCode string, parentKey string, childCode string, data map[string]any) {
+	key := fmt.Sprint(data["LineNum"])
+	if key == "" || key == "<nil>" {
+		key = fmt.Sprint(len(r.children[childBucket(parentCode, parentKey, childCode)]) + 1)
+	}
+	record := Record{TableCode: childCode, ParentTableCode: parentCode, ParentKey: parentKey, Key: key, Data: copyData(data)}
+	bucket := childBucket(parentCode, parentKey, childCode)
+	r.children[bucket] = append(r.children[bucket], record)
+}
+
+func (r *businessFakeRepository) ListRecords(ctx context.Context, table TableDefinition, limit int) ([]Record, error) {
+	items := []Record{}
+	for _, record := range r.records[table.Code] {
+		items = append(items, record)
+	}
+	return items, nil
+}
+
+func (r *businessFakeRepository) CreateRecord(ctx context.Context, table TableDefinition, input RecordInput) (*Record, error) {
+	key := input.Key
+	if key == "" {
+		key = fmt.Sprint(input.Data[table.PrimaryKey])
+	}
+	data := copyData(input.Data)
+	data[table.PrimaryKey] = key
+	r.seed(table.Code, key, data)
+	record := r.records[table.Code][key]
+	return &record, nil
+}
+
+func (r *businessFakeRepository) GetRecord(ctx context.Context, table TableDefinition, key string) (*Record, error) {
+	record, ok := r.records[table.Code][key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &record, nil
+}
+
+func (r *businessFakeRepository) UpdateRecord(ctx context.Context, table TableDefinition, key string, input RecordInput) (*Record, error) {
+	record, ok := r.records[table.Code][key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if record.Data == nil {
+		record.Data = map[string]any{}
+	}
+	for k, v := range input.Data {
+		record.Data[k] = v
+	}
+	r.seed(table.Code, key, record.Data)
+	updated := r.records[table.Code][key]
+	return &updated, nil
+}
+
+func (r *businessFakeRepository) DeleteRecord(ctx context.Context, table TableDefinition, key string) error {
+	delete(r.records[table.Code], key)
+	return nil
+}
+
+func (r *businessFakeRepository) ListChildRecords(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, limit int) ([]Record, error) {
+	return append([]Record{}, r.children[childBucket(parent.Code, parentKey, child.Code)]...), nil
+}
+
+func (r *businessFakeRepository) CreateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, input RecordInput) (*Record, error) {
+	data := copyData(input.Data)
+	data[child.ParentKey] = parentKey
+	if input.Key != "" {
+		data[child.LineKey] = input.Key
+	}
+	r.seedChild(parent.Code, parentKey, child.Code, data)
+	items := r.children[childBucket(parent.Code, parentKey, child.Code)]
+	record := items[len(items)-1]
+	return &record, nil
+}
+
+func (r *businessFakeRepository) balance(itemCode string, whsCode string) float64 {
+	record, ok := r.records["MITW"][itemCode+"|"+whsCode]
+	if !ok {
+		return 0
+	}
+	value, _ := numberFromAny(record.Data["OnHand"])
+	return value
+}
+
+func (r *businessFakeRepository) childCount(parentCode string, parentKey string, childCode string) int {
+	return len(r.children[childBucket(parentCode, parentKey, childCode)])
+}
+
+func assertGeneratedTable(t *testing.T, result *ActionResult, tableCode string) {
+	t.Helper()
+	for _, record := range result.GeneratedRecords {
+		if record.TableCode == tableCode {
+			return
+		}
+	}
+	t.Fatalf("generated records = %#v, want table %s", result.GeneratedRecords, tableCode)
+}
+
+func childBucket(parentCode string, parentKey string, childCode string) string {
+	return parentCode + ":" + parentKey + ":" + childCode
+}
+
+func numberFromAny(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
+}
+
+func TestApproveRequirementUpdatesStatus(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "analyzed"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{Data: map[string]any{"approver": "u1"}})
+	if err != nil {
+		t.Fatalf("approve returned error: %v", err)
+	}
+	if result.Record == nil {
+		t.Fatal("approve returned nil record, want updated MREQ record")
+	}
+	if result.Record.Data["Status"] != "approved" {
+		t.Fatalf("status = %v, want approved", result.Record.Data["Status"])
+	}
+}
+
+func TestConvertRequirementCreatesProject(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "convert-to-project", ActionInput{Data: map[string]any{"PrjCode": "PRJ-1"}})
+	if err != nil {
+		t.Fatalf("convert returned error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MPRJ")
+}
+
+func TestConvertRequirementRejectsUnapprovedRequirement(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "draft"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "convert-to-project", ActionInput{Data: map[string]any{"PrjCode": "PRJ-1"}})
+	if err == nil {
+		t.Fatalf("convert returned nil error and result %#v, want validation error", result)
+	}
+	if result != nil {
+		t.Fatalf("convert result = %#v, want nil on validation error", result)
+	}
+}
+
+func TestPurchaseOrderSubmitAndApprove(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPOR", "PO-1", map[string]any{"DocEntry": "PO-1", "DocStatus": "O", "WddStatus": "W"})
+	service := NewService(repo, DefaultCatalog())
+
+	submitted, err := service.RunAction(context.Background(), "MPOR", "PO-1", "submit", ActionInput{})
+	if err != nil {
+		t.Fatalf("submit error: %v", err)
+	}
+	if submitted.Record == nil {
+		t.Fatal("submit returned nil record, want updated MPOR record")
+	}
+	if submitted.Record.Data["DocStatus"] != "S" {
+		t.Fatalf("DocStatus = %v, want S", submitted.Record.Data["DocStatus"])
+	}
+	approved, err := service.RunAction(context.Background(), "MPOR", "PO-1", "approve", ActionInput{})
+	if err != nil {
+		t.Fatalf("approve error: %v", err)
+	}
+	if approved.Record == nil {
+		t.Fatal("approve returned nil record, want updated MPOR record")
+	}
+	if approved.Record.Data["WddStatus"] != "A" {
+		t.Fatalf("WddStatus = %v, want A", approved.Record.Data["WddStatus"])
+	}
+}
+
+func TestGoodsReceiptPostGeneratesInventoryAndPayable(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPDN", "GR-1", map[string]any{"DocEntry": "GR-1", "DocStatus": "O", "CardCode": "S-1"})
+	repo.seedChild("MPDN", "GR-1", "PDN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 10}})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPDN", "GR-1", "post", ActionInput{})
+	if err != nil {
+		t.Fatalf("post error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MIGN")
+	assertGeneratedTable(t, result, "MPCH")
+	if repo.childCount("MIGN", "IGN-GR-1", "IGN1") != 1 {
+		t.Fatalf("MIGN child rows = %d, want 1", repo.childCount("MIGN", "IGN-GR-1", "IGN1"))
+	}
+	if repo.childCount("MPCH", "AP-GR-1", "PCH1") != 1 {
+		t.Fatalf("MPCH child rows = %d, want 1", repo.childCount("MPCH", "AP-GR-1", "PCH1"))
+	}
+	if repo.balance("I-1", "W-1") != 2 {
+		t.Fatalf("balance = %v, want 2", repo.balance("I-1", "W-1"))
+	}
+}
+
+func TestSalesDeliveryPaymentLoop(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MRDR", "SO-1", map[string]any{"DocEntry": "SO-1", "DocStatus": "O", "Confirmed": "N", "WddStatus": "W"})
+	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "CardCode": "C-1"})
+	repo.seedChild("MDLN", "DLV-1", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 15}})
+	repo.seed("MITW", "I-1|W-1", map[string]any{"ItemCode": "I-1|W-1", "OnHand": 5})
+	service := NewService(repo, DefaultCatalog())
+
+	confirmed, err := service.RunAction(context.Background(), "MRDR", "SO-1", "confirm", ActionInput{})
+	if err != nil {
+		t.Fatalf("confirm error: %v", err)
+	}
+	if confirmed.Record == nil {
+		t.Fatal("confirm returned nil record, want updated MRDR record")
+	}
+	if confirmed.Record.Data["Confirmed"] != "Y" {
+		t.Fatalf("Confirmed = %v, want Y", confirmed.Record.Data["Confirmed"])
+	}
+	approved, err := service.RunAction(context.Background(), "MRDR", "SO-1", "approve", ActionInput{})
+	if err != nil {
+		t.Fatalf("approve error: %v", err)
+	}
+	if approved.Record == nil {
+		t.Fatal("approve returned nil record, want updated MRDR record")
+	}
+	if approved.Record.Data["WddStatus"] != "A" {
+		t.Fatalf("WddStatus = %v, want A", approved.Record.Data["WddStatus"])
+	}
+	delivery, err := service.RunAction(context.Background(), "MDLN", "DLV-1", "post", ActionInput{})
+	if err != nil {
+		t.Fatalf("delivery post error: %v", err)
+	}
+	assertGeneratedTable(t, delivery, "MIGE")
+	assertGeneratedTable(t, delivery, "MINV")
+	if repo.childCount("MIGE", "IGE-DLV-1", "IGE1") != 1 {
+		t.Fatalf("MIGE child rows = %d, want 1", repo.childCount("MIGE", "IGE-DLV-1", "IGE1"))
+	}
+	if repo.childCount("MINV", "INV-DLV-1", "INV1") != 1 {
+		t.Fatalf("MINV child rows = %d, want 1", repo.childCount("MINV", "INV-DLV-1", "INV1"))
+	}
+	if repo.balance("I-1", "W-1") != 3 {
+		t.Fatalf("balance = %v, want 3", repo.balance("I-1", "W-1"))
+	}
+	repo.seed("MRCT", "PAY-1", map[string]any{"DocEntry": "PAY-1", "DocTotal": 30, "OpenBal": 30})
+	payment, err := service.RunAction(context.Background(), "MRCT", "PAY-1", "allocate", ActionInput{Data: map[string]any{"TargetTable": "MINV", "TargetKey": "INV-DLV-1", "Amount": 20}})
+	if err != nil {
+		t.Fatalf("allocate error: %v", err)
+	}
+	if payment.Effects["allocated_amount"] != float64(20) {
+		t.Fatalf("effects = %#v, want allocated_amount 20", payment.Effects)
+	}
+	if repo.records["MRCT"]["PAY-1"].Data["OpenBal"] != float64(10) {
+		t.Fatalf("payment OpenBal = %v, want 10", repo.records["MRCT"]["PAY-1"].Data["OpenBal"])
+	}
+	if repo.records["MINV"]["INV-DLV-1"].Data["DocStatus"] != "O" {
+		t.Fatalf("invoice DocStatus = %v, want O", repo.records["MINV"]["INV-DLV-1"].Data["DocStatus"])
+	}
+}
+
+func TestInvoicePostCreatesJournalEntryWithJournalPrimaryKey(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MINV", "INV-1", map[string]any{"DocEntry": "INV-1", "DocTotal": 100, "PaidToDate": 0, "DocStatus": "O"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MINV", "INV-1", "post", ActionInput{})
+	if err != nil {
+		t.Fatalf("invoice post error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MJDT")
+	journal := repo.records["MJDT"]["JE-INV-1"]
+	if journal.Data["TransId"] != "JE-INV-1" {
+		t.Fatalf("journal TransId = %v, want JE-INV-1", journal.Data["TransId"])
+	}
+	if _, ok := journal.Data["DocEntry"]; ok {
+		t.Fatalf("journal unexpectedly has DocEntry: %#v", journal.Data)
+	}
+}
