@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 )
 
 func TestNewAssistantHarnessFreezesRunScope(t *testing.T) {
@@ -131,6 +132,102 @@ func TestAssistantRuntimeBuildsContextBeforeLegacyRun(t *testing.T) {
 	}
 }
 
+func TestAssistantRunAddsContextMetadataToInvocation(t *testing.T) {
+	sessionID := uuid.New()
+	actorID := uuid.New()
+	pkgID := uuid.New()
+	ai := &capturingAIInvoker{}
+	repo := &fakeRepository{
+		session: &Session{
+			ID:            sessionID,
+			ActorID:       actorID,
+			ActorType:     "internal_human",
+			ModuleKey:     "erp",
+			ProviderType:  "openai",
+			Model:         "gpt-4o-mini",
+			WorkingMemory: map[string]any{},
+		},
+	}
+	service := NewService(repo, ai, &fakeToolExecutor{})
+	engine := &fakeContextEngine{pkg: &ContextPackage{
+		ID:            pkgID,
+		AttentionCore: []ContextItem{{EntityKey: "requirement", FieldKey: "status", RecordID: "REQ-1", Value: "approved"}},
+		Provenance:    map[string]any{"source": "context_dictionary"},
+	}}
+	runtime := NewAssistantRuntime(service, engine, nil, NewMemoryEventSink(repo))
+
+	events, err := runtime.Run(context.Background(), AssistantRunRequest{
+		SessionID: sessionID,
+		ActorID:   actorID,
+		ActorType: "internal_human",
+		Input:     RunInput{Message: "summarize"},
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	for range events {
+	}
+	if ai.lastInput.Metadata["context_package_id"] != pkgID.String() {
+		t.Fatalf("AI metadata = %#v, want context package id", ai.lastInput.Metadata)
+	}
+	llmStep := repo.lastStepOfType(StepLLM)
+	if llmStep.Data["context_package_id"] != pkgID.String() {
+		t.Fatalf("LLM step data = %#v, want context package id", llmStep.Data)
+	}
+}
+
+func TestAssistantResumeRebuildsContextAfterApproval(t *testing.T) {
+	sessionID := uuid.New()
+	actorID := uuid.New()
+	approvalID := uuid.New()
+	executionID := uuid.New()
+	refreshedPkg := uuid.New()
+	engine := &sequenceContextEngine{packages: []*ContextPackage{
+		{ID: refreshedPkg, AttentionCore: []ContextItem{{EntityKey: "project", FieldKey: "status", RecordID: "PRJ-1", Value: "active"}}},
+	}}
+	repo := &fakeRepository{
+		session: &Session{
+			ID:            sessionID,
+			ActorID:       actorID,
+			ActorType:     "internal_human",
+			ModuleKey:     "erp",
+			ProviderType:  "openai",
+			Model:         "gpt-4o-mini",
+			WorkingMemory: map[string]any{},
+		},
+	}
+	tools := &fakeToolExecutor{
+		approval: &toolruntime.ToolApproval{ID: approvalID, ExecutionID: executionID, Status: toolruntime.ApprovalApproved},
+		execution: &toolruntime.ToolExecution{
+			ID:            executionID,
+			Status:        toolruntime.ExecutionCompleted,
+			ResultSummary: "ERP action posted",
+			Result:        map[string]any{"ok": true},
+		},
+	}
+	service := NewService(repo, &capturingAIInvoker{}, tools)
+	runtime := NewAssistantRuntime(service, engine, nil, NewMemoryEventSink(repo))
+
+	events, err := runtime.Resume(context.Background(), AssistantResumeRequest{
+		SessionID: sessionID,
+		ActorID:   actorID,
+		ActorType: "internal_human",
+		Input:     ResumeInput{ToolApprovalID: approvalID},
+	})
+	if err != nil {
+		t.Fatalf("Resume returned error: %v", err)
+	}
+	for range events {
+	}
+	if engine.calls != 1 {
+		t.Fatalf("context rebuild calls = %d, want 1", engine.calls)
+	}
+	toolResultStep := repo.lastStepOfType(StepToolResult)
+	if toolResultStep.Data["context_package_id"] != refreshedPkg.String() {
+		t.Fatalf("tool result step data = %#v, want refreshed context package", toolResultStep.Data)
+	}
+}
+
 type fakeAssistantRuntime struct {
 	request AssistantRunRequest
 	events  chan RunEvent
@@ -158,6 +255,24 @@ func (f *fakeContextEngine) BuildContextPackage(_ context.Context, request Conte
 	return f.pkg, nil
 }
 
+type sequenceContextEngine struct {
+	packages []*ContextPackage
+	calls    int
+}
+
+func (f *sequenceContextEngine) BuildContextPackage(_ context.Context, request ContextRequest) (*ContextPackage, error) {
+	if len(f.packages) == 0 {
+		f.calls++
+		return &ContextPackage{ID: uuid.New(), SessionID: request.SessionID}, nil
+	}
+	index := f.calls
+	if index >= len(f.packages) {
+		index = len(f.packages) - 1
+	}
+	f.calls++
+	return f.packages[index], nil
+}
+
 type fakeAIInvoker struct{}
 
 func (f *fakeAIInvoker) Invoke(context.Context, aigateway.InvokeInput) (*aigateway.InvokeOutput, error) {
@@ -166,6 +281,21 @@ func (f *fakeAIInvoker) Invoke(context.Context, aigateway.InvokeInput) (*aigatew
 		Content:      "ok",
 		ProviderType: "openai",
 		Model:        "gpt-4o-mini",
+		CompletedAt:  time.Now(),
+	}, nil
+}
+
+type capturingAIInvoker struct {
+	lastInput aigateway.InvokeInput
+}
+
+func (f *capturingAIInvoker) Invoke(_ context.Context, input aigateway.InvokeInput) (*aigateway.InvokeOutput, error) {
+	f.lastInput = input
+	return &aigateway.InvokeOutput{
+		InvocationID: uuid.New(),
+		Content:      "done",
+		ProviderType: input.ProviderType,
+		Model:        input.Model,
 		CompletedAt:  time.Now(),
 	}, nil
 }

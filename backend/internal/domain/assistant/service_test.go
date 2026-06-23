@@ -577,6 +577,7 @@ type fakeRepository struct {
 	lastSkillListModuleKey  string
 	lastSkillListTargetType string
 	lastStep                AddStepInput
+	steps                   []AddStepInput
 	session                 *Session
 	sessionErr              error
 }
@@ -652,7 +653,17 @@ func (f *fakeRepository) ListMessages(context.Context, uuid.UUID, int) ([]Messag
 
 func (f *fakeRepository) AddStep(_ context.Context, _ *Session, input AddStepInput) (*Step, error) {
 	f.lastStep = input
+	f.steps = append(f.steps, input)
 	return &Step{ID: uuid.New(), StepType: input.StepType, Status: input.Status, Data: input.Data}, nil
+}
+
+func (f *fakeRepository) lastStepOfType(stepType string) AddStepInput {
+	for i := len(f.steps) - 1; i >= 0; i-- {
+		if f.steps[i].StepType == stepType {
+			return f.steps[i]
+		}
+	}
+	return AddStepInput{}
 }
 
 func (f *fakeRepository) ListSteps(context.Context, uuid.UUID, int) ([]Step, error) {

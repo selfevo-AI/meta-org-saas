@@ -42,7 +42,9 @@ func aigatewayToolCall(name string) ToolCallRequest {
 }
 
 type fakeToolExecutor struct {
-	output *toolruntime.ExecuteToolOutput
+	output    *toolruntime.ExecuteToolOutput
+	approval  *toolruntime.ToolApproval
+	execution *toolruntime.ToolExecution
 }
 
 func (f *fakeToolExecutor) ExecuteTool(context.Context, toolruntime.ExecuteToolInput) (*toolruntime.ExecuteToolOutput, error) {
@@ -57,9 +59,15 @@ func (f *fakeToolExecutor) ListTools(context.Context, int) ([]toolruntime.ToolDe
 }
 
 func (f *fakeToolExecutor) GetApproval(context.Context, uuid.UUID) (*toolruntime.ToolApproval, error) {
+	if f.approval != nil {
+		return f.approval, nil
+	}
 	return nil, ErrNotFound
 }
 
 func (f *fakeToolExecutor) GetExecution(context.Context, uuid.UUID) (*toolruntime.ToolExecution, error) {
+	if f.execution != nil {
+		return f.execution, nil
+	}
 	return nil, ErrNotFound
 }

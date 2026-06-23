@@ -438,6 +438,10 @@ func (s *Service) Run(ctx context.Context, sessionID uuid.UUID, actorID uuid.UUI
 }
 
 func (s *Service) runLegacy(ctx context.Context, sessionID uuid.UUID, actorID uuid.UUID, actorType string, input RunInput) (<-chan RunEvent, error) {
+	return s.runWithContextEngine(ctx, sessionID, actorID, actorType, input, s.contextEngine)
+}
+
+func (s *Service) runWithContextEngine(ctx context.Context, sessionID uuid.UUID, actorID uuid.UUID, actorType string, input RunInput, engine ContextPackageBuilder) (<-chan RunEvent, error) {
 	if strings.TrimSpace(input.Message) == "" {
 		return nil, fmt.Errorf("%w: message is required", ErrValidation)
 	}
@@ -456,7 +460,7 @@ func (s *Service) runLegacy(ctx context.Context, sessionID uuid.UUID, actorID uu
 	}
 
 	events := make(chan RunEvent)
-	go s.runLoop(ctx, events, session, input)
+	go s.runLoop(ctx, events, session, input, engine)
 	return events, nil
 }
 
@@ -468,6 +472,10 @@ func (s *Service) Resume(ctx context.Context, sessionID uuid.UUID, actorID uuid.
 }
 
 func (s *Service) resumeLegacy(ctx context.Context, sessionID uuid.UUID, actorID uuid.UUID, actorType string, input ResumeInput) (<-chan RunEvent, error) {
+	return s.resumeWithContextEngine(ctx, sessionID, actorID, actorType, input, s.contextEngine)
+}
+
+func (s *Service) resumeWithContextEngine(ctx context.Context, sessionID uuid.UUID, actorID uuid.UUID, actorType string, input ResumeInput, engine ContextPackageBuilder) (<-chan RunEvent, error) {
 	if input.ToolApprovalID == uuid.Nil {
 		return nil, fmt.Errorf("%w: tool_approval_id is required", ErrValidation)
 	}
@@ -485,11 +493,59 @@ func (s *Service) resumeLegacy(ctx context.Context, sessionID uuid.UUID, actorID
 		return nil, err
 	}
 	events := make(chan RunEvent)
-	go s.resumeLoop(ctx, events, session, input)
+	go s.resumeLoop(ctx, events, session, input, engine)
 	return events, nil
 }
 
-func (s *Service) runLoop(ctx context.Context, events chan<- RunEvent, session *Session, input RunInput) {
+type assistantTurnContext struct {
+	Package     *ContextPackage
+	WorkContext WorkRecordContext
+	Metadata    map[string]any
+}
+
+func (s *Service) buildAssistantTurnContext(ctx context.Context, session *Session, intent string, tokenBudget int, engine ContextPackageBuilder) (assistantTurnContext, error) {
+	if engine == nil {
+		engine = s.contextEngine
+	}
+	if engine != nil {
+		pkg, err := engine.BuildContextPackage(ctx, ContextRequest{
+			SessionID:      session.ID,
+			ActorID:        session.ActorID,
+			ActorType:      session.ActorType,
+			OrganizationID: session.OrganizationID,
+			ModuleKey:      session.ModuleKey,
+			WorkflowID:     session.WorkflowID,
+			TaskID:         session.TaskID,
+			TargetType:     session.TargetType,
+			TargetID:       session.TargetID,
+			Intent:         intent,
+			Mode:           session.Mode,
+			TokenBudget:    firstPositive(tokenBudget, 4096),
+		})
+		if err != nil {
+			return assistantTurnContext{}, err
+		}
+		return assistantTurnContext{
+			Package:     pkg,
+			WorkContext: contextPackageToWorkRecordContext(session.ModuleKey, pkg),
+			Metadata:    contextPackageMetadata(pkg),
+		}, nil
+	}
+	workContext := WorkRecordContext{ModuleKey: session.ModuleKey}
+	if s.contextResolver != nil {
+		workContext = s.contextResolver.Resolve(ctx, session)
+	}
+	return assistantTurnContext{
+		WorkContext: workContext,
+		Metadata: map[string]any{
+			"context_record_count": len(workContext.Records),
+			"context_error":        workContext.Error,
+			"context_source":       "compatibility_resolver",
+		},
+	}, nil
+}
+
+func (s *Service) runLoop(ctx context.Context, events chan<- RunEvent, session *Session, input RunInput, engine ContextPackageBuilder) {
 	defer close(events)
 	send := func(event RunEvent) bool {
 		select {
@@ -520,9 +576,10 @@ func (s *Service) runLoop(ctx context.Context, events chan<- RunEvent, session *
 		fail(err, 0)
 		return
 	}
-	workContext := WorkRecordContext{ModuleKey: session.ModuleKey}
-	if s.contextResolver != nil {
-		workContext = s.contextResolver.Resolve(ctx, session)
+	turnContext, err := s.buildAssistantTurnContext(ctx, session, input.Message, 4096, engine)
+	if err != nil {
+		fail(err, 0)
+		return
 	}
 	history, err := s.repo.ListMessages(ctx, session.ID, s.maxHistory)
 	if err != nil {
@@ -535,7 +592,7 @@ func (s *Service) runLoop(ctx context.Context, events chan<- RunEvent, session *
 		return
 	}
 
-	messages := buildAIMessages(session, memories, history, workContext)
+	messages := buildAIMessages(session, memories, history, turnContext.WorkContext)
 	tools := gatewayTools(toolDefs)
 	providerID, channelID, providerType, model, serviceTier, effort := runModelConfig(session, input)
 	if (providerID == nil && providerType == "") || model == "" {
@@ -543,10 +600,10 @@ func (s *Service) runLoop(ctx context.Context, events chan<- RunEvent, session *
 		return
 	}
 
-	s.continueAssistantTurns(ctx, send, fail, session, messages, workContext, tools, providerID, channelID, providerType, model, serviceTier, effort, 1)
+	s.continueAssistantTurns(ctx, send, fail, session, messages, turnContext, tools, providerID, channelID, providerType, model, serviceTier, effort, 1)
 }
 
-func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, session *Session, input ResumeInput) {
+func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, session *Session, input ResumeInput, engine ContextPackageBuilder) {
 	defer close(events)
 	send := func(event RunEvent) bool {
 		select {
@@ -586,7 +643,15 @@ func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, sessio
 		return
 	}
 	callID, toolName, turn := approvalStepContext(steps, input.ToolApprovalID, execution.ID)
+	turnContext, err := s.buildAssistantTurnContext(ctx, session, "resume_after_tool_approval", 4096, engine)
+	if err != nil {
+		fail(err, turn)
+		return
+	}
 	payload := map[string]any{"status": execution.Status, "summary": execution.ResultSummary, "result": execution.Result, "error": execution.ErrorMessage}
+	for key, value := range turnContext.Metadata {
+		payload[key] = value
+	}
 	resultStep, err := s.repo.AddStep(ctx, session, AddStepInput{
 		ToolExecutionID: &execution.ID,
 		ToolApprovalID:  &approval.ID,
@@ -615,10 +680,6 @@ func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, sessio
 		fail(err, turn)
 		return
 	}
-	workContext := WorkRecordContext{ModuleKey: session.ModuleKey}
-	if s.contextResolver != nil {
-		workContext = s.contextResolver.Resolve(ctx, session)
-	}
 	history, err := s.repo.ListMessages(ctx, session.ID, s.maxHistory)
 	if err != nil {
 		fail(err, turn)
@@ -629,14 +690,14 @@ func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, sessio
 		fail(err, turn)
 		return
 	}
-	messages := buildAIMessages(session, memories, history, workContext)
+	messages := buildAIMessages(session, memories, history, turnContext.WorkContext)
 	tools := gatewayTools(toolDefs)
 	providerID, channelID, providerType, model, serviceTier, effort := runModelConfig(session, RunInput{})
 	if (providerID == nil && providerType == "") || model == "" {
 		fail(fmt.Errorf("%w: model provider and model are required", ErrValidation), turn)
 		return
 	}
-	s.continueAssistantTurns(ctx, send, fail, session, messages, workContext, tools, providerID, channelID, providerType, model, serviceTier, effort, turn+1)
+	s.continueAssistantTurns(ctx, send, fail, session, messages, turnContext, tools, providerID, channelID, providerType, model, serviceTier, effort, turn+1)
 }
 
 func (s *Service) continueAssistantTurns(
@@ -645,7 +706,7 @@ func (s *Service) continueAssistantTurns(
 	fail func(error, int),
 	session *Session,
 	messages []aigateway.Message,
-	workContext WorkRecordContext,
+	turnContext assistantTurnContext,
 	tools []aigateway.ToolDefinition,
 	providerID *uuid.UUID,
 	channelID *uuid.UUID,
@@ -656,6 +717,15 @@ func (s *Service) continueAssistantTurns(
 	startTurn int,
 ) {
 	for turn := startTurn; turn <= s.maxTurns; turn++ {
+		invocationMetadata := map[string]any{
+			"assistant_session_id":   session.ID.String(),
+			"module_key":             session.ModuleKey,
+			"position_id":            uuidString(session.PositionID),
+			"position_assignment_id": uuidString(session.PositionAssignmentID),
+		}
+		for key, value := range turnContext.Metadata {
+			invocationMetadata[key] = value
+		}
 		output, err := s.ai.Invoke(ctx, aigateway.InvokeInput{
 			ProviderID:         providerID,
 			PreferredChannelID: channelID,
@@ -675,14 +745,7 @@ func (s *Service) continueAssistantTurns(
 				UserID:         actorIDForAttribution(session),
 				SourceSurface:  "assistant:" + session.ModuleKey,
 			},
-			Metadata: map[string]any{
-				"assistant_session_id":   session.ID.String(),
-				"module_key":             session.ModuleKey,
-				"position_id":            uuidString(session.PositionID),
-				"position_assignment_id": uuidString(session.PositionAssignmentID),
-				"context_record_count":   len(workContext.Records),
-				"context_error":          workContext.Error,
-			},
+			Metadata: invocationMetadata,
 		})
 		if err != nil {
 			fail(err, turn)
@@ -696,12 +759,16 @@ func (s *Service) continueAssistantTurns(
 			fail(err, turn)
 			return
 		}
+		stepData := map[string]any{"tool_call_count": len(output.ToolCalls), "model": output.Model, "provider_type": output.ProviderType}
+		for key, value := range turnContext.Metadata {
+			stepData[key] = value
+		}
 		llmStep, err := s.repo.AddStep(ctx, session, AddStepInput{
 			InvocationID: &output.InvocationID,
 			StepType:     StepLLM,
 			Status:       StatusCompleted,
 			Summary:      trimSummary(output.Content),
-			Data:         map[string]any{"tool_call_count": len(output.ToolCalls), "model": output.Model, "provider_type": output.ProviderType, "context_record_count": len(workContext.Records)},
+			Data:         stepData,
 			Turn:         turn,
 		})
 		if err != nil {
@@ -718,12 +785,16 @@ func (s *Service) continueAssistantTurns(
 
 		for index, call := range output.ToolCalls {
 			callID := toolCallID(call, index)
+			callData := map[string]any{"tool_call_id": callID, "tool_name": call.Name, "arguments": call.Arguments}
+			for key, value := range turnContext.Metadata {
+				callData[key] = value
+			}
 			callStep, err := s.repo.AddStep(ctx, session, AddStepInput{
 				InvocationID: &output.InvocationID,
 				StepType:     StepToolCall,
 				Status:       "requested",
 				Summary:      call.Name,
-				Data:         map[string]any{"tool_call_id": callID, "tool_name": call.Name, "arguments": call.Arguments},
+				Data:         callData,
 				Turn:         turn,
 			})
 			if err != nil {
@@ -752,6 +823,10 @@ func (s *Service) continueAssistantTurns(
 			}
 			status := result.Execution.Status
 			if result.Approval != nil {
+				approvalData := map[string]any{"tool_call_id": callID, "tool_name": call.Name, "approval_id": result.Approval.ID.String()}
+				for key, value := range turnContext.Metadata {
+					approvalData[key] = value
+				}
 				step, _ := s.repo.AddStep(ctx, session, AddStepInput{
 					InvocationID:    &output.InvocationID,
 					ToolExecutionID: &result.Execution.ID,
@@ -759,7 +834,7 @@ func (s *Service) continueAssistantTurns(
 					StepType:        StepApproval,
 					Status:          StatusApprovalRequired,
 					Summary:         result.Execution.ResultSummary,
-					Data:            map[string]any{"tool_call_id": callID, "tool_name": call.Name, "approval_id": result.Approval.ID.String()},
+					Data:            approvalData,
 					Turn:            turn,
 				})
 				_ = s.repo.UpdateSessionStatus(ctx, session.ID, StatusApprovalRequired, "")
@@ -767,6 +842,9 @@ func (s *Service) continueAssistantTurns(
 				return
 			}
 			payload := map[string]any{"status": status, "summary": result.Execution.ResultSummary, "result": result.Execution.Result, "error": result.Execution.ErrorMessage}
+			for key, value := range turnContext.Metadata {
+				payload[key] = value
+			}
 			resultStep, err := s.repo.AddStep(ctx, session, AddStepInput{
 				InvocationID:    &output.InvocationID,
 				ToolExecutionID: &result.Execution.ID,
