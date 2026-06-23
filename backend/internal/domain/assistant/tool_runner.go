@@ -50,9 +50,20 @@ func (r *ToolRunner) ExecuteTool(ctx context.Context, request ToolRunRequest) (*
 	if len(r.allowed) > 0 && !r.allowed[request.Call.Name] {
 		return nil, fmt.Errorf("%w: tool %s is not allowed in this assistant context", ErrForbidden, request.Call.Name)
 	}
-	args := request.Call.Arguments
+	args := copyMap(request.Call.Arguments)
 	if args == nil {
 		args = map[string]any{}
+	}
+	contextPackageID := ""
+	if request.ContextPackage != nil && request.ContextPackage.ID != uuid.Nil {
+		contextPackageID = request.ContextPackage.ID.String()
+		args["context_package_id"] = contextPackageID
+		args["context_source"] = request.ContextPackage.Provenance["source"]
+	}
+	args["assistant_session_id"] = request.Session.ID.String()
+	idempotencyKey := fmt.Sprintf("assistant:%s:%s", request.Session.ID, request.Call.ID)
+	if contextPackageID != "" {
+		idempotencyKey = fmt.Sprintf("assistant:%s:%s:%s", request.Session.ID, contextPackageID, request.Call.ID)
 	}
 	return r.executor.ExecuteTool(ctx, toolruntime.ExecuteToolInput{
 		ToolName:       request.Call.Name,
@@ -64,7 +75,7 @@ func (r *ToolRunner) ExecuteTool(ctx context.Context, request ToolRunRequest) (*
 		ProjectID:      request.Session.ProjectID,
 		WorkflowID:     request.Session.WorkflowID,
 		TaskID:         request.Session.TaskID,
-		IdempotencyKey: fmt.Sprintf("assistant:%s:%s", request.Session.ID, request.Call.ID),
+		IdempotencyKey: idempotencyKey,
 		Arguments:      args,
 	})
 }

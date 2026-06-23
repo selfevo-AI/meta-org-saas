@@ -804,18 +804,16 @@ func (s *Service) continueAssistantTurns(
 			if !send(RunEvent{Type: "tool_call", Step: callStep, Data: callStep.Data}) {
 				return
 			}
-			result, err := s.tools.ExecuteTool(ctx, toolruntime.ExecuteToolInput{
-				ToolName:       call.Name,
-				InvocationID:   &output.InvocationID,
-				ActorID:        session.ActorID,
-				ActorType:      session.ActorType,
-				OrganizationID: session.OrganizationID,
-				DepartmentID:   session.DepartmentID,
-				ProjectID:      session.ProjectID,
-				WorkflowID:     session.WorkflowID,
-				TaskID:         session.TaskID,
-				IdempotencyKey: fmt.Sprintf("assistant:%s:%s:%d", session.ID, callID, turn),
-				Arguments:      call.Arguments,
+			runner := NewToolRunner(s.tools, ToolRunnerConfig{})
+			result, err := runner.ExecuteTool(ctx, ToolRunRequest{
+				Session:        session,
+				ContextPackage: turnContext.Package,
+				Call: ToolCallRequest{
+					ID:        callID,
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				},
+				InvocationID: &output.InvocationID,
 			})
 			if err != nil {
 				fail(err, turn)
