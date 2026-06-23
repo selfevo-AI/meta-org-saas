@@ -156,6 +156,38 @@ func TestConfirmProposalRequiresHumanAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestApplyContextProposalUsesHumanConfirmation(t *testing.T) {
+	proposalID := uuid.New()
+	reviewerID := uuid.New()
+	repo := &fakeRepository{
+		proposal: &Proposal{
+			ID:           proposalID,
+			SessionID:    uuid.New(),
+			ModuleKey:    "erp",
+			TargetType:   "erp_action",
+			ProposalType: "context_change",
+			Status:       ProposalPending,
+			Payload:      map[string]any{"table_code": "MREQ", "key": "REQ-1", "action": "approve"},
+		},
+	}
+	applicator := &fakeProposalApplicator{}
+	svc := NewService(repo, nil, nil, WithProposalApplicator(applicator))
+
+	result, err := svc.ApplyContextProposal(context.Background(), proposalID, reviewerID, "internal_human")
+	if err != nil {
+		t.Fatalf("ApplyContextProposal returned error: %v", err)
+	}
+	if result["proposal_id"] != proposalID.String() || result["status"] != ProposalApplied {
+		t.Fatalf("result = %#v, want applied proposal", result)
+	}
+	if result["module_key"] != "erp" || result["target_type"] != "erp_action" {
+		t.Fatalf("result = %#v, want proposal metadata", result)
+	}
+	if applicator.calls != 1 {
+		t.Fatalf("applicator calls = %d, want 1", applicator.calls)
+	}
+}
+
 func TestConfirmProposalRequiresSessionAccess(t *testing.T) {
 	proposalID := uuid.New()
 	repo := &fakeRepository{

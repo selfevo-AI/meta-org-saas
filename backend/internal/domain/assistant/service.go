@@ -279,6 +279,21 @@ func (s *Service) ConfirmProposal(ctx context.Context, proposalID uuid.UUID, rev
 	return s.repo.MarkProposalApplied(ctx, proposal.ID, reviewerID, result)
 }
 
+func (s *Service) ApplyContextProposal(ctx context.Context, proposalID uuid.UUID, reviewerID uuid.UUID, reviewerType string) (map[string]any, error) {
+	proposal, err := s.ConfirmProposal(ctx, proposalID, reviewerID, reviewerType)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"proposal_id":  proposal.ID.String(),
+		"status":       proposal.Status,
+		"module_key":   proposal.ModuleKey,
+		"target_type":  proposal.TargetType,
+		"target_id":    uuidString(proposal.TargetID),
+		"apply_result": proposal.ApplyResult,
+	}, nil
+}
+
 func (s *Service) RejectProposal(ctx context.Context, proposalID uuid.UUID, reviewerID uuid.UUID, reviewerType string, reason string) (*Proposal, error) {
 	if proposalID == uuid.Nil || reviewerID == uuid.Nil {
 		return nil, fmt.Errorf("%w: proposal and reviewer are required", ErrValidation)
