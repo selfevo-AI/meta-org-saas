@@ -9,8 +9,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	actionExecutionTable       = "MAEX"
+	actionGeneratedRecordTable = "AEX1"
 )
 
 type PostgresRepository struct {
@@ -128,6 +135,95 @@ func (r *PostgresRepository) CreateChildRecord(ctx context.Context, parent Table
 	return record, nil
 }
 
+func (r *PostgresRepository) CreateActionExecution(ctx context.Context, execution ActionExecution) (*ActionExecution, error) {
+	if execution.ID == uuid.Nil {
+		execution.ID = uuid.New()
+	}
+	if execution.Status == "" {
+		execution.Status = ActionExecutionRunning
+	}
+	if execution.Payload == nil {
+		execution.Payload = map[string]any{}
+	}
+	payload, err := json.Marshal(execution.Payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ERP action execution payload: %w", err)
+	}
+	query := fmt.Sprintf(`INSERT INTO %s ("ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "Payload")
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+		RETURNING "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"`, quoteIdent(actionExecutionTable))
+	return scanActionExecution(r.db.QueryRow(ctx, query, execution.ID, execution.TableCode, execution.RecordKey, execution.Action, execution.Status, execution.IdempotencyKey, execution.ActorID, execution.ActorType, execution.ToolExecutionID, execution.AssistantSessionID, execution.Source, string(payload)))
+}
+
+func (r *PostgresRepository) FindActionExecutionByIdempotencyKey(ctx context.Context, key string) (*ActionExecution, error) {
+	query := fmt.Sprintf(`SELECT "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"
+		FROM %s WHERE "IdempotencyKey" = $1 ORDER BY "StartedAt" DESC LIMIT 1`, quoteIdent(actionExecutionTable))
+	return scanActionExecution(r.db.QueryRow(ctx, query, key))
+}
+
+func (r *PostgresRepository) CompleteActionExecution(ctx context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal ERP action execution completion payload: %w", err)
+	}
+	failureCode := ""
+	failureMessage := ""
+	if failure != nil {
+		failureCode = failure.Code
+		failureMessage = failure.Message
+	}
+	query := fmt.Sprintf(`UPDATE %s SET "Status" = $2, "Payload" = $3::jsonb, "FailureCode" = $4, "FailureMessage" = $5, "CompletedAt" = NOW()
+		WHERE "ActionID" = $1
+		RETURNING "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"`, quoteIdent(actionExecutionTable))
+	return scanActionExecution(r.db.QueryRow(ctx, query, id, status, string(payloadBytes), failureCode, failureMessage))
+}
+
+func (r *PostgresRepository) CreateActionGeneratedRecord(ctx context.Context, record ActionGeneratedRecord) error {
+	if record.Payload == nil {
+		record.Payload = map[string]any{}
+	}
+	if record.RelationType == "" {
+		record.RelationType = "created"
+	}
+	payload, err := json.Marshal(record.Payload)
+	if err != nil {
+		return fmt.Errorf("marshal ERP action generated record payload: %w", err)
+	}
+	query := fmt.Sprintf(`INSERT INTO %s ("ActionID", "LineNum", "GeneratedTableCode", "GeneratedKey", "RelationType", "Payload")
+		VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, quoteIdent(actionGeneratedRecordTable))
+	if _, err := r.db.Exec(ctx, query, record.ActionID, record.LineNum, record.GeneratedTableCode, record.GeneratedKey, record.RelationType, string(payload)); err != nil {
+		return fmt.Errorf("create ERP action generated record: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) ListActionGeneratedRecords(ctx context.Context, actionID uuid.UUID) ([]ActionGeneratedRecord, error) {
+	query := fmt.Sprintf(`SELECT "ActionID", "LineNum", "GeneratedTableCode", "GeneratedKey", "RelationType", "Payload" FROM %s WHERE "ActionID" = $1 ORDER BY "LineNum"`, quoteIdent(actionGeneratedRecordTable))
+	rows, err := r.db.Query(ctx, query, actionID)
+	if err != nil {
+		return nil, fmt.Errorf("list ERP action generated records: %w", err)
+	}
+	defer rows.Close()
+	items := []ActionGeneratedRecord{}
+	for rows.Next() {
+		var item ActionGeneratedRecord
+		var payload []byte
+		if err := rows.Scan(&item.ActionID, &item.LineNum, &item.GeneratedTableCode, &item.GeneratedKey, &item.RelationType, &payload); err != nil {
+			return nil, err
+		}
+		item.Payload = map[string]any{}
+		_ = json.Unmarshal(payload, &item.Payload)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *PostgresRepository) insertRecord(ctx context.Context, tableCode, keyColumn string, values map[string]any) (*Record, error) {
 	names := sortedKeys(values)
 	columns := make([]string, 0, len(names))
@@ -183,6 +279,48 @@ func scanRecord(tableCode, parentTableCode, parentKey string, row interface{ Sca
 	return &record, nil
 }
 
+func scanActionExecution(row interface{ Scan(dest ...any) error }) (*ActionExecution, error) {
+	var execution ActionExecution
+	var actorID pgtype.UUID
+	var toolExecutionID pgtype.UUID
+	var assistantSessionID pgtype.UUID
+	var payload []byte
+	var completedAt pgtype.Timestamptz
+	if err := row.Scan(
+		&execution.ID,
+		&execution.TableCode,
+		&execution.RecordKey,
+		&execution.Action,
+		&execution.Status,
+		&execution.IdempotencyKey,
+		&actorID,
+		&execution.ActorType,
+		&toolExecutionID,
+		&assistantSessionID,
+		&execution.Source,
+		&execution.FailureCode,
+		&execution.FailureMessage,
+		&payload,
+		&execution.StartedAt,
+		&completedAt,
+	); err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	execution.ActorID = uuidPointer(actorID)
+	execution.ToolExecutionID = uuidPointer(toolExecutionID)
+	execution.AssistantSessionID = uuidPointer(assistantSessionID)
+	if completedAt.Valid {
+		completed := completedAt.Time
+		execution.CompletedAt = &completed
+	}
+	execution.Payload = map[string]any{}
+	_ = json.Unmarshal(payload, &execution.Payload)
+	return &execution, nil
+}
+
 var identPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func quoteIdent(value string) string {
@@ -230,6 +368,17 @@ func copyData(values map[string]any) map[string]any {
 		copied[k] = v
 	}
 	return copied
+}
+
+func uuidPointer(value pgtype.UUID) *uuid.UUID {
+	if !value.Valid {
+		return nil
+	}
+	id, err := uuid.FromBytes(value.Bytes[:])
+	if err != nil {
+		return nil
+	}
+	return &id
 }
 
 func postgresColumnType(field FieldDefinition) string {

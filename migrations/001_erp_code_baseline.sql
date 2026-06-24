@@ -174,6 +174,47 @@ BEGIN
     END LOOP;
 END $$;
 
+-- ERP action execution ledger. "MACT" is already the G/L account code table,
+-- so the action ledger uses "MAEX" / "AEX1" to avoid colliding with accounts.
+CREATE TABLE IF NOT EXISTS "MAEX" (
+    "ActionID" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "TableCode" TEXT NOT NULL,
+    "RecordKey" TEXT NOT NULL,
+    "Action" TEXT NOT NULL,
+    "Status" TEXT NOT NULL DEFAULT 'running',
+    "IdempotencyKey" TEXT NOT NULL,
+    "ActorID" UUID,
+    "ActorType" TEXT NOT NULL DEFAULT '',
+    "ToolExecutionID" UUID,
+    "AssistantSessionID" UUID,
+    "Source" TEXT NOT NULL DEFAULT '',
+    "FailureCode" TEXT NOT NULL DEFAULT '',
+    "FailureMessage" TEXT NOT NULL DEFAULT '',
+    "Payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
+    "StartedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "CompletedAt" TIMESTAMPTZ
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_maex_idempotency_key
+    ON "MAEX" ("IdempotencyKey");
+
+CREATE INDEX IF NOT EXISTS idx_maex_source_record
+    ON "MAEX" ("TableCode", "RecordKey", "Action", "Status");
+
+CREATE TABLE IF NOT EXISTS "AEX1" (
+    "ActionID" UUID NOT NULL REFERENCES "MAEX"("ActionID") ON DELETE CASCADE,
+    "LineNum" BIGINT NOT NULL,
+    "GeneratedTableCode" TEXT NOT NULL,
+    "GeneratedKey" TEXT NOT NULL,
+    "RelationType" TEXT NOT NULL DEFAULT 'created',
+    "Payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
+    "CreatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY ("ActionID", "LineNum")
+);
+
+CREATE INDEX IF NOT EXISTS idx_aex1_generated_record
+    ON "AEX1" ("GeneratedTableCode", "GeneratedKey");
+
 -- -----------------------------------------------------------------------------
 -- Folded ERP-strong historical migrations
 -- -----------------------------------------------------------------------------

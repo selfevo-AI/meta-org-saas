@@ -18,8 +18,10 @@ master/detail infrastructure.
 
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
 tenant departments, project lifecycle, workflow, finance, costing,
-supply-chain, and other ERP-facing domain structures. This file can change when
-the SaaS platform creates or adjusts an industry solution.
+supply-chain, ERP action execution ledger tables, and other ERP-facing domain
+structures. This file can change when the SaaS platform creates or adjusts an
+industry solution. The ERP action ledger uses `MAEX` and `AEX1`; `MACT` remains
+the ERP G/L account table.
 
 ## Organization And Department Boundary
 

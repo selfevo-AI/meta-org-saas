@@ -4,17 +4,26 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type businessFakeRepository struct {
-	records  map[string]map[string]Record
-	children map[string][]Record
+	records          map[string]map[string]Record
+	children         map[string][]Record
+	executions       map[uuid.UUID]ActionExecution
+	executionsByKey  map[string]uuid.UUID
+	generatedRecords map[uuid.UUID][]ActionGeneratedRecord
 }
 
 func newBusinessFakeRepository() *businessFakeRepository {
 	return &businessFakeRepository{
-		records:  map[string]map[string]Record{},
-		children: map[string][]Record{},
+		records:          map[string]map[string]Record{},
+		children:         map[string][]Record{},
+		executions:       map[uuid.UUID]ActionExecution{},
+		executionsByKey:  map[string]uuid.UUID{},
+		generatedRecords: map[uuid.UUID][]ActionGeneratedRecord{},
 	}
 }
 
@@ -100,6 +109,58 @@ func (r *businessFakeRepository) CreateChildRecord(ctx context.Context, parent T
 	return &record, nil
 }
 
+func (r *businessFakeRepository) CreateActionExecution(_ context.Context, execution ActionExecution) (*ActionExecution, error) {
+	if execution.ID == uuid.Nil {
+		execution.ID = uuid.New()
+	}
+	if execution.Status == "" {
+		execution.Status = ActionExecutionRunning
+	}
+	if execution.Payload == nil {
+		execution.Payload = map[string]any{}
+	}
+	r.executions[execution.ID] = execution
+	if execution.IdempotencyKey != "" {
+		r.executionsByKey[execution.IdempotencyKey] = execution.ID
+	}
+	return &execution, nil
+}
+
+func (r *businessFakeRepository) FindActionExecutionByIdempotencyKey(_ context.Context, key string) (*ActionExecution, error) {
+	id, ok := r.executionsByKey[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	execution := r.executions[id]
+	return &execution, nil
+}
+
+func (r *businessFakeRepository) CompleteActionExecution(_ context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error) {
+	execution, ok := r.executions[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	execution.Status = status
+	execution.Payload = payload
+	if failure != nil {
+		execution.FailureCode = failure.Code
+		execution.FailureMessage = failure.Message
+	}
+	now := time.Now()
+	execution.CompletedAt = &now
+	r.executions[id] = execution
+	return &execution, nil
+}
+
+func (r *businessFakeRepository) CreateActionGeneratedRecord(_ context.Context, record ActionGeneratedRecord) error {
+	r.generatedRecords[record.ActionID] = append(r.generatedRecords[record.ActionID], record)
+	return nil
+}
+
+func (r *businessFakeRepository) ListActionGeneratedRecords(_ context.Context, actionID uuid.UUID) ([]ActionGeneratedRecord, error) {
+	return append([]ActionGeneratedRecord{}, r.generatedRecords[actionID]...), nil
+}
+
 func (r *businessFakeRepository) balance(itemCode string, whsCode string) float64 {
 	record, ok := r.records["MITW"][itemCode+"|"+whsCode]
 	if !ok {
@@ -156,6 +217,84 @@ func TestApproveRequirementUpdatesStatus(t *testing.T) {
 	}
 	if result.Record.Data["Status"] != "approved" {
 		t.Fatalf("status = %v, want approved", result.Record.Data["Status"])
+	}
+}
+
+func TestActionResultIncludesExecutionContract(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	actorID := uuid.New()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "analyzed"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{
+		ActorID:        &actorID,
+		ActorType:      "internal_human",
+		IdempotencyKey: "approve-REQ-1",
+		Source:         "tenant_api",
+		Data:           map[string]any{"approver": "u1"},
+	})
+	if err != nil {
+		t.Fatalf("approve returned error: %v", err)
+	}
+	if result.ExecutionID == uuid.Nil {
+		t.Fatalf("execution id = %s, want non-nil", result.ExecutionID)
+	}
+	if result.IdempotencyKey == "" {
+		t.Fatalf("idempotency key is empty")
+	}
+	if result.Provenance["source"] != "tenant_api" {
+		t.Fatalf("provenance = %#v, want source tenant_api", result.Provenance)
+	}
+	if len(result.PreconditionsChecked) == 0 {
+		t.Fatalf("preconditions = %#v, want at least one check", result.PreconditionsChecked)
+	}
+}
+
+func TestActionExecutionLedgerRecordsCompletedAction(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "analyzed"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{
+		IdempotencyKey: "approve-ledger",
+		Source:         "tenant_api",
+		Data:           map[string]any{"approver": "u1"},
+	})
+	if err != nil {
+		t.Fatalf("approve returned error: %v", err)
+	}
+	execution, ok := repo.executions[result.ExecutionID]
+	if !ok {
+		t.Fatalf("missing execution %s in fake ledger", result.ExecutionID)
+	}
+	if execution.Status != ActionExecutionCompleted {
+		t.Fatalf("execution status = %q, want completed", execution.Status)
+	}
+	if execution.TableCode != "MREQ" || execution.RecordKey != "REQ-1" || execution.Action != "approve" {
+		t.Fatalf("execution = %#v, want MREQ/REQ-1/approve", execution)
+	}
+}
+
+func TestActionExecutionLedgerRecordsValidationFailure(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPOR", "PO-1", map[string]any{"DocEntry": "PO-1", "DocStatus": "O", "WddStatus": "W"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPOR", "PO-1", "approve", ActionInput{IdempotencyKey: "bad-approve"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	var failed ActionExecution
+	for _, execution := range repo.executions {
+		if execution.IdempotencyKey == "erp:MPOR:PO-1:approve:bad-approve" {
+			failed = execution
+		}
+	}
+	if failed.ID == uuid.Nil {
+		t.Fatalf("missing failed execution")
+	}
+	if failed.Status != ActionExecutionFailed || failed.FailureCode != "validation_failed" {
+		t.Fatalf("failed execution = %#v, want validation_failed", failed)
 	}
 }
 
