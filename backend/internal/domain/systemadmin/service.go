@@ -277,116 +277,120 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 			erpSolutionAssetTable("erp_solution_quality_gates"),
 			erpSolutionAssetTable("erp_solution_verification_scenarios"),
 		},
-		Metadata: map[string]any{
-			"industry_key":       input.IndustryKey,
-			"package_key":        input.PackageKey,
-			"name":               input.Name,
-			"enabled_modules":    enabled,
-			"database_assets":    databaseAssets,
-			"business_functions": businessFunctions,
-			"process_loops": []map[string]any{
-				{"key": "requirement_to_project", "steps": []string{"MREQ.analyze", "MREQ.approve", "MREQ.convert-to-project", "MPRJ.refresh-cost", "MPRJ.close-feedback"}},
-				{"key": "procure_to_pay", "steps": []string{"MPOR.submit", "MPOR.approve", "MPDN.post", "MPCH"}},
-				{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
-				{"key": "inventory_to_finance", "steps": []string{"MIGN.post", "MIGE.post", "MJDT.post"}},
-			},
-			"permissions":       []string{"erp:read", "erp:write", "erp:action", "erp:admin", "assistant:erp"},
-			"api_operations":    apiOperations,
-			"ui_workspaces":     []string{"project", "procurement", "sales", "inventory", "finance", "developer_erp_code"},
-			"assistant_targets": []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "journal_entry"},
-			"context_rules": []map[string]any{
-				{
-					"key":                  "erp_document_state_context",
-					"scope":                "erp",
-					"source_tables":        []string{"MREQ", "MPRJ", "MPOR", "MPDN", "MRDR", "MDLN", "MINV", "MRCT", "MIGN", "MIGE", "MJDT"},
-					"required_permissions": []string{"erp:read"},
-					"workflow_stages":      []string{"draft", "submitted", "approved", "posted", "closed"},
-					"attention_budget":     "document_timeline",
+		Metadata: func() map[string]any {
+			metadata := map[string]any{
+				"industry_key":       input.IndustryKey,
+				"package_key":        input.PackageKey,
+				"name":               input.Name,
+				"enabled_modules":    enabled,
+				"database_assets":    databaseAssets,
+				"business_functions": businessFunctions,
+				"process_loops": []map[string]any{
+					{"key": "requirement_to_project", "steps": []string{"MREQ.analyze", "MREQ.approve", "MREQ.convert-to-project", "MPRJ.refresh-cost", "MPRJ.close-feedback"}},
+					{"key": "procure_to_pay", "steps": []string{"MPOR.submit", "MPOR.approve", "MPDN.post", "MPCH"}},
+					{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
+					{"key": "inventory_to_finance", "steps": []string{"MIGN.post", "MIGE.post", "MJDT.post"}},
 				},
-				{
-					"key":                  "erp_finance_validation_context",
-					"scope":                "finance",
-					"source_tables":        []string{"MCST", "MINV", "MPCH", "MRCT", "MJDT"},
-					"required_permissions": []string{"erp:read", "assistant:erp"},
-					"workflow_stages":      []string{"cost_refresh", "invoice_posting", "payment_allocation"},
-					"attention_budget":     "cost_and_settlement",
+				"permissions":       []string{"erp:read", "erp:write", "erp:action", "erp:admin", "assistant:erp"},
+				"api_operations":    apiOperations,
+				"ui_workspaces":     []string{"project", "procurement", "sales", "inventory", "finance", "developer_erp_code"},
+				"assistant_targets": []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "journal_entry"},
+				"context_rules": []map[string]any{
+					{
+						"key":                  "erp_document_state_context",
+						"scope":                "erp",
+						"source_tables":        []string{"MREQ", "MPRJ", "MPOR", "MPDN", "MRDR", "MDLN", "MINV", "MRCT", "MIGN", "MIGE", "MJDT"},
+						"required_permissions": []string{"erp:read"},
+						"workflow_stages":      []string{"draft", "submitted", "approved", "posted", "closed"},
+						"attention_budget":     "document_timeline",
+					},
+					{
+						"key":                  "erp_finance_validation_context",
+						"scope":                "finance",
+						"source_tables":        []string{"MCST", "MINV", "MPCH", "MRCT", "MJDT"},
+						"required_permissions": []string{"erp:read", "assistant:erp"},
+						"workflow_stages":      []string{"cost_refresh", "invoice_posting", "payment_allocation"},
+						"attention_budget":     "cost_and_settlement",
+					},
+					{
+						"key":                  "erp_governance_approval_context",
+						"scope":                "governance",
+						"source_tables":        []string{"MPOR", "MRDR", "MDLN", "MPDN"},
+						"required_permissions": []string{"erp:action"},
+						"workflow_stages":      []string{"submit", "approve", "post"},
+						"attention_budget":     "approval_risk",
+					},
 				},
-				{
-					"key":                  "erp_governance_approval_context",
-					"scope":                "governance",
-					"source_tables":        []string{"MPOR", "MRDR", "MDLN", "MPDN"},
-					"required_permissions": []string{"erp:action"},
-					"workflow_stages":      []string{"submit", "approve", "post"},
-					"attention_budget":     "approval_risk",
+				"tool_definitions": toolDefinitions,
+				"assistant_skills": []map[string]any{
+					{
+						"skill_key":     "erp_requirement_to_project",
+						"targets":       []string{"requirement", "project"},
+						"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
+						"allowed_tools": []string{"erp.mreq.analyze", "erp.mreq.approve", "erp.mreq.convert-to-project", "erp.mprj.refresh-cost"},
+					},
+					{
+						"skill_key":     "erp_source_to_pay",
+						"targets":       []string{"purchase_order", "ap_invoice"},
+						"context_rules": []string{"erp_document_state_context", "erp_governance_approval_context"},
+						"allowed_tools": []string{"erp.mpor.submit", "erp.mpor.approve", "erp.mpdn.post"},
+					},
+					{
+						"skill_key":     "erp_order_to_cash",
+						"targets":       []string{"sales_order", "ar_invoice"},
+						"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
+						"allowed_tools": []string{"erp.mrdr.confirm", "erp.mrdr.approve", "erp.mdln.post", "erp.minv.post", "erp.mrct.allocate"},
+					},
+					{
+						"skill_key":     "schema_change_reviewer",
+						"targets":       []string{"schema_change", "industry_package"},
+						"context_rules": []string{"erp_governance_approval_context"},
+						"allowed_tools": []string{"schema.change.preview"},
+					},
 				},
-			},
-			"tool_definitions": toolDefinitions,
-			"assistant_skills": []map[string]any{
-				{
-					"skill_key":     "erp_requirement_to_project",
-					"targets":       []string{"requirement", "project"},
-					"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
-					"allowed_tools": []string{"erp.mreq.analyze", "erp.mreq.approve", "erp.mreq.convert-to-project", "erp.mprj.refresh-cost"},
+				"quality_gates": []map[string]any{
+					{
+						"gate_key":        "schema_verify_before_apply",
+						"stage":           "schema_change",
+						"required_checks": []string{"schema_package", "ddl_plan", "permissions_impact", "runtime_operations", "assistant_context", "verification_scenarios"},
+					},
+					{
+						"gate_key":        "tool_policy_before_execution",
+						"stage":           "tool_runtime",
+						"required_checks": []string{"state_precondition", "policy", "approval", "idempotency"},
+					},
+					{
+						"gate_key":        "context_rule_human_activation",
+						"stage":           "context_change",
+						"required_checks": []string{"permission_scope", "workflow_stage", "finance_validation", "attention_budget"},
+					},
 				},
-				{
-					"skill_key":     "erp_source_to_pay",
-					"targets":       []string{"purchase_order", "ap_invoice"},
-					"context_rules": []string{"erp_document_state_context", "erp_governance_approval_context"},
-					"allowed_tools": []string{"erp.mpor.submit", "erp.mpor.approve", "erp.mpdn.post"},
+				"verification_scenarios": []map[string]any{
+					{
+						"scenario_key": "requirement_to_project_smoke",
+						"steps":        []string{"MREQ.analyze", "MREQ.approve", "MREQ.convert-to-project", "MPRJ.refresh-cost", "MPRJ.close-feedback"},
+						"expected":     []string{"MPRJ", "MCST", "MFDB"},
+					},
+					{
+						"scenario_key": "source_to_pay_smoke",
+						"steps":        []string{"MPOR.submit", "MPOR.approve", "MPDN.post"},
+						"expected":     []string{"MIGN", "MPCH"},
+					},
+					{
+						"scenario_key": "order_to_cash_smoke",
+						"steps":        []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"},
+						"expected":     []string{"MIGE", "MINV", "MRCT", "MJDT"},
+					},
+					{
+						"scenario_key": "inventory_to_finance_smoke",
+						"steps":        []string{"MIGN.post", "MIGE.post", "MJDT.post"},
+						"expected":     []string{"inventory_movement", "journal_entry"},
+					},
 				},
-				{
-					"skill_key":     "erp_order_to_cash",
-					"targets":       []string{"sales_order", "ar_invoice"},
-					"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
-					"allowed_tools": []string{"erp.mrdr.confirm", "erp.mrdr.approve", "erp.mdln.post", "erp.minv.post", "erp.mrct.allocate"},
-				},
-				{
-					"skill_key":     "schema_change_reviewer",
-					"targets":       []string{"schema_change", "industry_package"},
-					"context_rules": []string{"erp_governance_approval_context"},
-					"allowed_tools": []string{"schema.change.preview"},
-				},
-			},
-			"quality_gates": []map[string]any{
-				{
-					"gate_key":        "schema_verify_before_apply",
-					"stage":           "schema_change",
-					"required_checks": []string{"schema_package", "ddl_plan", "permissions_impact", "runtime_operations", "assistant_context", "verification_scenarios"},
-				},
-				{
-					"gate_key":        "tool_policy_before_execution",
-					"stage":           "tool_runtime",
-					"required_checks": []string{"state_precondition", "policy", "approval", "idempotency"},
-				},
-				{
-					"gate_key":        "context_rule_human_activation",
-					"stage":           "context_change",
-					"required_checks": []string{"permission_scope", "workflow_stage", "finance_validation", "attention_budget"},
-				},
-			},
-			"verification_scenarios": []map[string]any{
-				{
-					"scenario_key": "requirement_to_project_smoke",
-					"steps":        []string{"MREQ.analyze", "MREQ.approve", "MREQ.convert-to-project", "MPRJ.refresh-cost", "MPRJ.close-feedback"},
-					"expected":     []string{"MPRJ", "MCST", "MFDB"},
-				},
-				{
-					"scenario_key": "source_to_pay_smoke",
-					"steps":        []string{"MPOR.submit", "MPOR.approve", "MPDN.post"},
-					"expected":     []string{"MIGN", "MPCH"},
-				},
-				{
-					"scenario_key": "order_to_cash_smoke",
-					"steps":        []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"},
-					"expected":     []string{"MIGE", "MINV", "MRCT", "MJDT"},
-				},
-				{
-					"scenario_key": "inventory_to_finance_smoke",
-					"steps":        []string{"MIGN.post", "MIGE.post", "MJDT.post"},
-					"expected":     []string{"inventory_movement", "journal_entry"},
-				},
-			},
-		},
+			}
+			metadata["industry_manifest"] = buildIndustryManifest(input, metadata)
+			return metadata
+		}(),
 	}
 }
 
