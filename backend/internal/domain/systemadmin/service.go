@@ -172,6 +172,17 @@ func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, i
 		input.EnabledModules = []string{"project", "procurement", "inventory", "sales", "finance"}
 	}
 	pkg := BuildERPSolutionSchemaPackage(input)
+	desiredManifest, err := ManifestFromSchemaPackage(pkg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	currentManifest := IndustrySolutionManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
+	if input.CurrentTemplate != nil {
+		if parsed, err := ManifestFromSchemaPackage(*input.CurrentTemplate); err == nil {
+			currentManifest = parsed
+		}
+	}
+	pkg.Metadata["package_diff"] = BuildPackageAssetDiff(currentManifest, desiredManifest)
 	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
 		OrganizationID:       input.OrganizationID,
 		RequestType:          "erp_solution_flow",
@@ -472,6 +483,24 @@ func addIndustryFactoryCoverageChecks(report *SchemaVerificationReport, request 
 		return
 	}
 	report.addCheck("rollback_risk", "passed", "rollback risk is low for additive factory package", map[string]any{"risk_level": report.RiskLevel})
+}
+
+func (s *Service) GetSchemaChangePackageDiff(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) ([]PackageAssetDiff, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
+		return nil, err
+	}
+	request, err := s.repo.GetSchemaChangeRequest(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if diff := PackageDiffFromSchemaPackage(request.SchemaPackage); len(diff) > 0 {
+		return diff, nil
+	}
+	manifest, err := ManifestFromSchemaPackage(request.SchemaPackage)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	return BuildPackageAssetDiff(IndustrySolutionManifest{ManifestVersion: IndustryManifestVersion}, manifest), nil
 }
 
 func isIndustryFactoryPackage(request *SchemaChangeRequest) bool {

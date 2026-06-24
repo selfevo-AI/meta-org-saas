@@ -65,6 +65,79 @@ func ManifestFromSchemaPackage(pkg SchemaPackage) (IndustrySolutionManifest, err
 	return manifest, nil
 }
 
+func BuildPackageAssetDiff(current IndustrySolutionManifest, desired IndustrySolutionManifest) []PackageAssetDiff {
+	currentByKey := map[string]IndustrySolutionAsset{}
+	desiredByKey := map[string]IndustrySolutionAsset{}
+	for _, asset := range current.Assets {
+		currentByKey[asset.AssetKey] = asset
+	}
+	for _, asset := range desired.Assets {
+		desiredByKey[asset.AssetKey] = asset
+	}
+
+	items := []PackageAssetDiff{}
+	for key, desiredAsset := range desiredByKey {
+		currentAsset, ok := currentByKey[key]
+		action := "create"
+		currentVersion := ""
+		if ok {
+			currentVersion = currentAsset.Version
+			if currentAsset.Version == desiredAsset.Version && mapsEqual(currentAsset.Payload, desiredAsset.Payload) {
+				action = "unchanged"
+			} else {
+				action = "update"
+			}
+		}
+		items = append(items, PackageAssetDiff{
+			AssetType:      desiredAsset.AssetType,
+			AssetKey:       desiredAsset.AssetKey,
+			Action:         action,
+			RiskLevel:      firstNonEmptyString(desiredAsset.RiskLevel, currentAsset.RiskLevel, "medium"),
+			CurrentVersion: currentVersion,
+			DesiredVersion: desiredAsset.Version,
+			Summary:        fmt.Sprintf("%s %s", action, desiredAsset.AssetKey),
+			DependsOn:      desiredAsset.DependsOn,
+		})
+	}
+	for key, currentAsset := range currentByKey {
+		if _, ok := desiredByKey[key]; ok {
+			continue
+		}
+		items = append(items, PackageAssetDiff{
+			AssetType:      currentAsset.AssetType,
+			AssetKey:       currentAsset.AssetKey,
+			Action:         "remove",
+			RiskLevel:      "high",
+			CurrentVersion: currentAsset.Version,
+			Summary:        fmt.Sprintf("remove %s", currentAsset.AssetKey),
+			BlockingReason: "asset removal requires explicit platform review",
+			DependsOn:      currentAsset.DependsOn,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Action == items[j].Action {
+			return items[i].AssetKey < items[j].AssetKey
+		}
+		return items[i].Action < items[j].Action
+	})
+	return items
+}
+
+func PackageDiffFromSchemaPackage(pkg SchemaPackage) []PackageAssetDiff {
+	if pkg.Metadata == nil {
+		return nil
+	}
+	data, err := json.Marshal(pkg.Metadata["package_diff"])
+	if err != nil {
+		return nil
+	}
+	var diff []PackageAssetDiff
+	if err := json.Unmarshal(data, &diff); err != nil {
+		return nil
+	}
+	return diff
+}
+
 func setIndustryManifest(pkg *SchemaPackage, manifest IndustrySolutionManifest) {
 	if pkg.Metadata == nil {
 		pkg.Metadata = map[string]any{}
@@ -231,4 +304,10 @@ func stringSliceFromMaps(values []map[string]any, key string) []string {
 		}
 	}
 	return items
+}
+
+func mapsEqual(left map[string]any, right map[string]any) bool {
+	leftJSON, _ := json.Marshal(left)
+	rightJSON, _ := json.Marshal(right)
+	return string(leftJSON) == string(rightJSON)
 }

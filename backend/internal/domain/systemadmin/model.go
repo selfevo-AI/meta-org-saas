@@ -132,6 +132,18 @@ type SchemaVerificationCheck struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
+type PackageAssetDiff struct {
+	AssetType      string   `json:"asset_type"`
+	AssetKey       string   `json:"asset_key"`
+	Action         string   `json:"action"`
+	RiskLevel      string   `json:"risk_level"`
+	CurrentVersion string   `json:"current_version,omitempty"`
+	DesiredVersion string   `json:"desired_version,omitempty"`
+	Summary        string   `json:"summary"`
+	BlockingReason string   `json:"blocking_reason,omitempty"`
+	DependsOn      []string `json:"depends_on,omitempty"`
+}
+
 type CreateSchemaChangeRequestInput struct {
 	OrganizationID       uuid.UUID      `json:"organization_id"`
 	RequestType          string         `json:"request_type"`
