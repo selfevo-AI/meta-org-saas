@@ -423,6 +423,40 @@ func TestDeliveryPostRollsBackWhenInventoryFails(t *testing.T) {
 	}
 }
 
+func TestGoodsReceiptPostIsIdempotent(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPDN", "GR-1", map[string]any{"DocEntry": "GR-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "S-1"})
+	repo.seedChild("MPDN", "GR-1", "PDN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 10}})
+	service := NewService(repo, DefaultCatalog())
+
+	first, err := service.RunAction(context.Background(), "MPDN", "GR-1", "post", ActionInput{IdempotencyKey: "receipt-post"})
+	if err != nil {
+		t.Fatalf("first post error: %v", err)
+	}
+	second, err := service.RunAction(context.Background(), "MPDN", "GR-1", "post", ActionInput{IdempotencyKey: "receipt-post"})
+	if err != nil {
+		t.Fatalf("second post error: %v", err)
+	}
+	if second.Status != ActionExecutionIdempotentReplay {
+		t.Fatalf("second status = %q, want idempotent_replay", second.Status)
+	}
+	if first.ExecutionID != second.ExecutionID {
+		t.Fatalf("execution ids = %s and %s, want replay of first execution", first.ExecutionID, second.ExecutionID)
+	}
+	if len(repo.generatedRecords[first.ExecutionID]) != 2 {
+		t.Fatalf("generated ledger rows = %d, want 2", len(repo.generatedRecords[first.ExecutionID]))
+	}
+	if len(second.GeneratedRecords) != 2 {
+		t.Fatalf("replay generated records = %d, want 2", len(second.GeneratedRecords))
+	}
+	if repo.childCount("MIGN", "IGN-GR-1", "IGN1") != 1 {
+		t.Fatalf("MIGN child rows = %d, want 1 after replay", repo.childCount("MIGN", "IGN-GR-1", "IGN1"))
+	}
+	if repo.balance("I-1", "W-1") != 2 {
+		t.Fatalf("balance = %v, want 2 after replay", repo.balance("I-1", "W-1"))
+	}
+}
+
 func TestConvertRequirementCreatesProject(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})

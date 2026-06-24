@@ -184,6 +184,9 @@ func (s *Service) RunAction(ctx context.Context, tableCode string, key string, a
 	if len(result.PreconditionsChecked) == 0 {
 		result.PreconditionsChecked = []ActionPrecondition{{Key: tableCode + "." + action, Status: "passed"}}
 	}
+	if err := s.recordGeneratedRecords(ctx, execution.ID, result.GeneratedRecords); err != nil {
+		return nil, err
+	}
 	if _, err := s.repo.CompleteActionExecution(ctx, execution.ID, ActionExecutionCompleted, actionResultPayload(result), nil); err != nil {
 		return nil, err
 	}
@@ -271,6 +274,25 @@ func (s *Service) idempotentReplayResult(ctx context.Context, execution *ActionE
 			"idempotency_key":     execution.IdempotencyKey,
 		},
 	}, nil
+}
+
+func (s *Service) recordGeneratedRecords(ctx context.Context, executionID uuid.UUID, records []Record) error {
+	for i, record := range records {
+		payload := copyData(record.Data)
+		payload["table_code"] = record.TableCode
+		payload["key"] = record.Key
+		if err := s.repo.CreateActionGeneratedRecord(ctx, ActionGeneratedRecord{
+			ActionID:           executionID,
+			LineNum:            i + 1,
+			GeneratedTableCode: record.TableCode,
+			GeneratedKey:       record.Key,
+			RelationType:       "created",
+			Payload:            payload,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) runInTx(ctx context.Context, fn func(*Service) (*ActionResult, error)) (*ActionResult, error) {
