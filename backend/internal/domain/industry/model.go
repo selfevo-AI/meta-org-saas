@@ -107,6 +107,13 @@ type PublicationRequest struct {
 	ReviewedAt           *time.Time     `json:"reviewed_at,omitempty"`
 }
 
+type PublicationGateResult struct {
+	Key      string         `json:"key"`
+	Status   string         `json:"status"`
+	Message  string         `json:"message"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
 type KnowledgeSource struct {
 	ID              uuid.UUID      `json:"id"`
 	IndustryKey     string         `json:"industry_key"`

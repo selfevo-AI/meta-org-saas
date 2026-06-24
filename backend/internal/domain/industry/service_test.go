@@ -146,6 +146,81 @@ func TestSubmitPublicationCreatesPendingRequestForTenantExtension(t *testing.T) 
 	}
 }
 
+func TestReviewPublicationRequestRejectsFailedPublicationGate(t *testing.T) {
+	repo := &fakeRepository{
+		role: "system_owner",
+		publicationRequest: &PublicationRequest{
+			ID:          uuid.New(),
+			ExtensionID: extensionID,
+			Status:      PublicationPending,
+			Metadata:    map[string]any{},
+		},
+		extensionByID: map[uuid.UUID]*Extension{
+			extensionID: {
+				ID:             extensionID,
+				OrganizationID: organizationID,
+				IndustryKey:    "manufacturing",
+				ExtensionKey:   "customer-specific-extension",
+				Name:           "Customer specific extension",
+				Assets: []PackageAsset{
+					{AssetKey: "customer_export", AssetType: AssetTypeRuntimeEntity, Payload: map[string]any{"customer_name": "Acme Corp"}},
+				},
+			},
+		},
+	}
+	service := NewService(repo)
+
+	_, err := service.ReviewPublicationRequest(context.Background(), actorID, repo.publicationRequest.ID, PublicationApproved, "approve")
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("ReviewPublicationRequest error = %v, want ErrValidation", err)
+	}
+	if repo.reviewedStatus == PublicationApproved {
+		t.Fatal("publication request approved despite failed gate")
+	}
+}
+
+func TestReviewPublicationRequestAllowsWarningsAndPersistsGateMetadata(t *testing.T) {
+	repo := &fakeRepository{
+		role: "system_owner",
+		publicationRequest: &PublicationRequest{
+			ID:          uuid.New(),
+			ExtensionID: extensionID,
+			Status:      PublicationPending,
+			Metadata:    map[string]any{},
+		},
+		extensionByID: map[uuid.UUID]*Extension{
+			extensionID: {
+				ID:             extensionID,
+				OrganizationID: organizationID,
+				IndustryKey:    "manufacturing",
+				ExtensionKey:   "verified-extension",
+				Name:           "Verified extension",
+				Metadata: map[string]any{
+					"required_verification_scenarios": []any{"source_to_pay_smoke"},
+					"verification_scenario_results": []any{
+						map[string]any{"scenario_key": "source_to_pay_smoke", "status": "warning"},
+					},
+				},
+				Assets: []PackageAsset{
+					{AssetKey: "knowledge_source.safe", AssetType: AssetTypeKnowledgeSource, Payload: map[string]any{"permission": map[string]any{"allow_publication": true}}},
+				},
+			},
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.ReviewPublicationRequest(context.Background(), actorID, repo.publicationRequest.ID, PublicationApproved, "approve")
+	if err != nil {
+		t.Fatalf("ReviewPublicationRequest error = %v", err)
+	}
+	if result.Status != PublicationApproved {
+		t.Fatalf("status = %q, want approved", result.Status)
+	}
+	if len(repo.publicationGateResults) == 0 {
+		t.Fatal("gate results were not persisted")
+	}
+}
+
 var (
 	actorID        = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	organizationID = uuid.MustParse("22222222-2222-2222-2222-222222222222")
@@ -212,6 +287,9 @@ type fakeRepository struct {
 	packageByID             map[uuid.UUID]*Package
 	extensionByID           map[uuid.UUID]*Extension
 	allowedExtensionModules []string
+	publicationRequest      *PublicationRequest
+	publicationGateResults  []PublicationGateResult
+	reviewedStatus          string
 	adoptionWrites          int
 }
 
@@ -289,28 +367,50 @@ func (f *fakeRepository) ListExtensions(context.Context, uuid.UUID, int) ([]Exte
 	return nil, nil
 }
 
-func (f *fakeRepository) GetExtension(context.Context, uuid.UUID) (*Extension, error) {
-	return f.extensionByID[extensionID], nil
+func (f *fakeRepository) GetExtension(_ context.Context, id uuid.UUID) (*Extension, error) {
+	return f.extensionByID[id], nil
 }
 
-func (f *fakeRepository) CreatePublicationRequest(context.Context, Extension, uuid.UUID, string) (*PublicationRequest, error) {
+func (f *fakeRepository) CreatePublicationRequest(_ context.Context, extension Extension, _ uuid.UUID, reason string, metadata map[string]any) (*PublicationRequest, error) {
 	return &PublicationRequest{
 		ID:                   uuid.New(),
-		ExtensionID:          extensionID,
-		SourceOrganizationID: organizationID,
-		IndustryKey:          "manufacturing",
+		ExtensionID:          extension.ID,
+		SourceOrganizationID: extension.OrganizationID,
+		IndustryKey:          extension.IndustryKey,
 		Status:               PublicationPending,
-		Reason:               "share with partners",
+		Reason:               reason,
 		RequestedBy:          &actorID,
+		Metadata:             metadata,
 	}, nil
+}
+
+func (f *fakeRepository) GetPublicationRequest(context.Context, uuid.UUID) (*PublicationRequest, error) {
+	return f.publicationRequest, nil
+}
+
+func (f *fakeRepository) UpdatePublicationRequestMetadata(_ context.Context, _ uuid.UUID, metadata map[string]any) error {
+	if gates, ok := metadata["publication_gates"].([]PublicationGateResult); ok {
+		f.publicationGateResults = gates
+	}
+	if f.publicationRequest != nil {
+		f.publicationRequest.Metadata = metadata
+	}
+	return nil
 }
 
 func (f *fakeRepository) ListPublicationRequests(context.Context, int) ([]PublicationRequest, error) {
 	return nil, nil
 }
 
-func (f *fakeRepository) ReviewPublicationRequest(context.Context, uuid.UUID, uuid.UUID, string, string) (*PublicationRequest, error) {
-	return nil, nil
+func (f *fakeRepository) ReviewPublicationRequest(_ context.Context, _ uuid.UUID, _ uuid.UUID, status string, reason string) (*PublicationRequest, error) {
+	f.reviewedStatus = status
+	return &PublicationRequest{
+		ID:           f.publicationRequest.ID,
+		ExtensionID:  f.publicationRequest.ExtensionID,
+		Status:       status,
+		ReviewReason: reason,
+		Metadata:     f.publicationRequest.Metadata,
+	}, nil
 }
 
 func (f *fakeRepository) ListKnowledgeSources(context.Context, string, uuid.UUID, int) ([]KnowledgeSource, error) {

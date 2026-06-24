@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
@@ -164,7 +165,7 @@ func (r *Repository) UpdateSchemaChangeRequestStatus(ctx context.Context, id uui
 	`, id, status, reviewerID, reason))
 }
 
-func (r *Repository) ApplySchemaChange(ctx context.Context, request *SchemaChangeRequest, statements []string) (*SchemaApplyJob, error) {
+func (r *Repository) ApplySchemaChange(ctx context.Context, request *SchemaChangeRequest, statements []string, assetResults []SchemaApplyAssetResult) (*SchemaApplyJob, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin apply schema change: %w", err)
@@ -185,14 +186,19 @@ func (r *Repository) ApplySchemaChange(ctx context.Context, request *SchemaChang
 	}
 
 	statementsJSON, _ := json.Marshal(statements)
+	assetResults = r.applyIndustrySolutionAssets(ctx, tx, request, assetResults)
+	metadataJSON, _ := json.Marshal(map[string]any{
+		"source":        "systemadmin",
+		"asset_results": assetResults,
+	})
 	job, err := scanSchemaApplyJob(tx.QueryRow(ctx, `
 		INSERT INTO platform.schema_apply_jobs(
 		    change_request_id, organization_id, schema_name, status, statements, metadata
 		)
-		VALUES ($1, $2, $3, 'applied', $4, '{"source":"systemadmin"}'::jsonb)
+		VALUES ($1, $2, $3, 'applied', $4, $5::jsonb)
 		RETURNING id, change_request_id, organization_id, schema_name, status, statements,
 		          error_message, metadata, created_at, updated_at
-	`, request.ID, request.OrganizationID, request.SchemaName, statementsJSON))
+	`, request.ID, request.OrganizationID, request.SchemaName, statementsJSON, metadataJSON))
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +231,59 @@ func (r *Repository) ApplySchemaChange(ctx context.Context, request *SchemaChang
 		return nil, fmt.Errorf("commit apply schema change: %w", err)
 	}
 	return job, nil
+}
+
+func (r *Repository) applyIndustrySolutionAssets(ctx context.Context, tx pgx.Tx, request *SchemaChangeRequest, results []SchemaApplyAssetResult) []SchemaApplyAssetResult {
+	for i := range results {
+		err := r.applyIndustrySolutionAsset(ctx, tx, request, &results[i])
+		if err != nil {
+			results[i].Status = "failed"
+			results[i].ErrorMessage = err.Error()
+			continue
+		}
+		results[i].Status = "applied"
+	}
+	return results
+}
+
+func (r *Repository) applyIndustrySolutionAsset(ctx context.Context, tx pgx.Tx, request *SchemaChangeRequest, result *SchemaApplyAssetResult) error {
+	payload, _ := result.Metadata["payload"].(map[string]any)
+	switch result.AssetType {
+	case AssetTypeRuntimeOperation:
+		path := firstNonEmptyString(stringValue(payload["path"]), result.AssetKey)
+		_, err := tx.Exec(ctx, `
+			INSERT INTO platform.runtime_operations(operation_key, domain, title, method, path, operation_kind, danger_level, result_view, assistant_eligible, status, action_type, metadata)
+			VALUES ($1, 'ERP', $2, 'POST', $3, 'contextual', 'medium', 'summary', true, 'active', 'erp.action', $4::jsonb)
+			ON CONFLICT (operation_key) DO UPDATE SET
+				title = EXCLUDED.title,
+				path = EXCLUDED.path,
+				metadata = platform.runtime_operations.metadata || EXCLUDED.metadata,
+				updated_at = NOW()
+		`, result.AssetKey, result.AssetKey, path, jsonBytes(map[string]any{"source_change_request_id": request.ID.String(), "asset_key": result.AssetKey}))
+		return err
+	case AssetTypeToolDefinition, AssetTypeToolPolicy:
+		_, err := tx.Exec(ctx, `
+			INSERT INTO tool_definitions(name, description, source_type, default_policy, risk_level, required_level, metadata)
+			VALUES ($1, 'Generated from ERP industry solution package', 'internal_api', 'approve', 'medium', 'L2', $2::jsonb)
+			ON CONFLICT (name) DO UPDATE SET
+				metadata = tool_definitions.metadata || EXCLUDED.metadata,
+				updated_at = NOW()
+		`, result.AssetKey, jsonBytes(map[string]any{"source_change_request_id": request.ID.String(), "asset_key": result.AssetKey}))
+		return err
+	default:
+		_, err := tx.Exec(ctx, `
+			INSERT INTO platform.platform_masters(module_key, entity_type, source_table, source_pk, title, status, organization_id, payload, metadata)
+			VALUES ('industry_solution_factory', $1, 'industry_solution_asset', $2, $3, 'draft', $4, $5::jsonb, $6::jsonb)
+			ON CONFLICT (source_table, source_pk) WHERE source_table <> '' AND source_pk <> ''
+			DO UPDATE SET
+				title = EXCLUDED.title,
+				status = EXCLUDED.status,
+				payload = EXCLUDED.payload,
+				metadata = platform.platform_masters.metadata || EXCLUDED.metadata,
+				updated_at = NOW()
+		`, result.AssetType, request.ID.String()+":"+result.AssetKey, result.AssetKey, request.OrganizationID, jsonBytes(payload), jsonBytes(map[string]any{"source_change_request_id": request.ID.String(), "target": result.Target}))
+		return err
+	}
 }
 
 func scanPlatformMaster(row interface{ Scan(dest ...any) error }) (*PlatformMaster, error) {
@@ -356,6 +415,17 @@ func unmarshalMap(data []byte) map[string]any {
 		return map[string]any{}
 	}
 	return out
+}
+
+func jsonBytes(value any) []byte {
+	if value == nil {
+		return []byte("{}")
+	}
+	data, err := json.Marshal(value)
+	if err != nil || len(data) == 0 {
+		return []byte("{}")
+	}
+	return data
 }
 
 var _ repository = (*Repository)(nil)

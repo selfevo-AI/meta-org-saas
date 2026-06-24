@@ -32,6 +32,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/schema-change-requests/{id}/approve", h.approveSchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/verify", h.verifySchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/apply", h.applySchemaChange)
+	r.Get("/platform/admin/schema-change-requests/{id}/package-diff", h.getSchemaChangePackageDiff)
 }
 
 func (h *Handler) getPermissionProfile(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +142,15 @@ func (h *Handler) applySchemaChange(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.service.ApplySchemaChange(r.Context(), actorID, requestID)
 	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) getSchemaChangePackageDiff(w http.ResponseWriter, r *http.Request) {
+	actorID, requestID, ok := h.actorAndRequest(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.GetSchemaChangePackageDiff(r.Context(), actorID, requestID)
+	writeResult(w, http.StatusOK, map[string]any{"diff": result}, err)
 }
 
 func (h *Handler) actorAndOrganization(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {

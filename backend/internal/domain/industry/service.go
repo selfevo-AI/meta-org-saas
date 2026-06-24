@@ -36,7 +36,9 @@ type repository interface {
 	CreateExtension(context.Context, CreateExtensionInput, uuid.UUID) (*Extension, error)
 	ListExtensions(context.Context, uuid.UUID, int) ([]Extension, error)
 	GetExtension(context.Context, uuid.UUID) (*Extension, error)
-	CreatePublicationRequest(context.Context, Extension, uuid.UUID, string) (*PublicationRequest, error)
+	CreatePublicationRequest(context.Context, Extension, uuid.UUID, string, map[string]any) (*PublicationRequest, error)
+	GetPublicationRequest(context.Context, uuid.UUID) (*PublicationRequest, error)
+	UpdatePublicationRequestMetadata(context.Context, uuid.UUID, map[string]any) error
 	ListPublicationRequests(context.Context, int) ([]PublicationRequest, error)
 	ReviewPublicationRequest(context.Context, uuid.UUID, uuid.UUID, string, string) (*PublicationRequest, error)
 	ListKnowledgeSources(context.Context, string, uuid.UUID, int) ([]KnowledgeSource, error)
@@ -246,7 +248,9 @@ func (s *Service) SubmitPublicationRequest(ctx context.Context, actorID uuid.UUI
 	if err := s.requireOrganizationAdmin(ctx, actorID, extension.OrganizationID); err != nil {
 		return nil, err
 	}
-	return s.repo.CreatePublicationRequest(ctx, *extension, actorID, strings.TrimSpace(reason))
+	gates := EvaluatePublicationGates(*extension)
+	metadata := map[string]any{"extension_key": extension.ExtensionKey, "publication_gates": gates}
+	return s.repo.CreatePublicationRequest(ctx, *extension, actorID, strings.TrimSpace(reason), metadata)
 }
 
 func (s *Service) ListPublicationRequests(ctx context.Context, actorID uuid.UUID, limit int) ([]PublicationRequest, error) {
@@ -263,6 +267,32 @@ func (s *Service) ReviewPublicationRequest(ctx context.Context, actorID uuid.UUI
 	if status != PublicationApproved && status != PublicationRejected {
 		return nil, fmt.Errorf("%w: review status must be approved or rejected", ErrValidation)
 	}
+	request, err := s.repo.GetPublicationRequest(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if request == nil {
+		return nil, ErrNotFound
+	}
+	extension, err := s.repo.GetExtension(ctx, request.ExtensionID)
+	if err != nil {
+		return nil, err
+	}
+	if extension == nil {
+		return nil, ErrNotFound
+	}
+	gates := EvaluatePublicationGates(*extension)
+	metadata := request.Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["publication_gates"] = gates
+	if err := s.repo.UpdatePublicationRequestMetadata(ctx, requestID, metadata); err != nil {
+		return nil, err
+	}
+	if status == PublicationApproved && publicationGatesBlock(gates) {
+		return nil, fmt.Errorf("%w: publication gates failed", ErrValidation)
+	}
 	return s.repo.ReviewPublicationRequest(ctx, requestID, actorID, status, reason)
 }
 
@@ -273,6 +303,111 @@ func (s *Service) ListKnowledgeSources(ctx context.Context, actorID uuid.UUID, i
 		}
 	}
 	return s.repo.ListKnowledgeSources(ctx, normalizeKey(industryKey), orgID, normalizeLimit(limit))
+}
+
+func EvaluatePublicationGates(extension Extension) []PublicationGateResult {
+	return []PublicationGateResult{
+		anonymizationGate(extension),
+		knowledgeSourcePermissionGate(extension),
+		verificationScenarioGate(extension),
+	}
+}
+
+func anonymizationGate(extension Extension) PublicationGateResult {
+	for _, asset := range extension.Assets {
+		if containsSensitivePublicationData(asset.Payload) {
+			return PublicationGateResult{
+				Key:      "anonymization_check",
+				Status:   "failed",
+				Message:  "extension assets contain customer, user, order, or payment identifiers",
+				Metadata: map[string]any{"asset_key": asset.AssetKey},
+			}
+		}
+	}
+	return PublicationGateResult{Key: "anonymization_check", Status: "passed", Message: "extension assets contain no blocked identifiers"}
+}
+
+func knowledgeSourcePermissionGate(extension Extension) PublicationGateResult {
+	count := 0
+	for _, asset := range extension.Assets {
+		if asset.AssetType != AssetTypeKnowledgeSource {
+			continue
+		}
+		count++
+		permission, _ := asset.Payload["permission"].(map[string]any)
+		if permission["allow_publication"] != true {
+			return PublicationGateResult{
+				Key:      "knowledge_source_permission_check",
+				Status:   "failed",
+				Message:  "knowledge source asset is missing publication permission",
+				Metadata: map[string]any{"asset_key": asset.AssetKey},
+			}
+		}
+	}
+	return PublicationGateResult{Key: "knowledge_source_permission_check", Status: "passed", Message: "knowledge source permissions allow publication", Metadata: map[string]any{"count": count}}
+}
+
+func verificationScenarioGate(extension Extension) PublicationGateResult {
+	required := stringSliceFromAny(extension.Metadata["required_verification_scenarios"])
+	if len(required) == 0 {
+		return PublicationGateResult{Key: "verification_scenario_check", Status: "warning", Message: "extension declares no required verification scenarios"}
+	}
+	results := map[string]string{}
+	for _, item := range mapSliceFromAny(extension.Metadata["verification_scenario_results"]) {
+		results[stringValue(item["scenario_key"])] = stringValue(item["status"])
+	}
+	missing := []string{}
+	for _, scenario := range required {
+		status := results[scenario]
+		if status != "passed" && status != "warning" {
+			missing = append(missing, scenario)
+		}
+	}
+	if len(missing) > 0 {
+		return PublicationGateResult{
+			Key:      "verification_scenario_check",
+			Status:   "failed",
+			Message:  "required verification scenarios must pass or be explicitly warning",
+			Metadata: map[string]any{"missing": missing},
+		}
+	}
+	return PublicationGateResult{Key: "verification_scenario_check", Status: "passed", Message: "required verification scenarios passed or warned", Metadata: map[string]any{"count": len(required)}}
+}
+
+func containsSensitivePublicationData(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			normalized := strings.ToLower(key)
+			if strings.Contains(normalized, "customer") ||
+				strings.Contains(normalized, "user_email") ||
+				strings.Contains(normalized, "order_number") ||
+				strings.Contains(normalized, "payment") ||
+				strings.Contains(normalized, "phone") ||
+				strings.Contains(normalized, "id_card") {
+				return true
+			}
+			if containsSensitivePublicationData(item) {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if containsSensitivePublicationData(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func publicationGatesBlock(gates []PublicationGateResult) bool {
+	for _, gate := range gates {
+		if gate.Status == "failed" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) validateModules(ctx context.Context, orgID uuid.UUID, industryKey string, pkg Package, modules []string) error {
@@ -362,6 +497,47 @@ func mustMap(value any) map[string]any {
 func stringFromPayload(payload map[string]any, key string) string {
 	value, _ := payload[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func stringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func stringSliceFromAny(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := stringValue(item); text != "" {
+				items = append(items, text)
+			}
+		}
+		return items
+	default:
+		return nil
+	}
+}
+
+func mapSliceFromAny(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		items := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			if mapped, ok := item.(map[string]any); ok {
+				items = append(items, mapped)
+			}
+		}
+		return items
+	default:
+		return nil
+	}
 }
 
 func normalizeKey(value string) string {

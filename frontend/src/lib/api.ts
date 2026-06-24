@@ -391,6 +391,14 @@ export async function verifySchemaChange(token: string, requestID: string): Prom
   })
 }
 
+export async function getSchemaChangePackageDiff(token: string, requestID: string): Promise<PackageAssetDiff[]> {
+  const result = await apiRequest<{ diff: PackageAssetDiff[] }>(
+    `/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/package-diff`,
+    { token },
+  )
+  return result.diff
+}
+
 export async function applySchemaChange(token: string, requestID: string): Promise<SchemaApplyJob> {
   return apiRequest<SchemaApplyJob>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/apply`, {
     method: 'POST',
@@ -1296,10 +1304,20 @@ export interface IndustryPublicationRequest {
   review_reason?: string
   requested_by?: string
   reviewed_by?: string
-  metadata: Record<string, unknown>
+  metadata: {
+    publication_gates?: PublicationGateResult[]
+    [key: string]: unknown
+  }
   created_at: string
   updated_at: string
   reviewed_at?: string
+}
+
+export interface PublicationGateResult {
+  key: string
+  status: string
+  message: string
+  metadata?: Record<string, unknown>
 }
 
 export interface OrganizationSubscription {
@@ -1420,7 +1438,45 @@ export interface SchemaPackage {
   format_version: string
   module_key: string
   tables: SchemaTableDefinition[]
-  metadata?: Record<string, unknown>
+  metadata?: {
+    industry_manifest?: IndustrySolutionManifest
+    package_diff?: PackageAssetDiff[]
+    [key: string]: unknown
+  }
+}
+
+export interface IndustrySolutionManifest {
+  manifest_version: string
+  industry_key: string
+  package_key: string
+  package_version: string
+  assets: IndustrySolutionAsset[]
+  dependencies?: string[]
+  quality_gates?: string[]
+  verification_scenarios?: string[]
+}
+
+export interface IndustrySolutionAsset {
+  asset_key: string
+  asset_type: string
+  version: string
+  source: string
+  owner: string
+  risk_level: string
+  depends_on?: string[]
+  payload: Record<string, unknown>
+}
+
+export interface PackageAssetDiff {
+  asset_type: string
+  asset_key: string
+  action: string
+  risk_level: string
+  current_version?: string
+  desired_version?: string
+  summary: string
+  blocking_reason?: string
+  depends_on?: string[]
 }
 
 export interface SchemaTableDefinition {
@@ -1499,9 +1555,21 @@ export interface SchemaApplyJob {
   status: string
   statements: string[]
   error_message?: string
-  metadata: Record<string, unknown>
+  metadata: {
+    asset_results?: SchemaApplyAssetResult[]
+    [key: string]: unknown
+  }
   created_at: string
   updated_at: string
+}
+
+export interface SchemaApplyAssetResult {
+  asset_key: string
+  asset_type: string
+  status: string
+  target: string
+  error_message?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface CreateSchemaChangeRequestInput {

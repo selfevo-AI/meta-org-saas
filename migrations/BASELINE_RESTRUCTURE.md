@@ -16,6 +16,29 @@ tenant/module entitlement, permission governance, security-kernel policy
 foundation, schema-change governance, package metadata, and platform
 master/detail infrastructure.
 
+### Phase 2 Industry Solution Factory Storage
+
+The industry solution factory remains a platform management capability and
+belongs to `000_saas_platform_management_baseline.sql`.
+
+Phase 2 intentionally reuses existing platform storage instead of creating a
+table per asset type:
+
+- `platform.schema_change_requests.schema_package.metadata.industry_manifest`
+  stores the desired manifest.
+- `platform.schema_change_requests.schema_package.metadata.package_diff` stores
+  the package-level asset diff computed at request creation.
+- `platform.schema_apply_jobs.metadata.asset_results` stores per-asset apply
+  status and retry diagnostics.
+- `platform.runtime_operations` stores runtime operation assets.
+- `tool_definitions` stores Tool Runtime definition and policy assets from the
+  AI capability baseline.
+- `platform.platform_masters` stores draft context rule, assistant skill,
+  quality gate, and verification scenario metadata assets.
+
+Context-rule assets generated from industry packages are stored as draft
+metadata and must not be activated automatically by schema apply.
+
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
 tenant departments, project lifecycle, workflow, finance, costing,
 supply-chain, ERP action execution ledger tables, and other ERP-facing domain

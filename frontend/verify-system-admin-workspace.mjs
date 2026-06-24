@@ -208,6 +208,49 @@ const requiredOperationSnippets = [
   "resultView: 'audit'",
 ]
 
+requiredApiExports.push('getSchemaChangePackageDiff')
+
+requiredApiTypes.push(
+  'IndustrySolutionManifest',
+  'IndustrySolutionAsset',
+  'PackageAssetDiff',
+  'SchemaApplyAssetResult',
+  'PublicationGateResult',
+)
+
+requiredI18nKeys.push(
+  'systemAdmin.packageAssets',
+  'systemAdmin.assetResults',
+  'systemAdmin.publicationGates',
+  'systemAdmin.blockingReason',
+  'systemAdmin.metadataAssets',
+  'systemAdmin.assetType.database_asset',
+  'systemAdmin.assetType.business_function',
+  'systemAdmin.assetType.process_loop',
+  'systemAdmin.assetType.runtime_operation',
+  'systemAdmin.assetType.tool_policy',
+  'systemAdmin.assetType.tool_definition',
+  'systemAdmin.assetType.context_rule',
+  'systemAdmin.assetType.assistant_skill',
+  'systemAdmin.assetType.quality_gate',
+  'systemAdmin.assetType.verification_scenario',
+  'systemAdmin.check.industry_manifest',
+  'systemAdmin.gate.anonymization_check',
+  'systemAdmin.gate.knowledge_source_permission_check',
+  'systemAdmin.gate.verification_scenario_check',
+)
+
+requiredWorkspaceSnippets.push(
+  'getSchemaChangePackageDiff',
+  'packageAssetDiff',
+  'packageAssetsByType',
+  'assetResults',
+  'publication_gates',
+  "t('systemAdmin.packageAssets')",
+  "t('systemAdmin.assetResults')",
+  "t('systemAdmin.publicationGates')",
+)
+
 const movedPlatformDomains = [
   'Capability',
   'Governance',
