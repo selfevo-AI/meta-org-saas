@@ -368,7 +368,7 @@ func (r *Repository) GetExtension(ctx context.Context, extensionID uuid.UUID) (*
 	return item, nil
 }
 
-func (r *Repository) CreatePublicationRequest(ctx context.Context, extension Extension, actorID uuid.UUID, reason string) (*PublicationRequest, error) {
+func (r *Repository) CreatePublicationRequest(ctx context.Context, extension Extension, actorID uuid.UUID, reason string, metadata map[string]any) (*PublicationRequest, error) {
 	item := &PublicationRequest{}
 	err := scanPublicationRequest(r.db.QueryRow(ctx, `
 		INSERT INTO platform.custom_package_publication_requests(
@@ -377,11 +377,37 @@ func (r *Repository) CreatePublicationRequest(ctx context.Context, extension Ext
 		VALUES ($1, $2, $3, 'pending', $4, $5, $6)
 		RETURNING id, extension_id, source_organization_id, industry_key, status, reason, review_reason,
 			requested_by, reviewed_by, metadata, created_at, updated_at, reviewed_at
-	`, extension.ID, extension.OrganizationID, extension.IndustryKey, reason, actorID, jsonBytes(map[string]any{"extension_key": extension.ExtensionKey})), item)
+	`, extension.ID, extension.OrganizationID, extension.IndustryKey, reason, actorID, jsonBytes(metadata)), item)
 	if err != nil {
 		return nil, fmt.Errorf("create publication request: %w", err)
 	}
 	return item, nil
+}
+
+func (r *Repository) GetPublicationRequest(ctx context.Context, requestID uuid.UUID) (*PublicationRequest, error) {
+	item := &PublicationRequest{}
+	err := scanPublicationRequest(r.db.QueryRow(ctx, `
+		SELECT id, extension_id, source_organization_id, industry_key, status, reason, review_reason,
+			requested_by, reviewed_by, metadata, created_at, updated_at, reviewed_at
+		FROM platform.custom_package_publication_requests
+		WHERE id = $1
+	`, requestID), item)
+	if err != nil {
+		return nil, fmt.Errorf("get publication request: %w", err)
+	}
+	return item, nil
+}
+
+func (r *Repository) UpdatePublicationRequestMetadata(ctx context.Context, requestID uuid.UUID, metadata map[string]any) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE platform.custom_package_publication_requests
+		SET metadata = $2::jsonb, updated_at = NOW()
+		WHERE id = $1
+	`, requestID, jsonBytes(metadata))
+	if err != nil {
+		return fmt.Errorf("update publication request metadata: %w", err)
+	}
+	return nil
 }
 
 func (r *Repository) ListPublicationRequests(ctx context.Context, limit int) ([]PublicationRequest, error) {
