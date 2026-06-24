@@ -23,6 +23,7 @@ func TestPlatformOnlyDomainsAreNotMountedInTenantRoutes(t *testing.T) {
 		"deps.EvolutionHandler.RegisterRoutes",
 		"deps.VerificationHandler.RegisterRoutes",
 		"deps.ObservabilityHandler.RegisterRoutes",
+		"deps.MonitoringAgentHandler.RegisterRoutes",
 	}
 
 	for _, handlerCall := range movedHandlers {

@@ -88,6 +88,14 @@ change proposals include the `applied` lifecycle state plus `apply_result` and
 so strict modules do not fall back to compatibility context without dictionary
 coverage.
 
+Phase 5 Monitoring Agent storage is split by ownership: `004` owns
+`monitoring_agent_runs` because scan execution and summaries are AI/evolution
+capability metadata; `000` owns the `signals` table and adds the monitoring
+fingerprint index used to suppress duplicate unacknowledged findings. The agent
+may write signals and pending context proposals, but it must not apply schema,
+activate context rules, bypass tool approvals, or execute repository code
+changes.
+
 ## Foreign-Key Rule
 
 A migration stage must not create a foreign key to a table that belongs to a

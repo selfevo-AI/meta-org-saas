@@ -859,6 +859,28 @@ CREATE INDEX IF NOT EXISTS idx_context_packages_session
 CREATE INDEX IF NOT EXISTS idx_context_packages_target
     ON context_packages(module_key, target_type, target_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS monitoring_agent_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    trigger_type TEXT NOT NULL DEFAULT 'manual'
+        CHECK (trigger_type IN ('manual', 'scheduled')),
+    organization_id UUID REFERENCES organizations(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'running'
+        CHECK (status IN ('running', 'completed', 'failed')),
+    lookback_started_at TIMESTAMPTZ NOT NULL,
+    lookback_ended_at TIMESTAMPTZ NOT NULL,
+    signals_created INT NOT NULL DEFAULT 0,
+    duplicates_suppressed INT NOT NULL DEFAULT 0,
+    summary JSONB NOT NULL DEFAULT '{}',
+    error_message TEXT NOT NULL DEFAULT '',
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitoring_agent_runs_org
+    ON monitoring_agent_runs(organization_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_monitoring_agent_runs_status
+    ON monitoring_agent_runs(status, started_at DESC);
+
 WITH seed_version AS (
     INSERT INTO context_dictionary_versions (scope_level, module_key, version_key, source_type, source_name, status, metadata)
     VALUES ('saas', 'assistant_seed', 'assistant-context-seed-v1', 'json', 'migration_035_seed', 'active',

@@ -20,6 +20,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaorg"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/monitoringagent"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/procurement"
@@ -36,35 +37,36 @@ import (
 )
 
 type Dependencies struct {
-	JWTSecret            string
-	IdentityHandler      *identity.Handler
-	OrganizationHandler  *organization.Handler
-	LayerHandler         *layer.Handler
-	CapabilityHandler    *capability.Handler
-	CostingHandler       *costing.Handler
-	DashboardHandler     *dashboard.Handler
-	MetaOrgHandler       *metaorg.Handler
-	MetaResourceHandler  *metaresource.Handler
-	AssistantHandler     *assistant.Handler
-	AIGatewayHandler     *aigateway.Handler
-	WorkflowHandler      *workflow.Handler
-	ProjectHandler       *project.Handler
-	FinanceHandler       *finance.Handler
-	InventoryHandler     *inventory.Handler
-	IndustryHandler      *industry.Handler
-	ProcurementHandler   *procurement.Handler
-	SalesHandler         *sales.Handler
-	RuntimeHandler       *runtime.Handler
-	ToolRuntimeHandler   *toolruntime.Handler
-	SaaSHandler          *saas.Handler
-	SystemAdminHandler   *systemadmin.Handler
-	TenantResolver       middleware.TenantResolver
-	PlatformRoleResolver middleware.PlatformRoleResolver
-	ObservabilityHandler *observability.Handler
-	VerificationHandler  *verification.Handler
-	GovernanceHandler    *governance.Handler
-	EvolutionHandler     *evolution.Handler
-	ErpHandler           *erp.Handler
+	JWTSecret              string
+	IdentityHandler        *identity.Handler
+	OrganizationHandler    *organization.Handler
+	LayerHandler           *layer.Handler
+	CapabilityHandler      *capability.Handler
+	CostingHandler         *costing.Handler
+	DashboardHandler       *dashboard.Handler
+	MetaOrgHandler         *metaorg.Handler
+	MetaResourceHandler    *metaresource.Handler
+	AssistantHandler       *assistant.Handler
+	AIGatewayHandler       *aigateway.Handler
+	WorkflowHandler        *workflow.Handler
+	ProjectHandler         *project.Handler
+	FinanceHandler         *finance.Handler
+	InventoryHandler       *inventory.Handler
+	IndustryHandler        *industry.Handler
+	ProcurementHandler     *procurement.Handler
+	SalesHandler           *sales.Handler
+	RuntimeHandler         *runtime.Handler
+	ToolRuntimeHandler     *toolruntime.Handler
+	SaaSHandler            *saas.Handler
+	SystemAdminHandler     *systemadmin.Handler
+	TenantResolver         middleware.TenantResolver
+	PlatformRoleResolver   middleware.PlatformRoleResolver
+	ObservabilityHandler   *observability.Handler
+	VerificationHandler    *verification.Handler
+	GovernanceHandler      *governance.Handler
+	EvolutionHandler       *evolution.Handler
+	MonitoringAgentHandler *monitoringagent.Handler
+	ErpHandler             *erp.Handler
 }
 
 func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
@@ -139,6 +141,9 @@ func registerPlatformAdminRoutes(r chi.Router, deps *Dependencies) {
 			}
 			if deps.ObservabilityHandler != nil {
 				deps.ObservabilityHandler.RegisterRoutes(r)
+			}
+			if deps.MonitoringAgentHandler != nil {
+				deps.MonitoringAgentHandler.RegisterRoutes(r)
 			}
 			if deps.MetaOrgHandler != nil {
 				deps.MetaOrgHandler.RegisterPlatformRoutes(r)

@@ -541,6 +541,9 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_tags ON knowledge_entries USING GIN(tag
 CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_entries(source);
 CREATE INDEX IF NOT EXISTS idx_signals_priority ON signals(priority DESC, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_signals_acknowledged ON signals(acknowledged);
+CREATE INDEX IF NOT EXISTS idx_signals_monitoring_fingerprint
+    ON signals ((data->>'fingerprint'))
+    WHERE source = 'monitoring_agent' AND acknowledged = false;
 
 
 -- -----------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaorg"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/monitoringagent"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/procurement"
@@ -45,6 +46,8 @@ import (
 
 func main() {
 	cfg := config.Load()
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
 
 	connCtx, connCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer connCancel()
@@ -132,6 +135,21 @@ func main() {
 	obsRepo := observability.NewRepository(db)
 	obsSvc := observability.NewService(obsRepo)
 	obsHandler := observability.NewHandler(obsSvc)
+
+	monitoringRepo := monitoringagent.NewRepository(db)
+	monitoringSvc := monitoringagent.NewService(monitoringRepo, monitoringagent.ServiceConfig{
+		LookbackHours:    cfg.MonitoringAgentLookbackHours,
+		MaxSignalsPerRun: cfg.MonitoringAgentMaxSignalsPerRun,
+		SchedulerEnabled: cfg.MonitoringAgentSchedulerEnabled,
+		DailyTime:        cfg.MonitoringAgentDailyTime,
+	})
+	monitoringHandler := monitoringagent.NewHandler(monitoringSvc)
+	monitoringScheduler := monitoringagent.NewScheduler(monitoringSvc, monitoringagent.SchedulerConfig{
+		Enabled:       cfg.MonitoringAgentSchedulerEnabled,
+		DailyTime:     cfg.MonitoringAgentDailyTime,
+		LookbackHours: cfg.MonitoringAgentLookbackHours,
+	})
+	monitoringScheduler.Start(appCtx)
 
 	aiRepo := aigateway.NewRepository(db, modelSecretBox)
 	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel))
@@ -235,35 +253,36 @@ func main() {
 
 	router := server.NewRouter(cfg.CorsOrigins)
 	gateway.RegisterRoutes(router, &gateway.Dependencies{
-		JWTSecret:            cfg.JWTSecret,
-		IdentityHandler:      identHandler,
-		OrganizationHandler:  orgHandler,
-		LayerHandler:         layerHandler,
-		CapabilityHandler:    capHandler,
-		CostingHandler:       costHandler,
-		DashboardHandler:     dashHandler,
-		MetaOrgHandler:       metaHandler,
-		MetaResourceHandler:  metaResourceHandler,
-		AssistantHandler:     assistantHandler,
-		AIGatewayHandler:     aiHandler,
-		WorkflowHandler:      wfHandler,
-		ProjectHandler:       projectHandler,
-		FinanceHandler:       financeHandler,
-		InventoryHandler:     inventoryHandler,
-		IndustryHandler:      industryHandler,
-		ProcurementHandler:   procurementHandler,
-		SalesHandler:         salesHandler,
-		RuntimeHandler:       runtimeHandler,
-		ToolRuntimeHandler:   toolHandler,
-		SaaSHandler:          saasHandler,
-		SystemAdminHandler:   systemAdminHandler,
-		TenantResolver:       saasSvc,
-		PlatformRoleResolver: systemAdminRepo,
-		ObservabilityHandler: obsHandler,
-		VerificationHandler:  verHandler,
-		GovernanceHandler:    govHandler,
-		EvolutionHandler:     evoHandler,
-		ErpHandler:           erpHandler,
+		JWTSecret:              cfg.JWTSecret,
+		IdentityHandler:        identHandler,
+		OrganizationHandler:    orgHandler,
+		LayerHandler:           layerHandler,
+		CapabilityHandler:      capHandler,
+		CostingHandler:         costHandler,
+		DashboardHandler:       dashHandler,
+		MetaOrgHandler:         metaHandler,
+		MetaResourceHandler:    metaResourceHandler,
+		AssistantHandler:       assistantHandler,
+		AIGatewayHandler:       aiHandler,
+		WorkflowHandler:        wfHandler,
+		ProjectHandler:         projectHandler,
+		FinanceHandler:         financeHandler,
+		InventoryHandler:       inventoryHandler,
+		IndustryHandler:        industryHandler,
+		ProcurementHandler:     procurementHandler,
+		SalesHandler:           salesHandler,
+		RuntimeHandler:         runtimeHandler,
+		ToolRuntimeHandler:     toolHandler,
+		SaaSHandler:            saasHandler,
+		SystemAdminHandler:     systemAdminHandler,
+		TenantResolver:         saasSvc,
+		PlatformRoleResolver:   systemAdminRepo,
+		ObservabilityHandler:   obsHandler,
+		VerificationHandler:    verHandler,
+		GovernanceHandler:      govHandler,
+		EvolutionHandler:       evoHandler,
+		MonitoringAgentHandler: monitoringHandler,
+		ErpHandler:             erpHandler,
 	})
 
 	srv := server.New(router, cfg.ServerPort)
@@ -277,6 +296,7 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+	appCancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

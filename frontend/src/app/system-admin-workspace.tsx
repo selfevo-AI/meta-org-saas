@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  Activity,
   Bot,
   Braces,
   Check,
@@ -30,6 +31,7 @@ import {
   createOrganizationInvitation,
   getPlatformPermissionProfile,
   getPlatformAssistantContextHealth,
+  getMonitoringAgentStatus,
   exportOrganizationSchema,
   getOrganizationIndustry,
   getOrganizationEntitlements,
@@ -39,6 +41,7 @@ import {
   listIndustryExtensions,
   listIndustryPackages,
   listIndustryPublicationRequests,
+  listMonitoringAgentRuns,
   listOrganizationInvitations,
   listOrganizationSchemaTargets,
   listPlatformDetails,
@@ -46,6 +49,7 @@ import {
   listPlatformOrganizations,
   listSaaSModules,
   reviewIndustryPublicationRequest,
+  runMonitoringAgent,
   submitIndustryExtensionPublication,
   verifySchemaChange,
   type Industry,
@@ -62,6 +66,8 @@ import {
   type PlatformMaster,
   type PlatformPermissionProfile,
   type AssistantContextHealthSummary,
+  type MonitoringAgentRun,
+  type MonitoringAgentStatus,
   type PublicationGateResult,
   type SaaSModule,
   type PackageAssetDiff,
@@ -81,10 +87,11 @@ interface SystemAdminWorkspaceProps {
   currentOrganizationID?: string | null
 }
 
-type TabID = 'assistant' | 'saas' | 'industry' | 'features' | 'permissions' | 'runtime' | 'catalog' | 'targets' | 'schema'
+type TabID = 'assistant' | 'monitoring' | 'saas' | 'industry' | 'features' | 'permissions' | 'runtime' | 'catalog' | 'targets' | 'schema'
 
 const tabs: Array<{ id: TabID; label: string; icon: typeof Database; permission?: string }> = [
   { id: 'assistant', label: 'systemAdmin.platformAssistant', icon: Bot, permission: 'assistant.platform.run' },
+  { id: 'monitoring', label: 'systemAdmin.monitoringAgent', icon: Activity, permission: 'platform.read' },
   { id: 'saas', label: 'systemAdmin.saasOrganizations', icon: Users, permission: 'platform.read' },
   { id: 'industry', label: 'systemAdmin.industries', icon: Layers3, permission: 'platform.read' },
   { id: 'features', label: 'systemAdmin.platformFeatures', icon: ShieldCheck, permission: 'platform.read' },
@@ -162,6 +169,19 @@ function summarizeSchemaDiff(diff?: SchemaChangeRequest['diff']): string[] {
   )
 }
 
+function summaryNumber(summary: Record<string, unknown> | undefined, key: string): number {
+  const value = summary?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function categoryEntries(summary: Record<string, unknown> | undefined): Array<[string, number]> {
+  const value = summary?.by_category
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  return Object.entries(value)
+    .map(([key, count]) => [key, typeof count === 'number' ? count : Number(count) || 0] as [string, number])
+    .filter(([, count]) => count > 0)
+}
+
 function parseSchemaPackage(source: string): SchemaPackage {
   const parsed = JSON.parse(source) as Partial<SchemaPackage>
   if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.tables)) {
@@ -212,6 +232,8 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [packageAssetDiff, setPackageAssetDiff] = useState<PackageAssetDiff[]>([])
   const [verificationReport, setVerificationReport] = useState<SchemaVerificationReport | null>(null)
   const [contextHealth, setContextHealth] = useState<AssistantContextHealthSummary | null>(null)
+  const [monitoringStatus, setMonitoringStatus] = useState<MonitoringAgentStatus | null>(null)
+  const [monitoringRuns, setMonitoringRuns] = useState<MonitoringAgentRun[]>([])
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState('')
@@ -332,6 +354,28 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setContextHealth(await getPlatformAssistantContextHealth(token, activeOrganizationID || undefined))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    }
+  }, [activeOrganizationID, canPlatform, t, token])
+
+  const loadMonitoringAgent = useCallback(async () => {
+    if (!canPlatform('platform.read')) {
+      setMonitoringStatus(null)
+      setMonitoringRuns([])
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      const [status, runs] = await Promise.all([
+        getMonitoringAgentStatus(token, activeOrganizationID || undefined),
+        listMonitoringAgentRuns(token, activeOrganizationID || undefined, 20),
+      ])
+      setMonitoringStatus(status)
+      setMonitoringRuns(runs)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    } finally {
+      setLoading(false)
     }
   }, [activeOrganizationID, canPlatform, t, token])
 
@@ -469,6 +513,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }, [effectiveActiveTab, loadContextHealth])
 
   useEffect(() => {
+    if (effectiveActiveTab !== 'monitoring') return
+    const timer = window.setTimeout(() => {
+      void loadMonitoringAgent()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadMonitoringAgent])
+
+  useEffect(() => {
     if (!effectiveActiveTab || !['saas', 'industry', 'features', 'schema', 'targets'].includes(effectiveActiveTab)) return
     const timer = window.setTimeout(() => {
       void loadSaaSManagement()
@@ -581,6 +633,25 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       })
       await loadSaaSManagement()
     }, 'systemAdmin.organizationProfileUpdated')
+  }
+
+  async function runMonitoringScan() {
+    if (!canPlatform('platform.read')) return
+    setLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      await runMonitoringAgent(token, {
+        organization_id: activeOrganizationID || undefined,
+        lookback_hours: monitoringStatus?.lookback_hours,
+      })
+      setNotice(t('systemAdmin.monitoringRunCreated'))
+      await loadMonitoringAgent()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function applySelectedIndustryPackage() {
@@ -806,6 +877,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             void loadOrganizationSaaSDetails()
             void loadIndustryManagement()
             void loadContextHealth()
+            void loadMonitoringAgent()
             void loadCatalog()
             void loadTargets()
           }}
@@ -843,6 +915,98 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 apiScope="platform"
                 className="h-full"
               />
+            </div>
+          </section>
+        </div>
+      )}
+
+      {effectiveActiveTab === 'monitoring' && (
+        <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.monitoringAgent')}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.monitoringAgentSummary')}</p>
+              </div>
+              <Activity className="h-5 w-5 text-slate-500" />
+            </div>
+            <div className="mt-4 grid gap-2">
+              <Metric label={t('systemAdmin.scheduler')} value={monitoringStatus?.scheduler_enabled ? t('common.yes') : t('common.no')} />
+              <Metric label={t('systemAdmin.dailyTime')} value={monitoringStatus?.daily_time || '02:00'} />
+              <Metric label={t('systemAdmin.lookbackHours')} value={String(monitoringStatus?.lookback_hours ?? 24)} />
+              <Metric label={t('systemAdmin.maxSignalsPerRun')} value={String(monitoringStatus?.max_signals_per_run ?? 100)} />
+            </div>
+            <button
+              type="button"
+              onClick={() => void runMonitoringScan()}
+              disabled={loading || !canPlatform('platform.read')}
+              className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Play className="h-4 w-4" />
+              {t('systemAdmin.runMonitoringScan')}
+            </button>
+            {monitoringStatus?.latest_run && (
+              <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.latestRun')}</p>
+                  <StatusBadge label={monitoringStatus.latest_run.status} />
+                </div>
+                <div className="mt-3 grid gap-2">
+                  <Metric label={t('systemAdmin.signalsCreated')} value={String(monitoringStatus.latest_run.signals_created)} />
+                  <Metric label={t('systemAdmin.duplicatesSuppressed')} value={String(monitoringStatus.latest_run.duplicates_suppressed)} />
+                  <Metric label={t('systemAdmin.contextProposalsCreated')} value={String(summaryNumber(monitoringStatus.latest_run.summary, 'context_proposals_created'))} />
+                  <Metric label={t('systemAdmin.startedAt')} value={formatDateTime(monitoringStatus.latest_run.started_at)} />
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.monitoringRuns')}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.monitoringRunsSummary')}</p>
+              </div>
+              <RefreshCw className={`h-5 w-5 text-slate-500 ${loading ? 'animate-spin' : ''}`} />
+            </div>
+            <div className="mt-4 space-y-3">
+              {monitoringRuns.length > 0 ? (
+                monitoringRuns.map((run) => {
+                  const categories = categoryEntries(run.summary)
+                  return (
+                    <div key={run.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-slate-950">{run.id}</p>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {t(`systemAdmin.monitoringTrigger.${run.trigger_type}`)} / {formatDateTime(run.started_at)}
+                          </p>
+                        </div>
+                        <StatusBadge label={run.status} />
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                        <Metric label={t('systemAdmin.signalsCreated')} value={String(run.signals_created)} />
+                        <Metric label={t('systemAdmin.duplicatesSuppressed')} value={String(run.duplicates_suppressed)} />
+                        <Metric label={t('systemAdmin.totalFindings')} value={String(summaryNumber(run.summary, 'total_findings'))} />
+                        <Metric label={t('systemAdmin.contextProposalsCreated')} value={String(summaryNumber(run.summary, 'context_proposals_created'))} />
+                      </div>
+                      {categories.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {categories.map(([category, count]) => (
+                            <span key={category} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                              <span className="font-semibold">{category}</span>
+                              <span>{count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {run.error_message && <p className="mt-3 rounded-md bg-red-50 p-2 text-xs text-red-700">{run.error_message}</p>}
+                    </div>
+                  )
+                })
+              ) : (
+                <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">{t('systemAdmin.noMonitoringRuns')}</p>
+              )}
             </div>
           </section>
         </div>
