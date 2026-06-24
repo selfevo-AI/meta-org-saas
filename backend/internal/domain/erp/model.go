@@ -133,22 +133,23 @@ type ActionPrecondition struct {
 }
 
 type ActionExecution struct {
-	ID                 uuid.UUID      `json:"id"`
-	TableCode          string         `json:"table_code"`
-	RecordKey          string         `json:"record_key"`
-	Action             string         `json:"action"`
-	Status             string         `json:"status"`
-	IdempotencyKey     string         `json:"idempotency_key"`
-	ActorID            *uuid.UUID     `json:"actor_id,omitempty"`
-	ActorType          string         `json:"actor_type,omitempty"`
-	ToolExecutionID    *uuid.UUID     `json:"tool_execution_id,omitempty"`
-	AssistantSessionID *uuid.UUID     `json:"assistant_session_id,omitempty"`
-	Source             string         `json:"source,omitempty"`
-	FailureCode        string         `json:"failure_code,omitempty"`
-	FailureMessage     string         `json:"failure_message,omitempty"`
-	Payload            map[string]any `json:"payload"`
-	StartedAt          time.Time      `json:"started_at,omitempty"`
-	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
+	ID                 uuid.UUID               `json:"id"`
+	TableCode          string                  `json:"table_code"`
+	RecordKey          string                  `json:"record_key"`
+	Action             string                  `json:"action"`
+	Status             string                  `json:"status"`
+	IdempotencyKey     string                  `json:"idempotency_key"`
+	ActorID            *uuid.UUID              `json:"actor_id,omitempty"`
+	ActorType          string                  `json:"actor_type,omitempty"`
+	ToolExecutionID    *uuid.UUID              `json:"tool_execution_id,omitempty"`
+	AssistantSessionID *uuid.UUID              `json:"assistant_session_id,omitempty"`
+	Source             string                  `json:"source,omitempty"`
+	FailureCode        string                  `json:"failure_code,omitempty"`
+	FailureMessage     string                  `json:"failure_message,omitempty"`
+	Payload            map[string]any          `json:"payload"`
+	GeneratedRecords   []ActionGeneratedRecord `json:"generated_records,omitempty"`
+	StartedAt          time.Time               `json:"started_at,omitempty"`
+	CompletedAt        *time.Time              `json:"completed_at,omitempty"`
 }
 
 type ActionGeneratedRecord struct {

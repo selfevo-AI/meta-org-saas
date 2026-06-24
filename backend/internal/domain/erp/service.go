@@ -22,6 +22,7 @@ type Repository interface {
 	CompleteActionExecution(ctx context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error)
 	CreateActionGeneratedRecord(ctx context.Context, record ActionGeneratedRecord) error
 	ListActionGeneratedRecords(ctx context.Context, actionID uuid.UUID) ([]ActionGeneratedRecord, error)
+	ListActionExecutions(ctx context.Context, tableCode string, recordKey string, limit int) ([]ActionExecution, error)
 }
 
 type TransactionalRepository interface {
@@ -131,6 +132,27 @@ func (s *Service) CreateChildRecord(ctx context.Context, tableCode, parentKey, c
 		return nil, err
 	}
 	return s.repo.CreateChildRecord(ctx, parent, child, parentKey, input)
+}
+
+func (s *Service) ListActionExecutions(ctx context.Context, tableCode string, recordKey string, limit int) ([]ActionExecution, error) {
+	if _, err := s.table(tableCode); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(recordKey) == "" {
+		return nil, fmt.Errorf("%w: record key is required", ErrValidation)
+	}
+	items, err := s.repo.ListActionExecutions(ctx, tableCode, recordKey, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		generated, err := s.repo.ListActionGeneratedRecords(ctx, items[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		items[i].GeneratedRecords = generated
+	}
+	return items, nil
 }
 
 func (s *Service) RunAction(ctx context.Context, tableCode string, key string, action string, input ActionInput) (*ActionResult, error) {

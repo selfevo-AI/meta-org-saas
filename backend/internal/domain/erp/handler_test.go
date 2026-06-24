@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestHandlerReturnsCatalog(t *testing.T) {
@@ -60,6 +61,39 @@ func TestHandlerRunsERPAction(t *testing.T) {
 	}
 	if !strings.Contains(resp.Body.String(), `"table_code":"MPOR"`) || !strings.Contains(resp.Body.String(), `"action":"submit"`) {
 		t.Fatalf("POST /erp/MPOR/1001/actions/submit body = %s, want action result", resp.Body.String())
+	}
+}
+
+func TestHandlerReturnsActionExecutionTimeline(t *testing.T) {
+	repo := &fakeRepository{}
+	repo.ensureExecutionLedger()
+	executionID := uuid.New()
+	repo.executions[executionID] = ActionExecution{
+		ID:             executionID,
+		TableCode:      "MREQ",
+		RecordKey:      "REQ-1001",
+		Action:         "convert-to-project",
+		Status:         ActionExecutionCompleted,
+		IdempotencyKey: "erp:MREQ:REQ-1001:convert-to-project:PRJ-1001",
+		Payload:        map[string]any{"status": "converted"},
+	}
+	repo.generatedRecords[executionID] = []ActionGeneratedRecord{
+		{ActionID: executionID, LineNum: 1, GeneratedTableCode: "MPRJ", GeneratedKey: "PRJ-1001", RelationType: "created"},
+	}
+	router := chi.NewRouter()
+	NewHandler(NewService(repo, DefaultCatalog())).RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/erp/MREQ/REQ-1001/action-executions?limit=5", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /erp/MREQ/REQ-1001/action-executions status = %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `"action_executions"`) || !strings.Contains(body, `"generated_table_code":"MPRJ"`) {
+		t.Fatalf("GET /erp/MREQ/REQ-1001/action-executions body = %s, want timeline with generated MPRJ", body)
 	}
 }
 

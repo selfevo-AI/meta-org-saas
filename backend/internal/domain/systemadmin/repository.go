@@ -250,16 +250,39 @@ func (r *Repository) applyIndustrySolutionAsset(ctx context.Context, tx pgx.Tx, 
 	payload, _ := result.Metadata["payload"].(map[string]any)
 	switch result.AssetType {
 	case AssetTypeRuntimeOperation:
+		operationKey := firstNonEmptyString(stringValue(payload["operation_key"]), result.AssetKey)
 		path := firstNonEmptyString(stringValue(payload["path"]), result.AssetKey)
+		metadata := copyApplyMetadata(payload)
+		metadata["source_change_request_id"] = request.ID.String()
+		metadata["asset_key"] = result.AssetKey
+		metadata["risk_level"] = result.Metadata["risk_level"]
 		_, err := tx.Exec(ctx, `
 			INSERT INTO platform.runtime_operations(operation_key, domain, title, method, path, operation_kind, danger_level, result_view, assistant_eligible, status, action_type, metadata)
-			VALUES ($1, 'ERP', $2, 'POST', $3, 'contextual', 'medium', 'summary', true, 'active', 'erp.action', $4::jsonb)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', $10, $11::jsonb)
 			ON CONFLICT (operation_key) DO UPDATE SET
+				domain = EXCLUDED.domain,
 				title = EXCLUDED.title,
+				method = EXCLUDED.method,
 				path = EXCLUDED.path,
+				operation_kind = EXCLUDED.operation_kind,
+				danger_level = EXCLUDED.danger_level,
+				result_view = EXCLUDED.result_view,
+				assistant_eligible = EXCLUDED.assistant_eligible,
+				action_type = EXCLUDED.action_type,
 				metadata = platform.runtime_operations.metadata || EXCLUDED.metadata,
 				updated_at = NOW()
-		`, result.AssetKey, result.AssetKey, path, jsonBytes(map[string]any{"source_change_request_id": request.ID.String(), "asset_key": result.AssetKey}))
+		`, operationKey,
+			firstNonEmptyString(stringValue(payload["domain"]), "ERP"),
+			firstNonEmptyString(stringValue(payload["title"]), operationKey),
+			firstNonEmptyString(stringValue(payload["method"]), "POST"),
+			path,
+			firstNonEmptyString(stringValue(payload["operation_kind"]), "contextual"),
+			firstNonEmptyString(stringValue(payload["danger_level"]), "medium"),
+			firstNonEmptyString(stringValue(payload["result_view"]), "summary"),
+			boolValue(payload["assistant_eligible"], true),
+			firstNonEmptyString(stringValue(payload["action_type"]), "erp.action"),
+			jsonBytes(metadata),
+		)
 		return err
 	case AssetTypeToolDefinition, AssetTypeToolPolicy:
 		_, err := tx.Exec(ctx, `
@@ -426,6 +449,22 @@ func jsonBytes(value any) []byte {
 		return []byte("{}")
 	}
 	return data
+}
+
+func copyApplyMetadata(input map[string]any) map[string]any {
+	output := make(map[string]any, len(input)+3)
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func boolValue(value any, fallback bool) bool {
+	typed, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
+	return typed
 }
 
 var _ repository = (*Repository)(nil)

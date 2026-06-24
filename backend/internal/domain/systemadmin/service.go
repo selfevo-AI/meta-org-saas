@@ -195,6 +195,13 @@ func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, i
 func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 	catalog := erp.DefaultCatalog()
 	actions := erp.DefaultActionRegistry().List()
+	enabled := make([]string, 0, len(input.EnabledModules))
+	for _, module := range input.EnabledModules {
+		trimmed := strings.TrimSpace(module)
+		if trimmed != "" {
+			enabled = append(enabled, trimmed)
+		}
+	}
 	databaseAssets := make([]map[string]any, 0, len(catalog.Tables))
 	for _, table := range catalog.Tables {
 		childTables := make([]string, 0, len(table.Children))
@@ -210,8 +217,6 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 		})
 	}
 	businessFunctions := make([]map[string]any, 0, len(actions))
-	apiOperations := make([]string, 0, len(actions)+3)
-	apiOperations = append(apiOperations, "/erp/catalog", "/erp/actions", "/erp/{tableCode}")
 	for _, action := range actions {
 		businessFunctions = append(businessFunctions, map[string]any{
 			"table_code":  action.TableCode,
@@ -219,7 +224,20 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 			"label":       action.Label,
 			"next_tables": action.NextTables,
 		})
-		apiOperations = append(apiOperations, fmt.Sprintf("/erp/%s/{key}/actions/%s", action.TableCode, action.Action))
+	}
+	runtimeOperations := buildERPStandardRuntimeOperations(catalog, actions, enabled)
+	apiOperations := make([]string, 0, len(runtimeOperations)+3)
+	apiOperations = append(apiOperations, "/erp/catalog", "/erp/actions", "/erp/{tableCode}")
+	seenAPIOperations := map[string]bool{}
+	for _, operation := range apiOperations {
+		seenAPIOperations[operation] = true
+	}
+	for _, operation := range runtimeOperations {
+		path := stringValue(operation["path"])
+		if path != "" && !seenAPIOperations[path] {
+			apiOperations = append(apiOperations, path)
+			seenAPIOperations[path] = true
+		}
 	}
 	toolDefinitions := []map[string]any{
 		{
@@ -266,13 +284,6 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 			"risk_level":  "medium",
 		})
 	}
-	enabled := make([]string, 0, len(input.EnabledModules))
-	for _, module := range input.EnabledModules {
-		trimmed := strings.TrimSpace(module)
-		if trimmed != "" {
-			enabled = append(enabled, trimmed)
-		}
-	}
 	return SchemaPackage{
 		FormatVersion: SchemaPackageFormatVersion,
 		ModuleKey:     "erp_standard",
@@ -302,10 +313,11 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 					{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
 					{"key": "inventory_to_finance", "steps": []string{"MIGN.post", "MIGE.post", "MJDT.post"}},
 				},
-				"permissions":       []string{"erp:read", "erp:write", "erp:action", "erp:admin", "assistant:erp"},
-				"api_operations":    apiOperations,
-				"ui_workspaces":     []string{"project", "procurement", "sales", "inventory", "finance", "developer_erp_code"},
-				"assistant_targets": []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "journal_entry"},
+				"permissions":        []string{"erp:read", "erp:write", "erp:action", "erp:admin", "assistant:erp"},
+				"api_operations":     apiOperations,
+				"runtime_operations": runtimeOperations,
+				"ui_workspaces":      []string{"project", "procurement", "sales", "inventory", "finance", "developer_erp_code"},
+				"assistant_targets":  []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "journal_entry"},
 				"context_rules": []map[string]any{
 					{
 						"key":                  "erp_document_state_context",
@@ -403,6 +415,180 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 			return metadata
 		}(),
 	}
+}
+
+type erpRuntimeWorkspaceDocument struct {
+	Module       string
+	DocumentID   string
+	LabelKey     string
+	SubmoduleKey string
+	TableCode    string
+	Actions      []string
+	SortOrder    int
+}
+
+func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.ActionDefinition, enabledModules []string) []map[string]any {
+	enabled := map[string]bool{}
+	for _, module := range enabledModules {
+		enabled[module] = true
+	}
+	if len(enabled) == 0 {
+		for _, module := range []string{"project", "procurement", "inventory", "sales", "finance"} {
+			enabled[module] = true
+		}
+	}
+	actionDefs := map[string]erp.ActionDefinition{}
+	for _, action := range actions {
+		actionDefs[action.TableCode+":"+action.Action] = action
+	}
+	documents := []erpRuntimeWorkspaceDocument{
+		{Module: "project", DocumentID: "requirement", LabelKey: "erp.document.requirement", SubmoduleKey: "erp.submodule.requirements", TableCode: "MREQ", Actions: []string{"analyze", "approve", "convert-to-project"}, SortOrder: 10},
+		{Module: "project", DocumentID: "project", LabelKey: "erp.document.project", SubmoduleKey: "erp.submodule.projects", TableCode: "MPRJ", Actions: []string{"refresh-cost", "close-feedback"}, SortOrder: 20},
+		{Module: "project", DocumentID: "deliverable", LabelKey: "erp.document.delivery", SubmoduleKey: "erp.submodule.deliveries", TableCode: "MDLN", Actions: []string{"post"}, SortOrder: 30},
+		{Module: "project", DocumentID: "cost", LabelKey: "erp.document.cost", SubmoduleKey: "erp.submodule.costs", TableCode: "MCST", SortOrder: 40},
+		{Module: "project", DocumentID: "feedback", LabelKey: "erp.document.feedback", SubmoduleKey: "erp.submodule.feedback", TableCode: "MFDB", SortOrder: 50},
+		{Module: "procurement", DocumentID: "purchase_order", LabelKey: "erp.document.purchaseOrder", SubmoduleKey: "erp.submodule.purchaseOrders", TableCode: "MPOR", Actions: []string{"submit", "approve"}, SortOrder: 10},
+		{Module: "procurement", DocumentID: "goods_receipt_po", LabelKey: "erp.document.goodsReceiptPO", SubmoduleKey: "erp.submodule.goodsReceiptPO", TableCode: "MPDN", Actions: []string{"post"}, SortOrder: 20},
+		{Module: "procurement", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 30},
+		{Module: "sales", DocumentID: "sales_order", LabelKey: "erp.document.salesOrder", SubmoduleKey: "erp.submodule.salesOrders", TableCode: "MRDR", Actions: []string{"confirm", "approve"}, SortOrder: 10},
+		{Module: "sales", DocumentID: "delivery", LabelKey: "erp.document.delivery", SubmoduleKey: "erp.submodule.deliveries", TableCode: "MDLN", Actions: []string{"post"}, SortOrder: 20},
+		{Module: "sales", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 30},
+		{Module: "sales", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 40},
+		{Module: "inventory", DocumentID: "business_partner", LabelKey: "erp.document.businessPartner", SubmoduleKey: "erp.submodule.partners", TableCode: "MCRD", SortOrder: 10},
+		{Module: "inventory", DocumentID: "item", LabelKey: "erp.document.item", SubmoduleKey: "erp.submodule.items", TableCode: "MITM", SortOrder: 20},
+		{Module: "inventory", DocumentID: "warehouse", LabelKey: "erp.document.warehouse", SubmoduleKey: "erp.submodule.warehouses", TableCode: "MWHS", SortOrder: 30},
+		{Module: "inventory", DocumentID: "warehouse_balance", LabelKey: "erp.document.warehouseBalance", SubmoduleKey: "erp.submodule.warehouseBalances", TableCode: "MITW", SortOrder: 40},
+		{Module: "inventory", DocumentID: "goods_receipt", LabelKey: "erp.document.goodsReceipt", SubmoduleKey: "erp.submodule.goodsReceipts", TableCode: "MIGN", Actions: []string{"post"}, SortOrder: 50},
+		{Module: "inventory", DocumentID: "goods_issue", LabelKey: "erp.document.goodsIssue", SubmoduleKey: "erp.submodule.goodsIssues", TableCode: "MIGE", Actions: []string{"post"}, SortOrder: 60},
+		{Module: "finance", DocumentID: "journal_entry", LabelKey: "erp.document.journalEntry", SubmoduleKey: "erp.submodule.journalEntries", TableCode: "MJDT", Actions: []string{"post"}, SortOrder: 10},
+		{Module: "finance", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 20},
+		{Module: "finance", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 30},
+		{Module: "finance", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 40},
+	}
+	operations := []map[string]any{}
+	seenPaths := map[string]bool{}
+	for _, operation := range []map[string]any{
+		{
+			"operation_key":      "erp.catalog",
+			"domain":             "ERP",
+			"title":              "operation.erp.catalog",
+			"method":             "GET",
+			"path":               "/erp/catalog",
+			"operation_kind":     "direct",
+			"danger_level":       "low",
+			"result_view":        "list",
+			"assistant_eligible": false,
+			"action_type":        "erp.catalog",
+		},
+		{
+			"operation_key":      "erp.actions",
+			"domain":             "ERP",
+			"title":              "operation.erp.actions",
+			"method":             "GET",
+			"path":               "/erp/actions",
+			"operation_kind":     "direct",
+			"danger_level":       "low",
+			"result_view":        "list",
+			"assistant_eligible": true,
+			"action_type":        "erp.action.catalog",
+		},
+		{
+			"operation_key":      "erp.records.list",
+			"domain":             "ERP",
+			"title":              "operation.erp.recordList",
+			"method":             "GET",
+			"path":               "/erp/{tableCode}",
+			"operation_kind":     "direct",
+			"danger_level":       "low",
+			"result_view":        "list",
+			"assistant_eligible": false,
+			"action_type":        "erp.record.list",
+		},
+	} {
+		operations = append(operations, operation)
+		seenPaths[stringValue(operation["path"])] = true
+	}
+	for _, document := range documents {
+		if !enabled[document.Module] {
+			continue
+		}
+		table, ok := catalog.Table(document.TableCode)
+		if !ok {
+			continue
+		}
+		childCode := ""
+		if len(table.Children) > 0 {
+			childCode = table.Children[0].Code
+		}
+		workspace := map[string]any{
+			"module":             document.Module,
+			"document_id":        document.DocumentID,
+			"document_label_key": document.LabelKey,
+			"submodule_key":      document.SubmoduleKey,
+			"table_code":         table.Code,
+			"primary_key":        table.PrimaryKey,
+			"child_code":         childCode,
+			"kind":               "document",
+			"sort_order":         document.SortOrder,
+		}
+		path := fmt.Sprintf("/erp/%s", table.Code)
+		if !seenPaths[path] {
+			operations = append(operations, map[string]any{
+				"operation_key":      fmt.Sprintf("erp.workspace.%s.%s.list", document.Module, document.DocumentID),
+				"domain":             "ERP",
+				"title":              document.LabelKey,
+				"method":             "GET",
+				"path":               path,
+				"operation_kind":     "direct",
+				"danger_level":       "low",
+				"result_view":        "list",
+				"assistant_eligible": false,
+				"action_type":        "erp.document.list",
+				"workspace":          workspace,
+			})
+			seenPaths[path] = true
+		}
+		for index, actionName := range document.Actions {
+			action, ok := actionDefs[table.Code+":"+actionName]
+			if !ok {
+				continue
+			}
+			actionPath := fmt.Sprintf("/erp/%s/{key}/actions/%s", table.Code, action.Action)
+			if seenPaths[actionPath] {
+				continue
+			}
+			actionWorkspace := copyMap(workspace)
+			actionWorkspace["kind"] = "action"
+			actionWorkspace["action"] = action.Action
+			actionWorkspace["state_gate"] = table.Code + "." + action.Action
+			actionWorkspace["action_params"] = map[string]any{}
+			actionWorkspace["sort_order"] = document.SortOrder + index + 1
+			operations = append(operations, map[string]any{
+				"operation_key":      fmt.Sprintf("erp.%s.%s", strings.ToLower(table.Code), action.Action),
+				"domain":             "ERP",
+				"title":              fmt.Sprintf("operation.erp.%s.%s", table.Code, action.Action),
+				"method":             "POST",
+				"path":               actionPath,
+				"operation_kind":     "contextual",
+				"danger_level":       "medium",
+				"result_view":        "summary",
+				"assistant_eligible": true,
+				"action_type":        "erp.action",
+				"workspace":          actionWorkspace,
+				"next_tables":        action.NextTables,
+			})
+			seenPaths[actionPath] = true
+		}
+	}
+	return operations
+}
+
+func copyMap(input map[string]any) map[string]any {
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
 }
 
 func (s *Service) VerifySchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) (*SchemaVerificationReport, error) {

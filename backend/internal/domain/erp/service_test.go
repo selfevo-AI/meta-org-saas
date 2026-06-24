@@ -10,14 +10,17 @@ import (
 )
 
 type fakeRepository struct {
-	records          map[string][]Record
-	childRecords     map[string][]Record
-	created          Record
-	createdChild     Record
-	listTableCode    string
-	executions       map[uuid.UUID]ActionExecution
-	executionsByKey  map[string]uuid.UUID
-	generatedRecords map[uuid.UUID][]ActionGeneratedRecord
+	records                 map[string][]Record
+	childRecords            map[string][]Record
+	created                 Record
+	createdChild            Record
+	listTableCode           string
+	listExecutionsTableCode string
+	listExecutionsRecordKey string
+	listExecutionsLimit     int
+	executions              map[uuid.UUID]ActionExecution
+	executionsByKey         map[string]uuid.UUID
+	generatedRecords        map[uuid.UUID][]ActionGeneratedRecord
 }
 
 func (r *fakeRepository) ListRecords(ctx context.Context, table TableDefinition, limit int) ([]Record, error) {
@@ -114,6 +117,20 @@ func (r *fakeRepository) ListActionGeneratedRecords(_ context.Context, actionID 
 	return append([]ActionGeneratedRecord{}, r.generatedRecords[actionID]...), nil
 }
 
+func (r *fakeRepository) ListActionExecutions(_ context.Context, tableCode string, recordKey string, limit int) ([]ActionExecution, error) {
+	r.ensureExecutionLedger()
+	r.listExecutionsTableCode = tableCode
+	r.listExecutionsRecordKey = recordKey
+	r.listExecutionsLimit = limit
+	items := make([]ActionExecution, 0, len(r.executions))
+	for _, execution := range r.executions {
+		if execution.TableCode == tableCode && execution.RecordKey == recordKey {
+			items = append(items, execution)
+		}
+	}
+	return items, nil
+}
+
 func (r *fakeRepository) ensureExecutionLedger() {
 	if r.executions == nil {
 		r.executions = map[uuid.UUID]ActionExecution{}
@@ -145,6 +162,52 @@ func TestCatalogIncludesDocumentTablesAndChildRows(t *testing.T) {
 	}
 	if child.ParentKey != "DocEntry" || child.LineKey != "LineNum" {
 		t.Fatalf("INV1 keys = %#v, want DocEntry/LineNum", child)
+	}
+}
+
+func TestServiceListsActionExecutionsWithGeneratedRecords(t *testing.T) {
+	repo := &fakeRepository{}
+	repo.ensureExecutionLedger()
+	executionID := uuid.New()
+	repo.executions[executionID] = ActionExecution{
+		ID:             executionID,
+		TableCode:      "MREQ",
+		RecordKey:      "REQ-1001",
+		Action:         "convert-to-project",
+		Status:         ActionExecutionCompleted,
+		IdempotencyKey: "erp:MREQ:REQ-1001:convert-to-project:PRJ-1001",
+		Payload:        map[string]any{"status": "converted"},
+	}
+	repo.generatedRecords[executionID] = []ActionGeneratedRecord{
+		{
+			ActionID:           executionID,
+			LineNum:            1,
+			GeneratedTableCode: "MPRJ",
+			GeneratedKey:       "PRJ-1001",
+			RelationType:       "created",
+			Payload:            map[string]any{"PrjCode": "PRJ-1001"},
+		},
+	}
+
+	items, err := NewService(repo, DefaultCatalog()).ListActionExecutions(context.Background(), "MREQ", "REQ-1001", 3)
+	if err != nil {
+		t.Fatalf("ListActionExecutions returned error: %v", err)
+	}
+	if repo.listExecutionsTableCode != "MREQ" || repo.listExecutionsRecordKey != "REQ-1001" || repo.listExecutionsLimit != 3 {
+		t.Fatalf("repo list args = %s/%s/%d", repo.listExecutionsTableCode, repo.listExecutionsRecordKey, repo.listExecutionsLimit)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if len(items[0].GeneratedRecords) != 1 || items[0].GeneratedRecords[0].GeneratedTableCode != "MPRJ" {
+		t.Fatalf("generated records = %#v, want MPRJ generated record", items[0].GeneratedRecords)
+	}
+}
+
+func TestServiceRejectsActionExecutionTimelineForUnknownTable(t *testing.T) {
+	_, err := NewService(&fakeRepository{}, DefaultCatalog()).ListActionExecutions(context.Background(), "NOPE", "1", 50)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("ListActionExecutions error = %v, want validation", err)
 	}
 }
 

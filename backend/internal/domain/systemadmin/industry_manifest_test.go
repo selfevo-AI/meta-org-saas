@@ -40,6 +40,9 @@ func TestBuildERPSolutionSchemaPackageIncludesStructuredManifest(t *testing.T) {
 			t.Fatalf("manifest missing asset type %s in %#v", assetType, manifest.Assets)
 		}
 	}
+	if !manifestHasRuntimeWorkspace(manifest, "project", "requirement", "MREQ", "convert-to-project") {
+		t.Fatalf("manifest missing runtime workspace payload for MREQ convert action: %#v", manifest.Assets)
+	}
 }
 
 func countManifestAssets(manifest IndustrySolutionManifest, assetType string) int {
@@ -50,6 +53,19 @@ func countManifestAssets(manifest IndustrySolutionManifest, assetType string) in
 		}
 	}
 	return count
+}
+
+func manifestHasRuntimeWorkspace(manifest IndustrySolutionManifest, module string, documentID string, tableCode string, action string) bool {
+	for _, asset := range manifest.Assets {
+		if asset.AssetType != AssetTypeRuntimeOperation {
+			continue
+		}
+		workspace, _ := asset.Payload["workspace"].(map[string]any)
+		if workspace["module"] == module && workspace["document_id"] == documentID && workspace["table_code"] == tableCode && workspace["action"] == action {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildPackageAssetDiffDetectsManifestAssetChanges(t *testing.T) {

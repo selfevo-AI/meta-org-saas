@@ -58,6 +58,40 @@ export type ERPActionResult<T = Record<string, unknown>> = {
   record?: ERPRecord<T>
   generated_records?: ERPRecord[]
   effects?: Record<string, unknown>
+  execution_id?: string
+  idempotency_key?: string
+  preconditions_checked?: Array<{ key: string; status: string; message?: string }>
+  provenance?: Record<string, unknown>
+  failure_reason?: { code: string; message: string }
+}
+
+export type ERPActionGeneratedRecord = {
+  action_id: string
+  line_num: number
+  generated_table_code: string
+  generated_key: string
+  relation_type: string
+  payload?: Record<string, unknown>
+}
+
+export type ERPActionExecution = {
+  id: string
+  table_code: string
+  record_key: string
+  action: string
+  status: string
+  idempotency_key: string
+  actor_id?: string
+  actor_type?: string
+  tool_execution_id?: string
+  assistant_session_id?: string
+  source?: string
+  failure_code?: string
+  failure_message?: string
+  payload: Record<string, unknown>
+  generated_records?: ERPActionGeneratedRecord[]
+  started_at?: string
+  completed_at?: string
 }
 
 export async function listERPRecords<T extends Record<string, unknown>>(
@@ -81,6 +115,19 @@ export async function listERPChildRecords<T extends Record<string, unknown>>(
     { token },
   )
   return (result.records ?? []).map((record) => ({ ...(record.data ?? ({} as T)), key: record.key }))
+}
+
+export async function listERPActionExecutions(
+  token: string,
+  tableCode: string,
+  key: string,
+  limit = 50,
+): Promise<ERPActionExecution[]> {
+  const result = await apiRequest<{ action_executions: ERPActionExecution[] }>(
+    `/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/action-executions?limit=${limit}`,
+    { token },
+  )
+  return result.action_executions ?? []
 }
 
 export async function createERPRecord<T extends Record<string, unknown>>(

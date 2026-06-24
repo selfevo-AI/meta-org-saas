@@ -2363,7 +2363,7 @@ CREATE TABLE IF NOT EXISTS platform.runtime_operations (
 );
 
 COMMENT ON TABLE platform.runtime_operations IS
-    'Platform runtime operation catalog. Phase 2 industry solution factory upserts manifest runtime_operation assets here.';
+    'Platform runtime operation catalog. Phase 2 industry solution factory upserts manifest runtime_operation assets here. Phase 3 preserves workspace metadata in metadata.workspace for tenant ERP business workbenches.';
 
 CREATE INDEX IF NOT EXISTS idx_runtime_operations_domain
     ON platform.runtime_operations(domain, status, operation_key);
