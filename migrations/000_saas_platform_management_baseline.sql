@@ -1919,6 +1919,9 @@ CREATE TABLE IF NOT EXISTS platform.platform_masters (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+COMMENT ON TABLE platform.platform_masters IS
+    'System administration master records. Phase 2 industry solution factory stores draft context rule, assistant skill, quality gate, and verification scenario metadata assets here.';
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_masters_source
     ON platform.platform_masters(source_table, source_pk)
     WHERE source_table <> '' AND source_pk <> '';
@@ -2035,6 +2038,9 @@ CREATE TABLE IF NOT EXISTS platform.schema_apply_jobs (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (jsonb_typeof(statements) = 'array')
 );
+
+COMMENT ON TABLE platform.schema_apply_jobs IS
+    'Schema apply execution log. Phase 2 industry solution factory stores per-asset apply results in metadata.asset_results.';
 
 CREATE INDEX IF NOT EXISTS idx_schema_apply_jobs_request
     ON platform.schema_apply_jobs(change_request_id, status, created_at DESC);
@@ -2355,6 +2361,9 @@ CREATE TABLE IF NOT EXISTS platform.runtime_operations (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+COMMENT ON TABLE platform.runtime_operations IS
+    'Platform runtime operation catalog. Phase 2 industry solution factory upserts manifest runtime_operation assets here.';
 
 CREATE INDEX IF NOT EXISTS idx_runtime_operations_domain
     ON platform.runtime_operations(domain, status, operation_key);
