@@ -191,6 +191,83 @@ func TestVerifySchemaChangeWarnsWhenIndustryFactoryCoverageIsIncomplete(t *testi
 	}
 }
 
+func TestVerifySchemaChangeBlocksApplyForDuplicateRuntimeOperations(t *testing.T) {
+	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := ManifestFromSchemaPackage(pkg)
+	if err != nil {
+		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+	}
+	manifest.Assets = append(manifest.Assets, IndustrySolutionAsset{
+		AssetKey:  "runtime_operation.duplicate",
+		AssetType: AssetTypeRuntimeOperation,
+		Version:   "v1",
+		RiskLevel: "medium",
+		Payload:   map[string]any{"path": "/erp/catalog"},
+	})
+	setIndustryManifest(&pkg, manifest)
+
+	repo := &fakeRepository{role: "system_owner", request: &SchemaChangeRequest{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		SchemaName:     "org_123e4567e89b12d3a456426614174000",
+		RequestType:    "erp_solution_flow",
+		Status:         SchemaChangeApproved,
+		SchemaPackage:  pkg,
+		RiskLevel:      SchemaRiskSafe,
+	}}
+	service := NewService(repo)
+
+	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	if err != nil {
+		t.Fatalf("VerifySchemaChange error = %v", err)
+	}
+	check := verificationCheckByKey(report, "runtime_operations")
+	if check == nil || check.Status != "failed" {
+		t.Fatalf("runtime_operations check = %#v, want failed", check)
+	}
+	if report.CanApply || report.BlockingIssues == 0 {
+		t.Fatalf("report can_apply/blocking = %v/%d, want blocked", report.CanApply, report.BlockingIssues)
+	}
+}
+
+func TestVerifySchemaChangeBlocksActiveContextRules(t *testing.T) {
+	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := ManifestFromSchemaPackage(pkg)
+	if err != nil {
+		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+	}
+	for i := range manifest.Assets {
+		if manifest.Assets[i].AssetType == AssetTypeContextRule {
+			manifest.Assets[i].Payload["status"] = "active"
+			break
+		}
+	}
+	setIndustryManifest(&pkg, manifest)
+
+	repo := &fakeRepository{role: "system_owner", request: &SchemaChangeRequest{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		SchemaName:     "org_123e4567e89b12d3a456426614174000",
+		RequestType:    "erp_solution_flow",
+		Status:         SchemaChangeApproved,
+		SchemaPackage:  pkg,
+		RiskLevel:      SchemaRiskSafe,
+	}}
+	service := NewService(repo)
+
+	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	if err != nil {
+		t.Fatalf("VerifySchemaChange error = %v", err)
+	}
+	check := verificationCheckByKey(report, "assistant_context")
+	if check == nil || check.Status != "failed" {
+		t.Fatalf("assistant_context check = %#v, want failed", check)
+	}
+	if report.CanApply || report.BlockingIssues == 0 {
+		t.Fatalf("report can_apply/blocking = %v/%d, want blocked", report.CanApply, report.BlockingIssues)
+	}
+}
+
 func verificationCheckByKey(report *SchemaVerificationReport, key string) *SchemaVerificationCheck {
 	if report == nil {
 		return nil

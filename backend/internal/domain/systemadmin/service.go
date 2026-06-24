@@ -472,17 +472,19 @@ func addIndustryFactoryCoverageChecks(report *SchemaVerificationReport, request 
 		return
 	}
 	addMetadataCoverageCheck(report, request, "permissions_impact", []string{"permissions"}, "package declares permission impact", "industry package should declare permission impact")
-	addMetadataCoverageCheck(report, request, "runtime_operations", []string{"api_operations"}, "runtime operation coverage is declared", "industry package should declare runtime operation coverage")
-	addMetadataCoverageCheck(report, request, "assistant_context", []string{"assistant_targets", "context_rules"}, "assistant context coverage is declared", "industry package should declare assistant targets and context rules")
-	addMetadataCoverageCheck(report, request, "tool_policy", []string{"tool_definitions"}, "tool policy coverage is declared", "industry package should declare Tool Runtime definitions")
-	addMetadataCoverageCheck(report, request, "assistant_skills", []string{"assistant_skills"}, "assistant skill coverage is declared", "industry package should declare assistant skills")
-	addMetadataCoverageCheck(report, request, "quality_gates", []string{"quality_gates"}, "quality gates are declared", "industry package should declare quality gates")
-	addMetadataCoverageCheck(report, request, "verification_scenarios", []string{"verification_scenarios"}, "verification scenarios are declared", "industry package should declare verification scenarios")
-	if report.RiskLevel == SchemaRiskDestructive {
-		report.addCheck("rollback_risk", "warning", "destructive schema changes need a rollback plan before apply", nil)
+	manifest, err := ManifestFromSchemaPackage(request.SchemaPackage)
+	if err != nil {
+		report.addCheck("industry_manifest", "failed", err.Error(), nil)
 		return
 	}
-	report.addCheck("rollback_risk", "passed", "rollback risk is low for additive factory package", map[string]any{"risk_level": report.RiskLevel})
+	for _, check := range ManifestVerificationChecks(manifest, report.RiskLevel) {
+		if check.Key == "verification_scenarios" && !request.SchemaPackageHas("verification_scenarios") {
+			check.Status = "warning"
+			check.Message = "industry package should declare verification scenarios"
+			check.Metadata = map[string]any{"missing": []string{"verification_scenarios"}}
+		}
+		report.addCheck(check.Key, check.Status, check.Message, check.Metadata)
+	}
 }
 
 func (s *Service) GetSchemaChangePackageDiff(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) ([]PackageAssetDiff, error) {
