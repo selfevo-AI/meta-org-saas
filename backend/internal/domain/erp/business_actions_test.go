@@ -4,17 +4,26 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type businessFakeRepository struct {
-	records  map[string]map[string]Record
-	children map[string][]Record
+	records          map[string]map[string]Record
+	children         map[string][]Record
+	executions       map[uuid.UUID]ActionExecution
+	executionsByKey  map[string]uuid.UUID
+	generatedRecords map[uuid.UUID][]ActionGeneratedRecord
 }
 
 func newBusinessFakeRepository() *businessFakeRepository {
 	return &businessFakeRepository{
-		records:  map[string]map[string]Record{},
-		children: map[string][]Record{},
+		records:          map[string]map[string]Record{},
+		children:         map[string][]Record{},
+		executions:       map[uuid.UUID]ActionExecution{},
+		executionsByKey:  map[string]uuid.UUID{},
+		generatedRecords: map[uuid.UUID][]ActionGeneratedRecord{},
 	}
 }
 
@@ -100,6 +109,122 @@ func (r *businessFakeRepository) CreateChildRecord(ctx context.Context, parent T
 	return &record, nil
 }
 
+func (r *businessFakeRepository) CreateActionExecution(_ context.Context, execution ActionExecution) (*ActionExecution, error) {
+	if execution.ID == uuid.Nil {
+		execution.ID = uuid.New()
+	}
+	if execution.Status == "" {
+		execution.Status = ActionExecutionRunning
+	}
+	if execution.Payload == nil {
+		execution.Payload = map[string]any{}
+	}
+	r.executions[execution.ID] = execution
+	if execution.IdempotencyKey != "" {
+		r.executionsByKey[execution.IdempotencyKey] = execution.ID
+	}
+	return &execution, nil
+}
+
+func (r *businessFakeRepository) FindActionExecutionByIdempotencyKey(_ context.Context, key string) (*ActionExecution, error) {
+	id, ok := r.executionsByKey[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	execution := r.executions[id]
+	return &execution, nil
+}
+
+func (r *businessFakeRepository) CompleteActionExecution(_ context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error) {
+	execution, ok := r.executions[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	execution.Status = status
+	execution.Payload = payload
+	if failure != nil {
+		execution.FailureCode = failure.Code
+		execution.FailureMessage = failure.Message
+	}
+	now := time.Now()
+	execution.CompletedAt = &now
+	r.executions[id] = execution
+	return &execution, nil
+}
+
+func (r *businessFakeRepository) CreateActionGeneratedRecord(_ context.Context, record ActionGeneratedRecord) error {
+	r.generatedRecords[record.ActionID] = append(r.generatedRecords[record.ActionID], record)
+	return nil
+}
+
+func (r *businessFakeRepository) ListActionGeneratedRecords(_ context.Context, actionID uuid.UUID) ([]ActionGeneratedRecord, error) {
+	return append([]ActionGeneratedRecord{}, r.generatedRecords[actionID]...), nil
+}
+
+func (r *businessFakeRepository) RunInTx(_ context.Context, fn func(Repository) error) error {
+	records := cloneRecords(r.records)
+	children := cloneChildren(r.children)
+	executions := cloneExecutions(r.executions)
+	executionsByKey := cloneExecutionKeys(r.executionsByKey)
+	generatedRecords := cloneGeneratedRecords(r.generatedRecords)
+	if err := fn(r); err != nil {
+		r.records = records
+		r.children = children
+		r.executions = executions
+		r.executionsByKey = executionsByKey
+		r.generatedRecords = generatedRecords
+		return err
+	}
+	return nil
+}
+
+func cloneRecords(input map[string]map[string]Record) map[string]map[string]Record {
+	output := map[string]map[string]Record{}
+	for tableCode, rows := range input {
+		output[tableCode] = map[string]Record{}
+		for key, record := range rows {
+			record.Data = copyData(record.Data)
+			output[tableCode][key] = record
+		}
+	}
+	return output
+}
+
+func cloneChildren(input map[string][]Record) map[string][]Record {
+	output := map[string][]Record{}
+	for bucket, rows := range input {
+		output[bucket] = append([]Record{}, rows...)
+		for i := range output[bucket] {
+			output[bucket][i].Data = copyData(output[bucket][i].Data)
+		}
+	}
+	return output
+}
+
+func cloneExecutions(input map[uuid.UUID]ActionExecution) map[uuid.UUID]ActionExecution {
+	output := map[uuid.UUID]ActionExecution{}
+	for id, execution := range input {
+		output[id] = execution
+	}
+	return output
+}
+
+func cloneExecutionKeys(input map[string]uuid.UUID) map[string]uuid.UUID {
+	output := map[string]uuid.UUID{}
+	for key, id := range input {
+		output[key] = id
+	}
+	return output
+}
+
+func cloneGeneratedRecords(input map[uuid.UUID][]ActionGeneratedRecord) map[uuid.UUID][]ActionGeneratedRecord {
+	output := map[uuid.UUID][]ActionGeneratedRecord{}
+	for id, rows := range input {
+		output[id] = append([]ActionGeneratedRecord{}, rows...)
+	}
+	return output
+}
+
 func (r *businessFakeRepository) balance(itemCode string, whsCode string) float64 {
 	record, ok := r.records["MITW"][itemCode+"|"+whsCode]
 	if !ok {
@@ -156,6 +281,238 @@ func TestApproveRequirementUpdatesStatus(t *testing.T) {
 	}
 	if result.Record.Data["Status"] != "approved" {
 		t.Fatalf("status = %v, want approved", result.Record.Data["Status"])
+	}
+}
+
+func TestActionResultIncludesExecutionContract(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	actorID := uuid.New()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "analyzed"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{
+		ActorID:        &actorID,
+		ActorType:      "internal_human",
+		IdempotencyKey: "approve-REQ-1",
+		Source:         "tenant_api",
+		Data:           map[string]any{"approver": "u1"},
+	})
+	if err != nil {
+		t.Fatalf("approve returned error: %v", err)
+	}
+	if result.ExecutionID == uuid.Nil {
+		t.Fatalf("execution id = %s, want non-nil", result.ExecutionID)
+	}
+	if result.IdempotencyKey == "" {
+		t.Fatalf("idempotency key is empty")
+	}
+	if result.Provenance["source"] != "tenant_api" {
+		t.Fatalf("provenance = %#v, want source tenant_api", result.Provenance)
+	}
+	if len(result.PreconditionsChecked) == 0 {
+		t.Fatalf("preconditions = %#v, want at least one check", result.PreconditionsChecked)
+	}
+}
+
+func TestActionExecutionLedgerRecordsCompletedAction(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "analyzed"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{
+		IdempotencyKey: "approve-ledger",
+		Source:         "tenant_api",
+		Data:           map[string]any{"approver": "u1"},
+	})
+	if err != nil {
+		t.Fatalf("approve returned error: %v", err)
+	}
+	execution, ok := repo.executions[result.ExecutionID]
+	if !ok {
+		t.Fatalf("missing execution %s in fake ledger", result.ExecutionID)
+	}
+	if execution.Status != ActionExecutionCompleted {
+		t.Fatalf("execution status = %q, want completed", execution.Status)
+	}
+	if execution.TableCode != "MREQ" || execution.RecordKey != "REQ-1" || execution.Action != "approve" {
+		t.Fatalf("execution = %#v, want MREQ/REQ-1/approve", execution)
+	}
+}
+
+func TestActionExecutionLedgerRecordsValidationFailure(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPOR", "PO-1", map[string]any{"DocEntry": "PO-1", "DocStatus": "O", "WddStatus": "W"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPOR", "PO-1", "approve", ActionInput{IdempotencyKey: "bad-approve"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	var failed ActionExecution
+	for _, execution := range repo.executions {
+		if execution.IdempotencyKey == "erp:MPOR:PO-1:approve:bad-approve" {
+			failed = execution
+		}
+	}
+	if failed.ID == uuid.Nil {
+		t.Fatalf("missing failed execution")
+	}
+	if failed.Status != ActionExecutionFailed || failed.FailureCode != "validation_failed" {
+		t.Fatalf("failed execution = %#v, want validation_failed", failed)
+	}
+}
+
+func TestRequirementApproveRequiresAnalyzedStatus(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "draft"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{IdempotencyKey: "approve-draft"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MREQ"]["REQ-1"].Data["Status"] != "draft" {
+		t.Fatalf("status changed to %v, want draft", repo.records["MREQ"]["REQ-1"].Data["Status"])
+	}
+}
+
+func TestSalesOrderApproveRequiresConfirmedOrder(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MRDR", "SO-1", map[string]any{"DocEntry": "SO-1", "DocStatus": "O", "Confirmed": "N", "WddStatus": "W"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MRDR", "SO-1", "approve", ActionInput{IdempotencyKey: "approve-unconfirmed"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MRDR"]["SO-1"].Data["WddStatus"] != "W" {
+		t.Fatalf("WddStatus changed to %v, want W", repo.records["MRDR"]["SO-1"].Data["WddStatus"])
+	}
+}
+
+func TestCloseProjectFeedbackRequiresCostRefresh(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPRJ", "PRJ-1", map[string]any{"PrjCode": "PRJ-1", "Active": "Y"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPRJ", "PRJ-1", "close-feedback", ActionInput{IdempotencyKey: "close-before-cost"})
+	if err == nil {
+		t.Fatalf("close-feedback returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MFDB"] != nil {
+		t.Fatalf("feedback record generated before cost refresh: %#v", repo.records["MFDB"])
+	}
+}
+
+func TestDeliveryPostRollsBackWhenInventoryFails(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "C-1"})
+	repo.seedChild("MDLN", "DLV-1", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 15}})
+	repo.seed("MITW", "I-1|W-1", map[string]any{"ItemCode": "I-1|W-1", "OnHand": 1})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MDLN", "DLV-1", "post", ActionInput{IdempotencyKey: "rollback-delivery"})
+	if err == nil {
+		t.Fatalf("delivery post returned nil error and result %#v, want insufficient inventory error", result)
+	}
+	if repo.records["MIGE"] != nil || repo.records["MINV"] != nil {
+		t.Fatalf("generated records were not rolled back: MIGE=%#v MINV=%#v", repo.records["MIGE"], repo.records["MINV"])
+	}
+	if repo.records["MDLN"]["DLV-1"].Data["Posted"] == "Y" {
+		t.Fatalf("delivery marked posted after rollback")
+	}
+}
+
+func TestGoodsReceiptPostIsIdempotent(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPDN", "GR-1", map[string]any{"DocEntry": "GR-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "S-1"})
+	repo.seedChild("MPDN", "GR-1", "PDN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 10}})
+	service := NewService(repo, DefaultCatalog())
+
+	first, err := service.RunAction(context.Background(), "MPDN", "GR-1", "post", ActionInput{IdempotencyKey: "receipt-post"})
+	if err != nil {
+		t.Fatalf("first post error: %v", err)
+	}
+	second, err := service.RunAction(context.Background(), "MPDN", "GR-1", "post", ActionInput{IdempotencyKey: "receipt-post"})
+	if err != nil {
+		t.Fatalf("second post error: %v", err)
+	}
+	if second.Status != ActionExecutionIdempotentReplay {
+		t.Fatalf("second status = %q, want idempotent_replay", second.Status)
+	}
+	if first.ExecutionID != second.ExecutionID {
+		t.Fatalf("execution ids = %s and %s, want replay of first execution", first.ExecutionID, second.ExecutionID)
+	}
+	if len(repo.generatedRecords[first.ExecutionID]) != 2 {
+		t.Fatalf("generated ledger rows = %d, want 2", len(repo.generatedRecords[first.ExecutionID]))
+	}
+	if len(second.GeneratedRecords) != 2 {
+		t.Fatalf("replay generated records = %d, want 2", len(second.GeneratedRecords))
+	}
+	if repo.childCount("MIGN", "IGN-GR-1", "IGN1") != 1 {
+		t.Fatalf("MIGN child rows = %d, want 1 after replay", repo.childCount("MIGN", "IGN-GR-1", "IGN1"))
+	}
+	if repo.balance("I-1", "W-1") != 2 {
+		t.Fatalf("balance = %v, want 2 after replay", repo.balance("I-1", "W-1"))
+	}
+}
+
+func TestDeliveryPostAddsGeneratedRecordProvenance(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	toolExecutionID := uuid.New()
+	sessionID := uuid.New()
+	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "C-1"})
+	repo.seedChild("MDLN", "DLV-1", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 15}})
+	repo.seed("MITW", "I-1|W-1", map[string]any{"ItemCode": "I-1|W-1", "OnHand": 5})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MDLN", "DLV-1", "post", ActionInput{
+		IdempotencyKey:     "delivery-provenance",
+		Source:             "toolruntime",
+		ToolExecutionID:    &toolExecutionID,
+		AssistantSessionID: &sessionID,
+	})
+	if err != nil {
+		t.Fatalf("delivery post error: %v", err)
+	}
+	if len(result.GeneratedRecords) == 0 {
+		t.Fatalf("generated records empty")
+	}
+	for _, record := range result.GeneratedRecords {
+		provenance, ok := record.Data["provenance"].(map[string]any)
+		if !ok {
+			t.Fatalf("record %#v missing provenance map", record)
+		}
+		if provenance["source_table_code"] != "MDLN" || provenance["source_key"] != "DLV-1" || provenance["source_action"] != "post" {
+			t.Fatalf("provenance = %#v, want MDLN/DLV-1/post", provenance)
+		}
+		if provenance["tool_execution_id"] != toolExecutionID.String() || provenance["assistant_session_id"] != sessionID.String() {
+			t.Fatalf("provenance = %#v, want tool/session correlation", provenance)
+		}
+	}
+}
+
+func TestConvertRequirementAddsGeneratedProjectProvenance(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "convert-to-project", ActionInput{
+		IdempotencyKey: "convert-provenance",
+		Data:           map[string]any{"PrjCode": "PRJ-1"},
+	})
+	if err != nil {
+		t.Fatalf("convert returned error: %v", err)
+	}
+	if len(result.GeneratedRecords) != 1 {
+		t.Fatalf("generated records = %d, want 1", len(result.GeneratedRecords))
+	}
+	provenance, ok := result.GeneratedRecords[0].Data["provenance"].(map[string]any)
+	if !ok {
+		t.Fatalf("generated project missing provenance: %#v", result.GeneratedRecords[0])
+	}
+	if provenance["source_table_code"] != "MREQ" || provenance["source_key"] != "REQ-1" || provenance["source_action"] != "convert-to-project" {
+		t.Fatalf("provenance = %#v, want MREQ/REQ-1/convert-to-project", provenance)
 	}
 }
 

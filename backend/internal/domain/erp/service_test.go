@@ -4,14 +4,20 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 type fakeRepository struct {
-	records       map[string][]Record
-	childRecords  map[string][]Record
-	created       Record
-	createdChild  Record
-	listTableCode string
+	records          map[string][]Record
+	childRecords     map[string][]Record
+	created          Record
+	createdChild     Record
+	listTableCode    string
+	executions       map[uuid.UUID]ActionExecution
+	executionsByKey  map[string]uuid.UUID
+	generatedRecords map[uuid.UUID][]ActionGeneratedRecord
 }
 
 func (r *fakeRepository) ListRecords(ctx context.Context, table TableDefinition, limit int) ([]Record, error) {
@@ -49,6 +55,75 @@ func (r *fakeRepository) ListChildRecords(ctx context.Context, parent TableDefin
 func (r *fakeRepository) CreateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, input RecordInput) (*Record, error) {
 	r.createdChild = Record{TableCode: child.Code, ParentTableCode: parent.Code, ParentKey: parentKey, Key: input.Key, Data: input.Data}
 	return &r.createdChild, nil
+}
+
+func (r *fakeRepository) CreateActionExecution(_ context.Context, execution ActionExecution) (*ActionExecution, error) {
+	r.ensureExecutionLedger()
+	if execution.ID == uuid.Nil {
+		execution.ID = uuid.New()
+	}
+	if execution.Status == "" {
+		execution.Status = ActionExecutionRunning
+	}
+	if execution.Payload == nil {
+		execution.Payload = map[string]any{}
+	}
+	r.executions[execution.ID] = execution
+	if execution.IdempotencyKey != "" {
+		r.executionsByKey[execution.IdempotencyKey] = execution.ID
+	}
+	return &execution, nil
+}
+
+func (r *fakeRepository) FindActionExecutionByIdempotencyKey(_ context.Context, key string) (*ActionExecution, error) {
+	r.ensureExecutionLedger()
+	id, ok := r.executionsByKey[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	execution := r.executions[id]
+	return &execution, nil
+}
+
+func (r *fakeRepository) CompleteActionExecution(_ context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error) {
+	r.ensureExecutionLedger()
+	execution, ok := r.executions[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	execution.Status = status
+	execution.Payload = payload
+	if failure != nil {
+		execution.FailureCode = failure.Code
+		execution.FailureMessage = failure.Message
+	}
+	now := time.Now()
+	execution.CompletedAt = &now
+	r.executions[id] = execution
+	return &execution, nil
+}
+
+func (r *fakeRepository) CreateActionGeneratedRecord(_ context.Context, record ActionGeneratedRecord) error {
+	r.ensureExecutionLedger()
+	r.generatedRecords[record.ActionID] = append(r.generatedRecords[record.ActionID], record)
+	return nil
+}
+
+func (r *fakeRepository) ListActionGeneratedRecords(_ context.Context, actionID uuid.UUID) ([]ActionGeneratedRecord, error) {
+	r.ensureExecutionLedger()
+	return append([]ActionGeneratedRecord{}, r.generatedRecords[actionID]...), nil
+}
+
+func (r *fakeRepository) ensureExecutionLedger() {
+	if r.executions == nil {
+		r.executions = map[uuid.UUID]ActionExecution{}
+	}
+	if r.executionsByKey == nil {
+		r.executionsByKey = map[string]uuid.UUID{}
+	}
+	if r.generatedRecords == nil {
+		r.generatedRecords = map[uuid.UUID][]ActionGeneratedRecord{}
+	}
 }
 
 func TestCatalogIncludesDocumentTablesAndChildRows(t *testing.T) {

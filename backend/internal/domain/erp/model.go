@@ -3,6 +3,8 @@ package erp
 import (
 	"errors"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -88,17 +90,74 @@ type ActionDefinition struct {
 }
 
 type ActionInput struct {
-	Data map[string]any `json:"data"`
+	Data               map[string]any `json:"data"`
+	ActorID            *uuid.UUID     `json:"actor_id,omitempty"`
+	ActorType          string         `json:"actor_type,omitempty"`
+	IdempotencyKey     string         `json:"idempotency_key,omitempty"`
+	Source             string         `json:"source,omitempty"`
+	ToolExecutionID    *uuid.UUID     `json:"tool_execution_id,omitempty"`
+	AssistantSessionID *uuid.UUID     `json:"assistant_session_id,omitempty"`
 }
 
 type ActionResult struct {
-	TableCode        string         `json:"table_code"`
-	Key              string         `json:"key"`
-	Action           string         `json:"action"`
-	Status           string         `json:"status"`
-	Record           *Record        `json:"record,omitempty"`
-	GeneratedRecords []Record       `json:"generated_records,omitempty"`
-	Effects          map[string]any `json:"effects,omitempty"`
+	TableCode            string               `json:"table_code"`
+	Key                  string               `json:"key"`
+	Action               string               `json:"action"`
+	Status               string               `json:"status"`
+	Record               *Record              `json:"record,omitempty"`
+	GeneratedRecords     []Record             `json:"generated_records,omitempty"`
+	Effects              map[string]any       `json:"effects,omitempty"`
+	ExecutionID          uuid.UUID            `json:"execution_id,omitempty"`
+	IdempotencyKey       string               `json:"idempotency_key,omitempty"`
+	PreconditionsChecked []ActionPrecondition `json:"preconditions_checked,omitempty"`
+	Provenance           map[string]any       `json:"provenance,omitempty"`
+	FailureReason        *ActionFailure       `json:"failure_reason,omitempty"`
+}
+
+const (
+	ActionExecutionRunning          = "running"
+	ActionExecutionCompleted        = "completed"
+	ActionExecutionFailed           = "failed"
+	ActionExecutionIdempotentReplay = "idempotent_replay"
+)
+
+type ActionFailure struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type ActionPrecondition struct {
+	Key     string `json:"key"`
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+type ActionExecution struct {
+	ID                 uuid.UUID      `json:"id"`
+	TableCode          string         `json:"table_code"`
+	RecordKey          string         `json:"record_key"`
+	Action             string         `json:"action"`
+	Status             string         `json:"status"`
+	IdempotencyKey     string         `json:"idempotency_key"`
+	ActorID            *uuid.UUID     `json:"actor_id,omitempty"`
+	ActorType          string         `json:"actor_type,omitempty"`
+	ToolExecutionID    *uuid.UUID     `json:"tool_execution_id,omitempty"`
+	AssistantSessionID *uuid.UUID     `json:"assistant_session_id,omitempty"`
+	Source             string         `json:"source,omitempty"`
+	FailureCode        string         `json:"failure_code,omitempty"`
+	FailureMessage     string         `json:"failure_message,omitempty"`
+	Payload            map[string]any `json:"payload"`
+	StartedAt          time.Time      `json:"started_at,omitempty"`
+	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
+}
+
+type ActionGeneratedRecord struct {
+	ActionID           uuid.UUID      `json:"action_id"`
+	LineNum            int            `json:"line_num"`
+	GeneratedTableCode string         `json:"generated_table_code"`
+	GeneratedKey       string         `json:"generated_key"`
+	RelationType       string         `json:"relation_type"`
+	Payload            map[string]any `json:"payload"`
 }
 
 func (c Catalog) Table(code string) (TableDefinition, bool) {

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 )
 
@@ -55,4 +56,35 @@ func (r *gatewayERPRepo) ListChildRecords(ctx context.Context, parent erp.TableD
 
 func (r *gatewayERPRepo) CreateChildRecord(ctx context.Context, parent erp.TableDefinition, child erp.ChildTableDefinition, parentKey string, input erp.RecordInput) (*erp.Record, error) {
 	return &erp.Record{TableCode: child.Code, ParentTableCode: parent.Code, ParentKey: parentKey, Key: input.Key, Data: input.Data}, nil
+}
+
+func (r *gatewayERPRepo) CreateActionExecution(ctx context.Context, execution erp.ActionExecution) (*erp.ActionExecution, error) {
+	if execution.ID == uuid.Nil {
+		execution.ID = uuid.New()
+	}
+	if execution.Status == "" {
+		execution.Status = erp.ActionExecutionRunning
+	}
+	return &execution, nil
+}
+
+func (r *gatewayERPRepo) FindActionExecutionByIdempotencyKey(ctx context.Context, key string) (*erp.ActionExecution, error) {
+	return nil, erp.ErrNotFound
+}
+
+func (r *gatewayERPRepo) CompleteActionExecution(ctx context.Context, id uuid.UUID, status string, payload map[string]any, failure *erp.ActionFailure) (*erp.ActionExecution, error) {
+	execution := &erp.ActionExecution{ID: id, Status: status, Payload: payload}
+	if failure != nil {
+		execution.FailureCode = failure.Code
+		execution.FailureMessage = failure.Message
+	}
+	return execution, nil
+}
+
+func (r *gatewayERPRepo) CreateActionGeneratedRecord(ctx context.Context, record erp.ActionGeneratedRecord) error {
+	return nil
+}
+
+func (r *gatewayERPRepo) ListActionGeneratedRecords(ctx context.Context, actionID uuid.UUID) ([]erp.ActionGeneratedRecord, error) {
+	return []erp.ActionGeneratedRecord{}, nil
 }

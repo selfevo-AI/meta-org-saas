@@ -127,9 +127,12 @@ func runERPSmoke(c *client, stamp string, orgID string, userID string) erpSmokeR
 		},
 	})
 	c.post("/erp/MREQ/"+requirementKey+"/actions/analyze", responseMap{})
-	c.post("/erp/MREQ/"+requirementKey+"/actions/approve", responseMap{"data": responseMap{"approver": userID}})
-	converted := c.post("/erp/MREQ/"+requirementKey+"/actions/convert-to-project", responseMap{"data": responseMap{"PrjCode": projectKey}})
+	approvedRequirement := c.post("/erp/MREQ/"+requirementKey+"/actions/approve", responseMap{"data": responseMap{"approver": userID}, "idempotency_key": "smoke-approve-" + requirementKey})
+	requireActionContract(approvedRequirement, "requirement approve")
+	converted := c.post("/erp/MREQ/"+requirementKey+"/actions/convert-to-project", responseMap{"data": responseMap{"PrjCode": projectKey}, "idempotency_key": "smoke-convert-" + requirementKey})
+	requireActionContract(converted, "requirement convert")
 	must(len(asList(converted["generated_records"])) > 0, "requirement conversion did not generate project")
+	requireGeneratedProvenance(converted, "MPRJ")
 
 	c.post("/erp/MPOR", responseMap{
 		"key": purchaseOrderKey,
@@ -180,9 +183,11 @@ func runERPSmoke(c *client, stamp string, orgID string, userID string) erpSmokeR
 			},
 		},
 	})
-	receiptPost := c.post("/erp/MPDN/"+goodsReceiptKey+"/actions/post", responseMap{})
+	receiptPost := c.post("/erp/MPDN/"+goodsReceiptKey+"/actions/post", responseMap{"idempotency_key": "smoke-receipt-" + goodsReceiptKey})
+	requireActionContract(receiptPost, "goods receipt post")
 	must(hasGeneratedRecord(receiptPost, "MIGN"), "goods receipt did not generate MIGN")
 	must(hasGeneratedRecord(receiptPost, "MPCH"), "goods receipt did not generate MPCH")
+	requireGeneratedProvenance(receiptPost, "MIGN")
 	balanceKey := url.PathEscape(itemKey + "|" + warehouseKey)
 	must(numberField(c.get("/erp/MITW/" + balanceKey)["data"].(map[string]any), "OnHand") == 5, "inventory balance after receipt is not 5")
 
@@ -240,9 +245,12 @@ func runERPSmoke(c *client, stamp string, orgID string, userID string) erpSmokeR
 			},
 		},
 	})
-	deliveryPost := c.post("/erp/MDLN/"+deliveryKey+"/actions/post", responseMap{})
+	deliveryPost := c.post("/erp/MDLN/"+deliveryKey+"/actions/post", responseMap{"idempotency_key": "smoke-delivery-" + deliveryKey})
+	requireActionContract(deliveryPost, "delivery post")
 	must(hasGeneratedRecord(deliveryPost, "MIGE"), "delivery did not generate MIGE")
 	must(hasGeneratedRecord(deliveryPost, "MINV"), "delivery did not generate MINV")
+	requireGeneratedProvenance(deliveryPost, "MIGE")
+	requireGeneratedProvenance(deliveryPost, "MINV")
 	invoiceKey := generatedRecordKey(deliveryPost, "MINV")
 	must(invoiceKey != "", "missing generated invoice key")
 	must(numberField(c.get("/erp/MITW/" + balanceKey)["data"].(map[string]any), "OnHand") == 3, "inventory balance after delivery is not 3")
@@ -265,8 +273,10 @@ func runERPSmoke(c *client, stamp string, orgID string, userID string) erpSmokeR
 		},
 	})
 	must(numberField(allocation["effects"].(map[string]any), "allocated_amount") == 50, "payment allocation failed")
-	c.post("/erp/MPRJ/"+projectKey+"/actions/refresh-cost", responseMap{})
-	feedback := c.post("/erp/MPRJ/"+projectKey+"/actions/close-feedback", responseMap{"data": responseMap{"result": "accepted"}})
+	costRefresh := c.post("/erp/MPRJ/"+projectKey+"/actions/refresh-cost", responseMap{"idempotency_key": "smoke-cost-" + projectKey})
+	requireActionContract(costRefresh, "project cost refresh")
+	feedback := c.post("/erp/MPRJ/"+projectKey+"/actions/close-feedback", responseMap{"data": responseMap{"result": "accepted"}, "idempotency_key": "smoke-feedback-" + projectKey})
+	requireActionContract(feedback, "project feedback close")
 	must(hasGeneratedRecord(feedback, "MFDB"), "project feedback close did not generate MFDB")
 	must(stringField(c.get("/erp/MCRD/"+partnerKey), "key") == partnerKey, "missing ERP partner")
 	must(len(asList(c.get("/erp/MINV/" + invoiceKey + "/INV1")["records"])) > 0, "missing ERP invoice rows")
@@ -555,13 +565,37 @@ func asList(value any) []any {
 	return list
 }
 
+func requireActionContract(result responseMap, label string) {
+	must(fmt.Sprint(result["execution_id"]) != "" && fmt.Sprint(result["execution_id"]) != "<nil>", label+" missing execution_id")
+	must(fmt.Sprint(result["idempotency_key"]) != "" && fmt.Sprint(result["idempotency_key"]) != "<nil>", label+" missing idempotency_key")
+	preconditions := asList(result["preconditions_checked"])
+	must(len(preconditions) > 0, label+" missing preconditions_checked")
+}
+
+func requireGeneratedProvenance(result responseMap, tableCode string) {
+	for _, item := range asList(result["generated_records"]) {
+		record, ok := asMap(item)
+		if !ok {
+			continue
+		}
+		if fmt.Sprint(record["table_code"]) != tableCode {
+			continue
+		}
+		data, _ := asMap(record["data"])
+		provenance, _ := asMap(data["provenance"])
+		must(fmt.Sprint(provenance["source_table_code"]) != "", "missing provenance source_table_code for "+tableCode)
+		return
+	}
+	must(false, "missing generated table "+tableCode)
+}
+
 func hasGeneratedRecord(result responseMap, tableCode string) bool {
 	return generatedRecordKey(result, tableCode) != ""
 }
 
 func generatedRecordKey(result responseMap, tableCode string) string {
 	for _, raw := range asList(result["generated_records"]) {
-		record, ok := raw.(map[string]any)
+		record, ok := asMap(raw)
 		if !ok {
 			continue
 		}
@@ -570,6 +604,17 @@ func generatedRecordKey(result responseMap, tableCode string) string {
 		}
 	}
 	return ""
+}
+
+func asMap(value any) (map[string]any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, true
+	case responseMap:
+		return map[string]any(typed), true
+	default:
+		return nil, false
+	}
 }
 
 func must(ok bool, message string) {

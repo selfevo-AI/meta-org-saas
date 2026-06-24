@@ -317,7 +317,24 @@ func erpActionExecuteTool(erpSvc ERPActionService) ToolAdapter {
 		if tableCode == "" || key == "" || action == "" {
 			return ToolResult{}, fmt.Errorf("%w: table_code, key, and action are required", ErrValidation)
 		}
-		result, err := erpSvc.RunAction(ctx, tableCode, key, action, erp.ActionInput{Data: mapArg(input.Arguments, "data")})
+		toolExecutionID, err := optionalUUIDArg(input.Arguments, "tool_execution_id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		assistantSessionID, err := optionalUUIDArg(input.Arguments, "assistant_session_id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		actorID := input.ActorID
+		result, err := erpSvc.RunAction(ctx, tableCode, key, action, erp.ActionInput{
+			Data:               mapArg(input.Arguments, "data"),
+			ActorID:            &actorID,
+			ActorType:          input.ActorType,
+			IdempotencyKey:     input.IdempotencyKey,
+			Source:             "toolruntime",
+			ToolExecutionID:    toolExecutionID,
+			AssistantSessionID: assistantSessionID,
+		})
 		if err != nil {
 			return ToolResult{}, err
 		}
