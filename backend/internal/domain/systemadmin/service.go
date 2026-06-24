@@ -31,7 +31,7 @@ type repository interface {
 	CreateSchemaChangeRequest(context.Context, CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error)
 	GetSchemaChangeRequest(context.Context, uuid.UUID) (*SchemaChangeRequest, error)
 	UpdateSchemaChangeRequestStatus(context.Context, uuid.UUID, string, uuid.UUID, string) (*SchemaChangeRequest, error)
-	ApplySchemaChange(context.Context, *SchemaChangeRequest, []string) (*SchemaApplyJob, error)
+	ApplySchemaChange(context.Context, *SchemaChangeRequest, []string, []SchemaApplyAssetResult) (*SchemaApplyJob, error)
 }
 
 func NewService(repo repository) *Service {
@@ -615,6 +615,13 @@ func (s *Service) ApplySchemaChange(ctx context.Context, actorID uuid.UUID, requ
 	if request.Status != SchemaChangeApproved {
 		return nil, ErrInvalidTransition
 	}
+	report, err := s.VerifySchemaChange(ctx, actorID, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if !report.CanApply {
+		return nil, fmt.Errorf("%w: schema change verification has %d blocking issues", ErrValidation, report.BlockingIssues)
+	}
 	schemaName := request.SchemaName
 	if schemaName == "" {
 		schemaName = tenantdb.SchemaNameForOrganization(request.OrganizationID)
@@ -626,7 +633,11 @@ func (s *Service) ApplySchemaChange(ctx context.Context, actorID uuid.UUID, requ
 			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 	}
-	return s.repo.ApplySchemaChange(ctx, request, statements)
+	assetResults := []SchemaApplyAssetResult{}
+	if manifest, err := ManifestFromSchemaPackage(request.SchemaPackage); err == nil {
+		assetResults = BuildSchemaApplyAssetResults(manifest)
+	}
+	return s.repo.ApplySchemaChange(ctx, request, statements, assetResults)
 }
 
 func (s *Service) requirePlatformPermission(ctx context.Context, actorID uuid.UUID, permission string) error {

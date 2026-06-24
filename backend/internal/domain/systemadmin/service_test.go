@@ -268,6 +268,40 @@ func TestVerifySchemaChangeBlocksActiveContextRules(t *testing.T) {
 	}
 }
 
+func TestApplySchemaChangeRejectsManifestBlockingIssues(t *testing.T) {
+	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := ManifestFromSchemaPackage(pkg)
+	if err != nil {
+		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+	}
+	for i := range manifest.Assets {
+		if manifest.Assets[i].AssetType == AssetTypeContextRule {
+			manifest.Assets[i].Payload["status"] = "active"
+			break
+		}
+	}
+	setIndustryManifest(&pkg, manifest)
+
+	repo := &fakeRepository{role: "system_owner", request: &SchemaChangeRequest{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		SchemaName:     "org_123e4567e89b12d3a456426614174000",
+		RequestType:    "erp_solution_flow",
+		Status:         SchemaChangeApproved,
+		SchemaPackage:  pkg,
+		RiskLevel:      SchemaRiskSafe,
+	}}
+	service := NewService(repo)
+
+	_, err = service.ApplySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("ApplySchemaChange error = %v, want ErrValidation", err)
+	}
+	if repo.applied {
+		t.Fatal("ApplySchemaChange applied request with blocking manifest issue")
+	}
+}
+
 func verificationCheckByKey(report *SchemaVerificationReport, key string) *SchemaVerificationCheck {
 	if report == nil {
 		return nil
@@ -332,7 +366,7 @@ func (f *fakeRepository) UpdateSchemaChangeRequestStatus(context.Context, uuid.U
 	return nil, nil
 }
 
-func (f *fakeRepository) ApplySchemaChange(context.Context, *SchemaChangeRequest, []string) (*SchemaApplyJob, error) {
+func (f *fakeRepository) ApplySchemaChange(_ context.Context, _ *SchemaChangeRequest, _ []string, assetResults []SchemaApplyAssetResult) (*SchemaApplyJob, error) {
 	f.applied = true
-	return &SchemaApplyJob{}, nil
+	return &SchemaApplyJob{Metadata: map[string]any{"asset_results": assetResults}}, nil
 }

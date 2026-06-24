@@ -144,6 +144,15 @@ type PackageAssetDiff struct {
 	DependsOn      []string `json:"depends_on,omitempty"`
 }
 
+type SchemaApplyAssetResult struct {
+	AssetKey     string         `json:"asset_key"`
+	AssetType    string         `json:"asset_type"`
+	Status       string         `json:"status"`
+	Target       string         `json:"target"`
+	ErrorMessage string         `json:"error_message,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+}
+
 type CreateSchemaChangeRequestInput struct {
 	OrganizationID       uuid.UUID      `json:"organization_id"`
 	RequestType          string         `json:"request_type"`

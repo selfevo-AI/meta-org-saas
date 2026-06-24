@@ -96,3 +96,32 @@ func assertPackageDiffAction(t *testing.T, diff []PackageAssetDiff, assetKey str
 	}
 	t.Fatalf("missing diff item %s in %#v", assetKey, diff)
 }
+
+func TestBuildSchemaApplyAssetResultsIncludesManifestAssets(t *testing.T) {
+	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := ManifestFromSchemaPackage(pkg)
+	if err != nil {
+		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+	}
+
+	results := BuildSchemaApplyAssetResults(manifest)
+
+	if len(results) == 0 {
+		t.Fatal("BuildSchemaApplyAssetResults returned no results")
+	}
+	if !hasAssetResult(results, AssetTypeRuntimeOperation) {
+		t.Fatalf("results missing runtime operation asset in %#v", results)
+	}
+	if !hasAssetResult(results, AssetTypeContextRule) {
+		t.Fatalf("results missing context rule asset in %#v", results)
+	}
+}
+
+func hasAssetResult(results []SchemaApplyAssetResult, assetType string) bool {
+	for _, result := range results {
+		if result.AssetType == assetType && result.Status == "pending" {
+			return true
+		}
+	}
+	return false
+}

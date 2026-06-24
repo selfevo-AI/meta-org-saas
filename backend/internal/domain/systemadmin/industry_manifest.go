@@ -252,6 +252,43 @@ func rollbackRiskCheck(manifest IndustrySolutionManifest, riskLevel string) Sche
 	return SchemaVerificationCheck{Key: "rollback_risk", Status: "passed", Message: "rollback risk is low for additive factory package", Metadata: map[string]any{"risk_level": riskLevel}}
 }
 
+func BuildSchemaApplyAssetResults(manifest IndustrySolutionManifest) []SchemaApplyAssetResult {
+	results := make([]SchemaApplyAssetResult, 0, len(manifest.Assets))
+	for _, asset := range manifest.Assets {
+		results = append(results, SchemaApplyAssetResult{
+			AssetKey:  asset.AssetKey,
+			AssetType: asset.AssetType,
+			Status:    "pending",
+			Target:    applyTargetForAsset(asset),
+			Metadata: map[string]any{
+				"payload":    asset.Payload,
+				"risk_level": asset.RiskLevel,
+				"version":    asset.Version,
+			},
+		})
+	}
+	return results
+}
+
+func applyTargetForAsset(asset IndustrySolutionAsset) string {
+	switch asset.AssetType {
+	case AssetTypeRuntimeOperation:
+		return "platform.runtime_operations"
+	case AssetTypeToolDefinition, AssetTypeToolPolicy:
+		return "tool_definitions"
+	case AssetTypeContextRule:
+		return "platform.platform_masters:context_rule_draft"
+	case AssetTypeAssistantSkill:
+		return "platform.platform_masters:assistant_skill"
+	case AssetTypeQualityGate:
+		return "platform.platform_masters:quality_gate"
+	case AssetTypeVerificationScenario:
+		return "platform.platform_masters:verification_scenario"
+	default:
+		return "schema_package.metadata"
+	}
+}
+
 func setIndustryManifest(pkg *SchemaPackage, manifest IndustrySolutionManifest) {
 	if pkg.Metadata == nil {
 		pkg.Metadata = map[string]any{}
