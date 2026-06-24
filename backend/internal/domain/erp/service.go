@@ -273,6 +273,21 @@ func (s *Service) idempotentReplayResult(ctx context.Context, execution *ActionE
 	}, nil
 }
 
+func (s *Service) runInTx(ctx context.Context, fn func(*Service) (*ActionResult, error)) (*ActionResult, error) {
+	txRepo, ok := s.repo.(TransactionalRepository)
+	if !ok {
+		return fn(s)
+	}
+	var result *ActionResult
+	err := txRepo.RunInTx(ctx, func(repo Repository) error {
+		txService := &Service{repo: repo, catalog: s.catalog, actions: s.actions}
+		var actionErr error
+		result, actionErr = fn(txService)
+		return actionErr
+	})
+	return result, err
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {

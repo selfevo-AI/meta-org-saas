@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,17 +22,41 @@ const (
 )
 
 type PostgresRepository struct {
-	db *pgxpool.Pool
+	db      *pgxpool.Pool
+	tx      pgx.Tx
+	querier erpQuerier
+}
+
+type erpQuerier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
 func NewRepository(db *pgxpool.Pool) *PostgresRepository {
-	return &PostgresRepository{db: db}
+	return &PostgresRepository{db: db, querier: db}
+}
+
+func (r *PostgresRepository) RunInTx(ctx context.Context, fn func(Repository) error) error {
+	if r.tx != nil {
+		return fn(r)
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	txRepo := &PostgresRepository{db: r.db, tx: tx, querier: tx}
+	if err := fn(txRepo); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *PostgresRepository) ListRecords(ctx context.Context, table TableDefinition, limit int) ([]Record, error) {
 	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t ORDER BY "UpdatedAt" DESC LIMIT $1`,
 		quoteIdent(table.PrimaryKey), quoteIdent(table.Code))
-	rows, err := r.db.Query(ctx, query, normalizeLimit(limit))
+	rows, err := r.querier.Query(ctx, query, normalizeLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", table.Code, err)
 	}
@@ -63,7 +88,7 @@ func (r *PostgresRepository) CreateRecord(ctx context.Context, table TableDefini
 func (r *PostgresRepository) GetRecord(ctx context.Context, table TableDefinition, key string) (*Record, error) {
 	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t WHERE %s::TEXT = $1`,
 		quoteIdent(table.PrimaryKey), quoteIdent(table.Code), quoteIdent(table.PrimaryKey))
-	record, err := scanRecord(table.Code, "", "", r.db.QueryRow(ctx, query, key))
+	record, err := scanRecord(table.Code, "", "", r.querier.QueryRow(ctx, query, key))
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +102,7 @@ func (r *PostgresRepository) UpdateRecord(ctx context.Context, table TableDefini
 	payload, _ := json.Marshal(input.Data)
 	query := fmt.Sprintf(`UPDATE %s SET "Payload" = "Payload" || $1::jsonb, "UpdatedAt" = NOW() WHERE %s::TEXT = $2 RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
 		quoteIdent(table.Code), quoteIdent(table.PrimaryKey), quoteIdent(table.PrimaryKey), quoteIdent(table.Code))
-	record, err := scanRecord(table.Code, "", "", r.db.QueryRow(ctx, query, payload, key))
+	record, err := scanRecord(table.Code, "", "", r.querier.QueryRow(ctx, query, payload, key))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +110,7 @@ func (r *PostgresRepository) UpdateRecord(ctx context.Context, table TableDefini
 }
 
 func (r *PostgresRepository) DeleteRecord(ctx context.Context, table TableDefinition, key string) error {
-	tag, err := r.db.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE %s::TEXT = $1`, quoteIdent(table.Code), quoteIdent(table.PrimaryKey)), key)
+	tag, err := r.querier.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE %s::TEXT = $1`, quoteIdent(table.Code), quoteIdent(table.PrimaryKey)), key)
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", table.Code, err)
 	}
@@ -98,7 +123,7 @@ func (r *PostgresRepository) DeleteRecord(ctx context.Context, table TableDefini
 func (r *PostgresRepository) ListChildRecords(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, limit int) ([]Record, error) {
 	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t WHERE %s::TEXT = $1 ORDER BY %s LIMIT $2`,
 		quoteIdent(child.LineKey), quoteIdent(child.Code), quoteIdent(child.ParentKey), quoteIdent(child.LineKey))
-	rows, err := r.db.Query(ctx, query, parentKey, normalizeLimit(limit))
+	rows, err := r.querier.Query(ctx, query, parentKey, normalizeLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", child.Code, err)
 	}
@@ -152,13 +177,13 @@ func (r *PostgresRepository) CreateActionExecution(ctx context.Context, executio
 	query := fmt.Sprintf(`INSERT INTO %s ("ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "Payload")
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
 		RETURNING "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"`, quoteIdent(actionExecutionTable))
-	return scanActionExecution(r.db.QueryRow(ctx, query, execution.ID, execution.TableCode, execution.RecordKey, execution.Action, execution.Status, execution.IdempotencyKey, execution.ActorID, execution.ActorType, execution.ToolExecutionID, execution.AssistantSessionID, execution.Source, string(payload)))
+	return scanActionExecution(r.querier.QueryRow(ctx, query, execution.ID, execution.TableCode, execution.RecordKey, execution.Action, execution.Status, execution.IdempotencyKey, execution.ActorID, execution.ActorType, execution.ToolExecutionID, execution.AssistantSessionID, execution.Source, string(payload)))
 }
 
 func (r *PostgresRepository) FindActionExecutionByIdempotencyKey(ctx context.Context, key string) (*ActionExecution, error) {
 	query := fmt.Sprintf(`SELECT "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"
 		FROM %s WHERE "IdempotencyKey" = $1 ORDER BY "StartedAt" DESC LIMIT 1`, quoteIdent(actionExecutionTable))
-	return scanActionExecution(r.db.QueryRow(ctx, query, key))
+	return scanActionExecution(r.querier.QueryRow(ctx, query, key))
 }
 
 func (r *PostgresRepository) CompleteActionExecution(ctx context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error) {
@@ -178,7 +203,7 @@ func (r *PostgresRepository) CompleteActionExecution(ctx context.Context, id uui
 	query := fmt.Sprintf(`UPDATE %s SET "Status" = $2, "Payload" = $3::jsonb, "FailureCode" = $4, "FailureMessage" = $5, "CompletedAt" = NOW()
 		WHERE "ActionID" = $1
 		RETURNING "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"`, quoteIdent(actionExecutionTable))
-	return scanActionExecution(r.db.QueryRow(ctx, query, id, status, string(payloadBytes), failureCode, failureMessage))
+	return scanActionExecution(r.querier.QueryRow(ctx, query, id, status, string(payloadBytes), failureCode, failureMessage))
 }
 
 func (r *PostgresRepository) CreateActionGeneratedRecord(ctx context.Context, record ActionGeneratedRecord) error {
@@ -194,7 +219,7 @@ func (r *PostgresRepository) CreateActionGeneratedRecord(ctx context.Context, re
 	}
 	query := fmt.Sprintf(`INSERT INTO %s ("ActionID", "LineNum", "GeneratedTableCode", "GeneratedKey", "RelationType", "Payload")
 		VALUES ($1,$2,$3,$4,$5,$6::jsonb)`, quoteIdent(actionGeneratedRecordTable))
-	if _, err := r.db.Exec(ctx, query, record.ActionID, record.LineNum, record.GeneratedTableCode, record.GeneratedKey, record.RelationType, string(payload)); err != nil {
+	if _, err := r.querier.Exec(ctx, query, record.ActionID, record.LineNum, record.GeneratedTableCode, record.GeneratedKey, record.RelationType, string(payload)); err != nil {
 		return fmt.Errorf("create ERP action generated record: %w", err)
 	}
 	return nil
@@ -202,7 +227,7 @@ func (r *PostgresRepository) CreateActionGeneratedRecord(ctx context.Context, re
 
 func (r *PostgresRepository) ListActionGeneratedRecords(ctx context.Context, actionID uuid.UUID) ([]ActionGeneratedRecord, error) {
 	query := fmt.Sprintf(`SELECT "ActionID", "LineNum", "GeneratedTableCode", "GeneratedKey", "RelationType", "Payload" FROM %s WHERE "ActionID" = $1 ORDER BY "LineNum"`, quoteIdent(actionGeneratedRecordTable))
-	rows, err := r.db.Query(ctx, query, actionID)
+	rows, err := r.querier.Query(ctx, query, actionID)
 	if err != nil {
 		return nil, fmt.Errorf("list ERP action generated records: %w", err)
 	}
@@ -236,7 +261,7 @@ func (r *PostgresRepository) insertRecord(ctx context.Context, tableCode, keyCol
 	}
 	query := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s) RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
 		quoteIdent(tableCode), strings.Join(columns, ", "), strings.Join(placeholders, ", "), quoteIdent(keyColumn), quoteIdent(tableCode))
-	return scanRecord(tableCode, "", "", r.db.QueryRow(ctx, query, args...))
+	return scanRecord(tableCode, "", "", r.querier.QueryRow(ctx, query, args...))
 }
 
 func scanRecords(rows pgx.Rows, tableCode, parentTableCode, parentKey string) ([]Record, error) {

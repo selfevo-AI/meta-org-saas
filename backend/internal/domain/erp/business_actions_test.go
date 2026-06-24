@@ -161,6 +161,70 @@ func (r *businessFakeRepository) ListActionGeneratedRecords(_ context.Context, a
 	return append([]ActionGeneratedRecord{}, r.generatedRecords[actionID]...), nil
 }
 
+func (r *businessFakeRepository) RunInTx(_ context.Context, fn func(Repository) error) error {
+	records := cloneRecords(r.records)
+	children := cloneChildren(r.children)
+	executions := cloneExecutions(r.executions)
+	executionsByKey := cloneExecutionKeys(r.executionsByKey)
+	generatedRecords := cloneGeneratedRecords(r.generatedRecords)
+	if err := fn(r); err != nil {
+		r.records = records
+		r.children = children
+		r.executions = executions
+		r.executionsByKey = executionsByKey
+		r.generatedRecords = generatedRecords
+		return err
+	}
+	return nil
+}
+
+func cloneRecords(input map[string]map[string]Record) map[string]map[string]Record {
+	output := map[string]map[string]Record{}
+	for tableCode, rows := range input {
+		output[tableCode] = map[string]Record{}
+		for key, record := range rows {
+			record.Data = copyData(record.Data)
+			output[tableCode][key] = record
+		}
+	}
+	return output
+}
+
+func cloneChildren(input map[string][]Record) map[string][]Record {
+	output := map[string][]Record{}
+	for bucket, rows := range input {
+		output[bucket] = append([]Record{}, rows...)
+		for i := range output[bucket] {
+			output[bucket][i].Data = copyData(output[bucket][i].Data)
+		}
+	}
+	return output
+}
+
+func cloneExecutions(input map[uuid.UUID]ActionExecution) map[uuid.UUID]ActionExecution {
+	output := map[uuid.UUID]ActionExecution{}
+	for id, execution := range input {
+		output[id] = execution
+	}
+	return output
+}
+
+func cloneExecutionKeys(input map[string]uuid.UUID) map[string]uuid.UUID {
+	output := map[string]uuid.UUID{}
+	for key, id := range input {
+		output[key] = id
+	}
+	return output
+}
+
+func cloneGeneratedRecords(input map[uuid.UUID][]ActionGeneratedRecord) map[uuid.UUID][]ActionGeneratedRecord {
+	output := map[uuid.UUID][]ActionGeneratedRecord{}
+	for id, rows := range input {
+		output[id] = append([]ActionGeneratedRecord{}, rows...)
+	}
+	return output
+}
+
 func (r *businessFakeRepository) balance(itemCode string, whsCode string) float64 {
 	record, ok := r.records["MITW"][itemCode+"|"+whsCode]
 	if !ok {
@@ -337,6 +401,25 @@ func TestCloseProjectFeedbackRequiresCostRefresh(t *testing.T) {
 	}
 	if repo.records["MFDB"] != nil {
 		t.Fatalf("feedback record generated before cost refresh: %#v", repo.records["MFDB"])
+	}
+}
+
+func TestDeliveryPostRollsBackWhenInventoryFails(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "C-1"})
+	repo.seedChild("MDLN", "DLV-1", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 15}})
+	repo.seed("MITW", "I-1|W-1", map[string]any{"ItemCode": "I-1|W-1", "OnHand": 1})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MDLN", "DLV-1", "post", ActionInput{IdempotencyKey: "rollback-delivery"})
+	if err == nil {
+		t.Fatalf("delivery post returned nil error and result %#v, want insufficient inventory error", result)
+	}
+	if repo.records["MIGE"] != nil || repo.records["MINV"] != nil {
+		t.Fatalf("generated records were not rolled back: MIGE=%#v MINV=%#v", repo.records["MIGE"], repo.records["MINV"])
+	}
+	if repo.records["MDLN"]["DLV-1"].Data["Posted"] == "Y" {
+		t.Fatalf("delivery marked posted after rollback")
 	}
 }
 

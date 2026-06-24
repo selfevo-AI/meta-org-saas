@@ -21,11 +21,17 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		}
 		return attachPreconditions(result, check), nil
 	case "MREQ:convert-to-project":
-		return s.convertRequirementToProject(ctx, key, input)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.convertRequirementToProject(ctx, key, input)
+		})
 	case "MPRJ:refresh-cost":
-		return s.refreshProjectCost(ctx, key, input)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.refreshProjectCost(ctx, key, input)
+		})
 	case "MPRJ:close-feedback":
-		return s.closeProjectFeedback(ctx, key, input)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.closeProjectFeedback(ctx, key, input)
+		})
 	case "MPOR:submit":
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"DocStatus": "S"})
 	case "MPOR:approve":
@@ -34,7 +40,9 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		}
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
 	case "MPDN:post":
-		return s.postGoodsReceiptPO(ctx, key)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.postGoodsReceiptPO(ctx, key)
+		})
 	case "MRDR:confirm":
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Confirmed": "Y"})
 	case "MRDR:approve":
@@ -48,17 +56,29 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		}
 		return attachPreconditions(result, check), nil
 	case "MDLN:post":
-		return s.postDelivery(ctx, key)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.postDelivery(ctx, key)
+		})
 	case "MINV:post":
-		return s.postInvoice(ctx, key)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.postInvoice(ctx, key)
+		})
 	case "MRCT:allocate":
-		return s.allocateIncomingPayment(ctx, key, input)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.allocateIncomingPayment(ctx, key, input)
+		})
 	case "MIGN:post":
-		return s.postInventoryDocument(ctx, tableCode, key, 1)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.postInventoryDocument(ctx, tableCode, key, 1)
+		})
 	case "MIGE:post":
-		return s.postInventoryDocument(ctx, tableCode, key, -1)
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.postInventoryDocument(ctx, tableCode, key, -1)
+		})
 	case "MJDT:post":
-		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"BtfStatus": "P"})
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"BtfStatus": "P"})
+		})
 	default:
 		return nil, fmt.Errorf("%w: %s for %s", errUnsupportedERPAction, action, tableCode)
 	}
