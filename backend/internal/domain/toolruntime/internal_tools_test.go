@@ -35,6 +35,43 @@ func TestERPActionExecuteToolRunsERPAction(t *testing.T) {
 	}
 }
 
+func TestERPActionExecuteToolForwardsExecutionMetadata(t *testing.T) {
+	erpSvc := &fakeERPActionService{}
+	sessionID := uuid.New()
+	toolExecutionID := uuid.New()
+	tools := InternalToolsWithPlatform(nil, nil, nil, PlatformToolServices{ERP: erpSvc})
+
+	_, err := tools["erp.action.execute"](context.Background(), ExecuteToolInput{
+		ActorID:        uuid.New(),
+		ActorType:      "internal_human",
+		IdempotencyKey: "assistant-session-tool-call",
+		Arguments: map[string]any{
+			"table_code":           "MREQ",
+			"key":                  "REQ-1",
+			"action":               "approve",
+			"assistant_session_id": sessionID.String(),
+			"tool_execution_id":    toolExecutionID.String(),
+			"context_package_id":   uuid.New().String(),
+			"data":                 map[string]any{"approver": "u1"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("tool returned error: %v", err)
+	}
+	if erpSvc.input.ActorType != "internal_human" || erpSvc.input.ActorID == nil {
+		t.Fatalf("input actor = %#v/%#v, want forwarded actor", erpSvc.input.ActorID, erpSvc.input.ActorType)
+	}
+	if erpSvc.input.Source != "toolruntime" || erpSvc.input.IdempotencyKey != "assistant-session-tool-call" {
+		t.Fatalf("input source/idempotency = %q/%q, want toolruntime/assistant-session-tool-call", erpSvc.input.Source, erpSvc.input.IdempotencyKey)
+	}
+	if erpSvc.input.AssistantSessionID == nil || *erpSvc.input.AssistantSessionID != sessionID {
+		t.Fatalf("assistant session id = %#v, want %s", erpSvc.input.AssistantSessionID, sessionID)
+	}
+	if erpSvc.input.ToolExecutionID == nil || *erpSvc.input.ToolExecutionID != toolExecutionID {
+		t.Fatalf("tool execution id = %#v, want %s", erpSvc.input.ToolExecutionID, toolExecutionID)
+	}
+}
+
 func TestSchemaChangePreviewToolRunsVerifier(t *testing.T) {
 	requestID := uuid.New()
 	verifier := &fakeSchemaVerifier{}
@@ -98,12 +135,14 @@ type fakeERPActionService struct {
 	tableCode string
 	key       string
 	action    string
+	input     erp.ActionInput
 }
 
 func (f *fakeERPActionService) RunAction(_ context.Context, tableCode string, key string, action string, input erp.ActionInput) (*erp.ActionResult, error) {
 	f.tableCode = tableCode
 	f.key = key
 	f.action = action
+	f.input = input
 	return &erp.ActionResult{TableCode: tableCode, Key: key, Action: action, Status: "approved", Record: &erp.Record{TableCode: tableCode, Key: key, Data: input.Data}}, nil
 }
 
