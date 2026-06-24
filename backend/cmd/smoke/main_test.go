@@ -104,3 +104,25 @@ func TestPostAcceptsCreatedForBusinessCreateEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireActionContractAcceptsExecutionMetadata(t *testing.T) {
+	requireActionContract(responseMap{
+		"execution_id":          "exec-1",
+		"idempotency_key":       "idem-1",
+		"preconditions_checked": []any{responseMap{"key": "MREQ.Status", "status": "passed"}},
+	}, "action")
+}
+
+func TestRequireGeneratedProvenanceAcceptsGeneratedRecord(t *testing.T) {
+	requireGeneratedProvenance(responseMap{
+		"generated_records": []any{
+			responseMap{
+				"table_code": "MPRJ",
+				"key":        "PRJ-1",
+				"data": responseMap{
+					"provenance": responseMap{"source_table_code": "MREQ"},
+				},
+			},
+		},
+	}, "MPRJ")
+}

@@ -492,6 +492,30 @@ func TestDeliveryPostAddsGeneratedRecordProvenance(t *testing.T) {
 	}
 }
 
+func TestConvertRequirementAddsGeneratedProjectProvenance(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "convert-to-project", ActionInput{
+		IdempotencyKey: "convert-provenance",
+		Data:           map[string]any{"PrjCode": "PRJ-1"},
+	})
+	if err != nil {
+		t.Fatalf("convert returned error: %v", err)
+	}
+	if len(result.GeneratedRecords) != 1 {
+		t.Fatalf("generated records = %d, want 1", len(result.GeneratedRecords))
+	}
+	provenance, ok := result.GeneratedRecords[0].Data["provenance"].(map[string]any)
+	if !ok {
+		t.Fatalf("generated project missing provenance: %#v", result.GeneratedRecords[0])
+	}
+	if provenance["source_table_code"] != "MREQ" || provenance["source_key"] != "REQ-1" || provenance["source_action"] != "convert-to-project" {
+		t.Fatalf("provenance = %#v, want MREQ/REQ-1/convert-to-project", provenance)
+	}
+}
+
 func TestConvertRequirementCreatesProject(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})

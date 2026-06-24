@@ -109,16 +109,18 @@ func (s *Service) convertRequirementToProject(ctx context.Context, key string, i
 		return nil, fmt.Errorf("%w: requirement must be approved before conversion", ErrValidation)
 	}
 	projectKey := stringValue(input.Data, "PrjCode", "PRJ-"+key)
+	projectPayload := withActionProvenance(ctx, "MREQ", key, "convert-to-project", map[string]any{
+		"Name":            stringValue(req.Data, "Name", projectKey),
+		"RequirementCode": key,
+		"Status":          "active",
+	})
 	project, err := s.repo.CreateRecord(ctx, projectTable, RecordInput{
 		Key: projectKey,
 		Data: map[string]any{
-			"PrjCode": projectKey,
-			"Active":  "Y",
-			"Payload": map[string]any{
-				"Name":            stringValue(req.Data, "Name", projectKey),
-				"RequirementCode": key,
-				"Status":          "active",
-			},
+			"PrjCode":    projectKey,
+			"Active":     "Y",
+			"Payload":    projectPayload,
+			"provenance": projectPayload["provenance"],
 		},
 	})
 	if err != nil {
