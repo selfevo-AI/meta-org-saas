@@ -298,6 +298,48 @@ func TestActionExecutionLedgerRecordsValidationFailure(t *testing.T) {
 	}
 }
 
+func TestRequirementApproveRequiresAnalyzedStatus(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Status": "draft"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MREQ", "REQ-1", "approve", ActionInput{IdempotencyKey: "approve-draft"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MREQ"]["REQ-1"].Data["Status"] != "draft" {
+		t.Fatalf("status changed to %v, want draft", repo.records["MREQ"]["REQ-1"].Data["Status"])
+	}
+}
+
+func TestSalesOrderApproveRequiresConfirmedOrder(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MRDR", "SO-1", map[string]any{"DocEntry": "SO-1", "DocStatus": "O", "Confirmed": "N", "WddStatus": "W"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MRDR", "SO-1", "approve", ActionInput{IdempotencyKey: "approve-unconfirmed"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MRDR"]["SO-1"].Data["WddStatus"] != "W" {
+		t.Fatalf("WddStatus changed to %v, want W", repo.records["MRDR"]["SO-1"].Data["WddStatus"])
+	}
+}
+
+func TestCloseProjectFeedbackRequiresCostRefresh(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MPRJ", "PRJ-1", map[string]any{"PrjCode": "PRJ-1", "Active": "Y"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MPRJ", "PRJ-1", "close-feedback", ActionInput{IdempotencyKey: "close-before-cost"})
+	if err == nil {
+		t.Fatalf("close-feedback returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MFDB"] != nil {
+		t.Fatalf("feedback record generated before cost refresh: %#v", repo.records["MFDB"])
+	}
+}
+
 func TestConvertRequirementCreatesProject(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})

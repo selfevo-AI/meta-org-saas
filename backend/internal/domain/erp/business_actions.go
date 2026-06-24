@@ -11,7 +11,15 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 	case "MREQ:analyze":
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "analyzed"})
 	case "MREQ:approve":
-		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "approved", "ApprovedBy": input.Data["approver"]})
+		_, check, err := s.requireRecordField(ctx, tableCode, key, "Status", "analyzed", "requirement must be analyzed before approval")
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "approved", "ApprovedBy": input.Data["approver"]})
+		if err != nil {
+			return nil, err
+		}
+		return attachPreconditions(result, check), nil
 	case "MREQ:convert-to-project":
 		return s.convertRequirementToProject(ctx, key, input)
 	case "MPRJ:refresh-cost":
@@ -30,7 +38,15 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 	case "MRDR:confirm":
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Confirmed": "Y"})
 	case "MRDR:approve":
-		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
+		_, check, err := s.requireRecordField(ctx, tableCode, key, "Confirmed", "Y", "sales order must be confirmed before approval")
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
+		if err != nil {
+			return nil, err
+		}
+		return attachPreconditions(result, check), nil
 	case "MDLN:post":
 		return s.postDelivery(ctx, key)
 	case "MINV:post":
@@ -117,6 +133,10 @@ func (s *Service) refreshProjectCost(ctx context.Context, key string, input Acti
 }
 
 func (s *Service) closeProjectFeedback(ctx context.Context, key string, input ActionInput) (*ActionResult, error) {
+	project, check, err := s.requireProjectCostRefreshed(ctx, key)
+	if err != nil {
+		return nil, err
+	}
 	projectTable, _ := s.table("MPRJ")
 	feedbackTable, _ := s.table("MFDB")
 	feedbackKey := stringValue(input.Data, "FeedbackCode", "FDB-"+key)
@@ -132,11 +152,11 @@ func (s *Service) closeProjectFeedback(ctx context.Context, key string, input Ac
 	if err != nil {
 		return nil, err
 	}
-	project, err := s.repo.UpdateRecord(ctx, projectTable, key, RecordInput{Data: map[string]any{"FeedbackStatus": "closed"}})
+	project, err = s.repo.UpdateRecord(ctx, projectTable, key, RecordInput{Data: map[string]any{"FeedbackStatus": "closed"}})
 	if err != nil {
 		return nil, err
 	}
-	return &ActionResult{TableCode: "MPRJ", Key: key, Action: "close-feedback", Status: "closed", Record: project, GeneratedRecords: []Record{*feedback}}, nil
+	return attachPreconditions(&ActionResult{TableCode: "MPRJ", Key: key, Action: "close-feedback", Status: "closed", Record: project, GeneratedRecords: []Record{*feedback}}, check), nil
 }
 
 func (s *Service) postGoodsReceiptPO(ctx context.Context, key string) (*ActionResult, error) {
@@ -328,6 +348,52 @@ func (s *Service) requireDocumentField(ctx context.Context, tableCode string, ke
 		return fmt.Errorf("%w: %s", ErrValidation, message)
 	}
 	return nil
+}
+
+func passedPrecondition(key string, message string) ActionPrecondition {
+	return ActionPrecondition{Key: key, Status: "passed", Message: message}
+}
+
+func (s *Service) requireRecordField(ctx context.Context, tableCode string, key string, field string, expected string, message string) (*Record, ActionPrecondition, error) {
+	table, err := s.table(tableCode)
+	if err != nil {
+		return nil, ActionPrecondition{}, err
+	}
+	record, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, ActionPrecondition{}, err
+	}
+	check := passedPrecondition(tableCode+"."+field, message)
+	if !documentFieldEquals(record, field, expected) {
+		check.Status = "failed"
+		return nil, check, fmt.Errorf("%w: %s", ErrValidation, message)
+	}
+	return record, check, nil
+}
+
+func (s *Service) requireProjectCostRefreshed(ctx context.Context, key string) (*Record, ActionPrecondition, error) {
+	table, err := s.table("MPRJ")
+	if err != nil {
+		return nil, ActionPrecondition{}, err
+	}
+	project, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, ActionPrecondition{}, err
+	}
+	check := passedPrecondition("MPRJ.LastCostCode", "project cost must be refreshed before feedback closes")
+	if stringValue(project.Data, "LastCostCode", "") == "" {
+		check.Status = "failed"
+		return nil, check, fmt.Errorf("%w: %s", ErrValidation, check.Message)
+	}
+	return project, check, nil
+}
+
+func attachPreconditions(result *ActionResult, checks ...ActionPrecondition) *ActionResult {
+	if result == nil {
+		return result
+	}
+	result.PreconditionsChecked = append(result.PreconditionsChecked, checks...)
+	return result
 }
 
 func documentFieldEquals(record *Record, field string, expected string) bool {
