@@ -457,6 +457,41 @@ func TestGoodsReceiptPostIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestDeliveryPostAddsGeneratedRecordProvenance(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	toolExecutionID := uuid.New()
+	sessionID := uuid.New()
+	repo.seed("MDLN", "DLV-1", map[string]any{"DocEntry": "DLV-1", "DocStatus": "O", "WddStatus": "A", "CardCode": "C-1"})
+	repo.seedChild("MDLN", "DLV-1", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 2, "Price": 15}})
+	repo.seed("MITW", "I-1|W-1", map[string]any{"ItemCode": "I-1|W-1", "OnHand": 5})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MDLN", "DLV-1", "post", ActionInput{
+		IdempotencyKey:     "delivery-provenance",
+		Source:             "toolruntime",
+		ToolExecutionID:    &toolExecutionID,
+		AssistantSessionID: &sessionID,
+	})
+	if err != nil {
+		t.Fatalf("delivery post error: %v", err)
+	}
+	if len(result.GeneratedRecords) == 0 {
+		t.Fatalf("generated records empty")
+	}
+	for _, record := range result.GeneratedRecords {
+		provenance, ok := record.Data["provenance"].(map[string]any)
+		if !ok {
+			t.Fatalf("record %#v missing provenance map", record)
+		}
+		if provenance["source_table_code"] != "MDLN" || provenance["source_key"] != "DLV-1" || provenance["source_action"] != "post" {
+			t.Fatalf("provenance = %#v, want MDLN/DLV-1/post", provenance)
+		}
+		if provenance["tool_execution_id"] != toolExecutionID.String() || provenance["assistant_session_id"] != sessionID.String() {
+			t.Fatalf("provenance = %#v, want tool/session correlation", provenance)
+		}
+	}
+}
+
 func TestConvertRequirementCreatesProject(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "approved"})

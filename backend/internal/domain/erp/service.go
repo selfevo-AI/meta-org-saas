@@ -28,6 +28,25 @@ type TransactionalRepository interface {
 	RunInTx(context.Context, func(Repository) error) error
 }
 
+type actionExecutionContextKey struct{}
+
+type actionExecutionContext struct {
+	ExecutionID        uuid.UUID
+	IdempotencyKey     string
+	ActorType          string
+	ToolExecutionID    *uuid.UUID
+	AssistantSessionID *uuid.UUID
+}
+
+func contextWithActionExecution(ctx context.Context, meta actionExecutionContext) context.Context {
+	return context.WithValue(ctx, actionExecutionContextKey{}, meta)
+}
+
+func actionExecutionFromContext(ctx context.Context) actionExecutionContext {
+	meta, _ := ctx.Value(actionExecutionContextKey{}).(actionExecutionContext)
+	return meta
+}
+
 type Service struct {
 	repo    Repository
 	catalog Catalog
@@ -152,6 +171,13 @@ func (s *Service) RunAction(ctx context.Context, tableCode string, key string, a
 	if err != nil {
 		return nil, err
 	}
+	ctx = contextWithActionExecution(ctx, actionExecutionContext{
+		ExecutionID:        execution.ID,
+		IdempotencyKey:     idempotencyKey,
+		ActorType:          input.ActorType,
+		ToolExecutionID:    input.ToolExecutionID,
+		AssistantSessionID: input.AssistantSessionID,
+	})
 	result, actionErr := s.runBusinessAction(ctx, tableCode, key, action, input)
 	if actionErr != nil && errors.Is(actionErr, errUnsupportedERPAction) {
 		result = &ActionResult{

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key string, action string, input ActionInput) (*ActionResult, error) {
@@ -133,13 +135,15 @@ func (s *Service) refreshProjectCost(ctx context.Context, key string, input Acti
 	projectTable, _ := s.table("MPRJ")
 	costTable, _ := s.table("MCST")
 	costKey := stringValue(input.Data, "CostCode", "COST-"+key)
+	costPayload := withActionProvenance(ctx, "MPRJ", key, "refresh-cost", map[string]any{"ProjectCode": key})
 	cost, err := s.repo.CreateRecord(ctx, costTable, RecordInput{
 		Key: costKey,
 		Data: map[string]any{
-			"CostCode": costKey,
-			"Name":     "Project cost " + key,
-			"Status":   "refreshed",
-			"Payload":  map[string]any{"ProjectCode": key},
+			"CostCode":   costKey,
+			"Name":       "Project cost " + key,
+			"Status":     "refreshed",
+			"Payload":    costPayload,
+			"provenance": costPayload["provenance"],
 		},
 	})
 	if err != nil {
@@ -160,13 +164,15 @@ func (s *Service) closeProjectFeedback(ctx context.Context, key string, input Ac
 	projectTable, _ := s.table("MPRJ")
 	feedbackTable, _ := s.table("MFDB")
 	feedbackKey := stringValue(input.Data, "FeedbackCode", "FDB-"+key)
+	feedbackPayload := withActionProvenance(ctx, "MPRJ", key, "close-feedback", map[string]any{"ProjectCode": key, "Result": input.Data["result"]})
 	feedback, err := s.repo.CreateRecord(ctx, feedbackTable, RecordInput{
 		Key: feedbackKey,
 		Data: map[string]any{
 			"FeedbackCode": feedbackKey,
 			"Name":         "Feedback " + key,
 			"Status":       "closed",
-			"Payload":      map[string]any{"ProjectCode": key, "Result": input.Data["result"]},
+			"Payload":      feedbackPayload,
+			"provenance":   feedbackPayload["provenance"],
 		},
 	})
 	if err != nil {
@@ -196,11 +202,11 @@ func (s *Service) postGoodsReceiptPO(ctx context.Context, key string) (*ActionRe
 		return nil, err
 	}
 	total := sumLineAmount(lines)
-	goodsReceipt, err := s.createDocument(ctx, "MIGN", "IGN-"+key, map[string]any{"CardCode": receipt.Data["CardCode"], "DocTotal": total, "BaseEntry": key})
+	goodsReceipt, err := s.createDocument(ctx, "MPDN", key, "post", "MIGN", "IGN-"+key, map[string]any{"CardCode": receipt.Data["CardCode"], "DocTotal": total, "BaseEntry": key})
 	if err != nil {
 		return nil, err
 	}
-	payable, err := s.createDocument(ctx, "MPCH", "AP-"+key, map[string]any{"CardCode": receipt.Data["CardCode"], "DocTotal": total, "BaseEntry": key, "PaidToDate": 0})
+	payable, err := s.createDocument(ctx, "MPDN", key, "post", "MPCH", "AP-"+key, map[string]any{"CardCode": receipt.Data["CardCode"], "DocTotal": total, "BaseEntry": key, "PaidToDate": 0})
 	if err != nil {
 		return nil, err
 	}
@@ -240,11 +246,11 @@ func (s *Service) postDelivery(ctx context.Context, key string) (*ActionResult, 
 		return nil, err
 	}
 	total := sumLineAmount(lines)
-	goodsIssue, err := s.createDocument(ctx, "MIGE", "IGE-"+key, map[string]any{"CardCode": delivery.Data["CardCode"], "DocTotal": total, "BaseEntry": key})
+	goodsIssue, err := s.createDocument(ctx, "MDLN", key, "post", "MIGE", "IGE-"+key, map[string]any{"CardCode": delivery.Data["CardCode"], "DocTotal": total, "BaseEntry": key})
 	if err != nil {
 		return nil, err
 	}
-	invoice, err := s.createDocument(ctx, "MINV", "INV-"+key, map[string]any{"CardCode": delivery.Data["CardCode"], "DocTotal": total, "PaidToDate": 0, "BaseEntry": key})
+	invoice, err := s.createDocument(ctx, "MDLN", key, "post", "MINV", "INV-"+key, map[string]any{"CardCode": delivery.Data["CardCode"], "DocTotal": total, "PaidToDate": 0, "BaseEntry": key})
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +275,7 @@ func (s *Service) postDelivery(ctx context.Context, key string) (*ActionResult, 
 
 func (s *Service) postInvoice(ctx context.Context, key string) (*ActionResult, error) {
 	invoiceTable, _ := s.table("MINV")
-	journal, err := s.createDocument(ctx, "MJDT", "JE-"+key, map[string]any{"BaseEntry": key})
+	journal, err := s.createDocument(ctx, "MINV", key, "post", "MJDT", "JE-"+key, map[string]any{"BaseEntry": key})
 	if err != nil {
 		return nil, err
 	}
@@ -431,11 +437,63 @@ func isPostedDocument(record *Record) bool {
 	return documentFieldEquals(record, "Posted", "Y")
 }
 
-func (s *Service) createDocument(ctx context.Context, tableCode string, key string, payload map[string]any) (*Record, error) {
+type actionProvenanceInput struct {
+	TableCode          string
+	Key                string
+	Action             string
+	ExecutionID        uuid.UUID
+	IdempotencyKey     string
+	ActorType          string
+	ToolExecutionID    *uuid.UUID
+	AssistantSessionID *uuid.UUID
+}
+
+func actionProvenance(input actionProvenanceInput) map[string]any {
+	return map[string]any{
+		"source_table_code":     input.TableCode,
+		"source_key":            input.Key,
+		"source_action":         input.Action,
+		"action_execution_id":   input.ExecutionID.String(),
+		"idempotency_key":       input.IdempotencyKey,
+		"created_by_actor_type": input.ActorType,
+		"tool_execution_id":     uuidString(input.ToolExecutionID),
+		"assistant_session_id":  uuidString(input.AssistantSessionID),
+	}
+}
+
+func withProvenance(payload map[string]any, provenance map[string]any) map[string]any {
+	next := copyData(payload)
+	next["provenance"] = provenance
+	return next
+}
+
+func uuidString(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
+}
+
+func withActionProvenance(ctx context.Context, sourceTableCode string, sourceKey string, sourceAction string, payload map[string]any) map[string]any {
+	meta := actionExecutionFromContext(ctx)
+	return withProvenance(payload, actionProvenance(actionProvenanceInput{
+		TableCode:          sourceTableCode,
+		Key:                sourceKey,
+		Action:             sourceAction,
+		ExecutionID:        meta.ExecutionID,
+		IdempotencyKey:     meta.IdempotencyKey,
+		ActorType:          meta.ActorType,
+		ToolExecutionID:    meta.ToolExecutionID,
+		AssistantSessionID: meta.AssistantSessionID,
+	}))
+}
+
+func (s *Service) createDocument(ctx context.Context, sourceTableCode string, sourceKey string, sourceAction string, tableCode string, key string, payload map[string]any) (*Record, error) {
 	table, err := s.table(tableCode)
 	if err != nil {
 		return nil, err
 	}
+	payload = withActionProvenance(ctx, sourceTableCode, sourceKey, sourceAction, payload)
 	data := map[string]any{table.PrimaryKey: key, "Payload": payload}
 	if _, ok := table.Field("DocNum"); ok {
 		data["DocNum"] = key
@@ -446,6 +504,7 @@ func (s *Service) createDocument(ctx context.Context, tableCode string, key stri
 	if _, ok := table.Field("BtfStatus"); ok {
 		data["BtfStatus"] = "O"
 	}
+	data["provenance"] = payload["provenance"]
 	for k, v := range payload {
 		data[k] = v
 	}
