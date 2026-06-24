@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -27,6 +28,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/assistant/context-targets", h.listContextTargets)
 	r.Post("/assistant/context-dictionaries/imports", h.importContextDictionary)
 	r.Post("/assistant/context-preview", h.previewContext)
+	r.Get("/assistant/context-packages/{id}", h.getContextPackageDiagnostic)
+	r.Get("/assistant/context-health", h.getContextHealth)
 	r.Post("/assistant/sessions", h.createSession)
 	r.Get("/assistant/sessions", h.listSessions)
 	r.Get("/assistant/sessions/{id}", h.getSession)
@@ -44,6 +47,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 
 func (h *Handler) RegisterPlatformRoutes(r chi.Router) {
 	r.Get("/platform/admin/assistant/context-targets", h.listContextTargets)
+	r.Get("/platform/admin/assistant/context-packages/{id}", h.getContextPackageDiagnostic)
+	r.Get("/platform/admin/assistant/context-health", h.getContextHealth)
 	r.Post("/platform/admin/assistant/sessions", h.createSession)
 	r.Get("/platform/admin/assistant/sessions", h.listSessions)
 	r.Get("/platform/admin/assistant/sessions/{id}", h.getSession)
@@ -90,6 +95,30 @@ func (h *Handler) previewContext(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.service.PreviewContext(r.Context(), actorID, actorType, input)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) getContextPackageDiagnostic(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := authenticatedActor(w, r); !ok {
+		return
+	}
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	result, err := h.service.GetContextPackageDiagnostic(r.Context(), id)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) getContextHealth(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := authenticatedActor(w, r); !ok {
+		return
+	}
+	organizationID, ok := optionalUUIDQuery(w, r, "organization_id")
+	if !ok {
+		return
+	}
+	result, err := h.service.GetContextHealth(r.Context(), organizationID)
 	writeResult(w, http.StatusOK, result, err)
 }
 
@@ -360,6 +389,19 @@ func parseID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bo
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+func optionalUUIDQuery(w http.ResponseWriter, r *http.Request, name string) (*uuid.UUID, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return nil, true
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid " + name})
+		return nil, false
+	}
+	return &id, true
 }
 
 func queryLimit(r *http.Request) int {

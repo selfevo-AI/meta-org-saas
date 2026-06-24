@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -183,6 +184,32 @@ func TestVerifiedContextEngineFinanceRuleCreatesRiskSignal(t *testing.T) {
 	}
 	if pkg.RiskAndSignals[0].ValidationState != ValidationFinanceConflict {
 		t.Fatalf("validation = %q, want finance conflict", pkg.RiskAndSignals[0].ValidationState)
+	}
+}
+
+func TestVerifiedContextEngineBlocksStrictModuleWithoutDictionaryRules(t *testing.T) {
+	engine := NewVerifiedContextEngine(VerifiedContextEngineConfig{
+		Resolver: &fakeContextResolver{result: WorkRecordContext{
+			ModuleKey: "erp",
+			Records: []WorkRecord{
+				{ID: "REQ-1", Type: "requirement", Title: "Launch", Status: "approved"},
+			},
+		}},
+		RuleSource: &fakeContextRuleSource{},
+	})
+
+	_, err := engine.BuildContextPackage(context.Background(), ContextRequest{
+		SessionID:  uuid.New(),
+		ActorID:    uuid.New(),
+		ActorType:  "internal_human",
+		ModuleKey:  "erp",
+		TargetType: "requirement",
+	})
+	if err == nil {
+		t.Fatalf("BuildContextPackage returned nil error, want strict dictionary coverage failure")
+	}
+	if !strings.Contains(err.Error(), "active context rule is required") {
+		t.Fatalf("error = %v, want active context rule requirement", err)
 	}
 }
 

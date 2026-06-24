@@ -138,6 +138,87 @@ func EffectivePolicy(defaultPolicy string, governance GovernanceResult) string {
 	return defaultPolicy
 }
 
+func EffectivePolicyForExecution(tool ToolDefinition, input ExecuteToolInput, governance GovernanceResult) string {
+	policy := EffectivePolicy(tool.DefaultPolicy, governance)
+	if policy == PolicyDeny || policy == PolicyApprove {
+		return policy
+	}
+	switch tool.Name {
+	case "erp.action.execute", "context.proposal.apply", "finance.prepare_export_batch":
+		return PolicyApprove
+	case "schema.change.preview":
+		if policy == PolicyAuto || policy == "" {
+			return PolicyNotify
+		}
+		return policy
+	case "runtime.operation.execute":
+		if runtimeOperationRequiresApproval(input.Arguments) {
+			return PolicyApprove
+		}
+		if policy == PolicyAuto || policy == "" {
+			return PolicyNotify
+		}
+		return policy
+	default:
+		return policy
+	}
+}
+
+func runtimeOperationRequiresApproval(arguments map[string]any) bool {
+	method := strings.ToUpper(firstArgumentString(arguments, "method", "http_method", "operation_method", "request_method"))
+	switch method {
+	case "GET", "HEAD", "OPTIONS":
+		return false
+	case "POST", "PUT", "PATCH", "DELETE":
+		return true
+	}
+	kind := strings.ToLower(firstArgumentString(arguments, "operation_kind", "kind", "mode"))
+	switch kind {
+	case "read", "query", "preview", "describe", "list":
+		return false
+	case "write", "mutation", "command", "delete", "apply", "execute":
+		return true
+	}
+	action := strings.ToLower(firstArgumentString(arguments, "action", "operation", "operation_code", "name"))
+	if action == "" {
+		return true
+	}
+	for _, prefix := range []string{"get", "list", "read", "preview", "describe", "search"} {
+		if strings.HasPrefix(action, prefix) {
+			return false
+		}
+	}
+	for _, prefix := range []string{"create", "update", "delete", "apply", "approve", "reject", "post", "put", "patch", "run", "execute"} {
+		if strings.HasPrefix(action, prefix) {
+			return true
+		}
+	}
+	return true
+}
+
+func firstArgumentString(arguments map[string]any, keys ...string) string {
+	if arguments == nil {
+		return ""
+	}
+	for _, key := range keys {
+		value, ok := arguments[key]
+		if !ok {
+			continue
+		}
+		switch v := value.(type) {
+		case string:
+			if text := strings.TrimSpace(v); text != "" {
+				return text
+			}
+		case fmt.Stringer:
+			if text := strings.TrimSpace(v.String()); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
 func (s *Service) CreateTool(ctx context.Context, input CreateToolInput) (*ToolDefinition, error) {
 	if input.Name == "" {
 		return nil, fmt.Errorf("%w: name is required", ErrValidation)
@@ -225,7 +306,7 @@ func (s *Service) ExecuteTool(ctx context.Context, input ExecuteToolInput) (*Exe
 	if err != nil {
 		return nil, err
 	}
-	policy := EffectivePolicy(tool.DefaultPolicy, governanceResult)
+	policy := EffectivePolicyForExecution(*tool, input, governanceResult)
 	requestedByHumanID := requestedByHuman(input)
 	status := ExecutionRequested
 	switch policy {

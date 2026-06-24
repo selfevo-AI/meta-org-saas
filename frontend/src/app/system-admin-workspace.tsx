@@ -29,6 +29,7 @@ import {
   createOrganizationSchemaChange,
   createOrganizationInvitation,
   getPlatformPermissionProfile,
+  getPlatformAssistantContextHealth,
   exportOrganizationSchema,
   getOrganizationIndustry,
   getOrganizationEntitlements,
@@ -60,6 +61,7 @@ import {
   type PlatformDetail,
   type PlatformMaster,
   type PlatformPermissionProfile,
+  type AssistantContextHealthSummary,
   type PublicationGateResult,
   type SaaSModule,
   type PackageAssetDiff,
@@ -209,6 +211,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [applyJob, setApplyJob] = useState<SchemaApplyJob | null>(null)
   const [packageAssetDiff, setPackageAssetDiff] = useState<PackageAssetDiff[]>([])
   const [verificationReport, setVerificationReport] = useState<SchemaVerificationReport | null>(null)
+  const [contextHealth, setContextHealth] = useState<AssistantContextHealthSummary | null>(null)
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState('')
@@ -318,6 +321,19 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
     }
   }, [t, token])
+
+  const loadContextHealth = useCallback(async () => {
+    if (!canPlatform('assistant.platform.run')) {
+      setContextHealth(null)
+      return
+    }
+    setError('')
+    try {
+      setContextHealth(await getPlatformAssistantContextHealth(token, activeOrganizationID || undefined))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    }
+  }, [activeOrganizationID, canPlatform, t, token])
 
   const loadSaaSManagement = useCallback(async () => {
     if (!canPlatform('platform.read')) return
@@ -443,6 +459,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }, 0)
     return () => window.clearTimeout(timer)
   }, [loadPlatformPermissions])
+
+  useEffect(() => {
+    if (effectiveActiveTab !== 'assistant') return
+    const timer = window.setTimeout(() => {
+      void loadContextHealth()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadContextHealth])
 
   useEffect(() => {
     if (!effectiveActiveTab || !['saas', 'industry', 'features', 'schema', 'targets'].includes(effectiveActiveTab)) return
@@ -781,6 +805,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             void loadSaaSManagement()
             void loadOrganizationSaaSDetails()
             void loadIndustryManagement()
+            void loadContextHealth()
             void loadCatalog()
             void loadTargets()
           }}
@@ -799,25 +824,28 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       )}
 
       {effectiveActiveTab === 'assistant' && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
-            <div>
-              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.platformAssistant')}</h2>
-              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.platformAssistantSummary')}</p>
+        <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
+          <ContextHealthPanel health={contextHealth} />
+          <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.platformAssistant')}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.platformAssistantSummary')}</p>
+              </div>
+              <Bot className="h-5 w-5 text-slate-500" />
             </div>
-            <Bot className="h-5 w-5 text-slate-500" />
-          </div>
-          <div className="h-[680px] min-h-0 overflow-hidden">
-            <AIAssistant
-              token={token}
-              contextType="platform_admin"
-              autoModel
-              hideModelSelector
-              apiScope="platform"
-              className="h-full"
-            />
-          </div>
-        </section>
+            <div className="h-[680px] min-h-0 overflow-hidden">
+              <AIAssistant
+                token={token}
+                contextType="platform_admin"
+                autoModel
+                hideModelSelector
+                apiScope="platform"
+                className="h-full"
+              />
+            </div>
+          </section>
+        </div>
       )}
 
       {effectiveActiveTab === 'saas' && (
@@ -1848,6 +1876,50 @@ function Metric({ label, value }: { label: string; value: string }) {
       <p className="text-xs font-semibold text-slate-500">{label}</p>
       <p className="mt-1 truncate text-sm font-semibold text-slate-900">{value}</p>
     </div>
+  )
+}
+
+function ContextHealthPanel({ health }: { health: AssistantContextHealthSummary | null }) {
+  const { t } = useI18n()
+  const strictModules = health?.strict_modules?.length ? health.strict_modules : ['erp', 'finance', 'governance']
+  const missingModules = health?.missing_strict_modules ?? strictModules
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.verifiedLoop')}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.verifiedLoopSummary')}</p>
+        </div>
+        <ShieldCheck className="h-5 w-5 text-slate-500" />
+      </div>
+      <div className="mt-4 grid gap-2">
+        <Metric label={t('systemAdmin.activeContextRules')} value={String(health?.active_rule_count ?? 0)} />
+        <Metric label={t('systemAdmin.recentContextPackages')} value={String(health?.recent_package_count ?? 0)} />
+        <Metric label={t('systemAdmin.fallbackContextPackages')} value={String(health?.fallback_package_count ?? 0)} />
+        <Metric label={t('systemAdmin.contextBuildFailures')} value={String(health?.context_build_failure_count ?? 0)} />
+        <Metric label={t('systemAdmin.pendingContextProposals')} value={String(health?.pending_proposal_count ?? 0)} />
+        <Metric label={t('systemAdmin.approvedContextProposals')} value={String(health?.approved_proposal_count ?? 0)} />
+        <Metric label={t('systemAdmin.appliedContextProposals')} value={String(health?.applied_proposal_count ?? 0)} />
+        <Metric label={t('systemAdmin.toolApprovalBacklog')} value={String(health?.tool_approval_backlog ?? 0)} />
+      </div>
+      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.strictCoverage')}</p>
+          <StatusBadge label={missingModules.length ? 'warning' : 'active'} />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {strictModules.map((moduleKey) => (
+            <span key={moduleKey} className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+              <span className="font-semibold">{moduleKey}</span>
+              <span>{health?.strict_module_coverage?.[moduleKey] ?? 0}</span>
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          {missingModules.length ? `${t('systemAdmin.missingStrictModules')}: ${missingModules.join(', ')}` : t('systemAdmin.noMissingStrictModules')}
+        </p>
+      </div>
+    </section>
   )
 }
 

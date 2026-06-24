@@ -217,6 +217,7 @@ func main() {
 		assistant.WithProposalApplicator(assistant.NewDBProposalApplicator(db)),
 		assistant.WithDictionaryService(dictionarySvc),
 		assistant.WithVerifiedContextEngine(contextEngine),
+		assistant.WithContextDiagnosticsRepository(contextRepo),
 		assistant.WithSecurityKernel(securityKernel),
 	)
 	toolRunner := assistant.NewToolRunner(toolSvc, assistant.ToolRunnerConfig{})

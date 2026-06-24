@@ -726,6 +726,19 @@ export async function listPlatformAssistantContextTargets(token: string, moduleK
   return apiRequest<AssistantContextTarget[]>(`/platform/admin/assistant/context-targets${query}`, { token })
 }
 
+export async function getAssistantContextPackageDiagnostic(token: string, packageID: string): Promise<AssistantContextPackageDiagnostic> {
+  return apiRequest<AssistantContextPackageDiagnostic>(`/assistant/context-packages/${packageID}`, { token })
+}
+
+export async function getPlatformAssistantContextPackageDiagnostic(token: string, packageID: string): Promise<AssistantContextPackageDiagnostic> {
+  return apiRequest<AssistantContextPackageDiagnostic>(`/platform/admin/assistant/context-packages/${packageID}`, { token })
+}
+
+export async function getPlatformAssistantContextHealth(token: string, organizationID?: string): Promise<AssistantContextHealthSummary> {
+  const query = organizationID ? `?organization_id=${encodeURIComponent(organizationID)}` : ''
+  return apiRequest<AssistantContextHealthSummary>(`/platform/admin/assistant/context-health${query}`, { token })
+}
+
 export async function listAssistantProposals(token: string, sessionID: string): Promise<AssistantProposal[]> {
   return apiRequest<AssistantProposal[]>(`/assistant/sessions/${sessionID}/proposals`, { token })
 }
@@ -2310,6 +2323,63 @@ export interface AssistantContextTarget {
   title: string
   status: string
   created_at: string
+}
+
+export interface AssistantContextItem {
+  entity_key: string
+  field_key: string
+  record_id: string
+  value: unknown
+  weight: number
+  estimated_tokens: number
+  validation_state: string
+  source: string
+  metadata?: Record<string, unknown>
+}
+
+export interface AssistantContextOmission {
+  entity_key: string
+  field_key: string
+  reason: string
+}
+
+export interface AssistantContextPackageSummary {
+  attention_core_count: number
+  supporting_context_count: number
+  risk_signal_count: number
+  omission_count: number
+  token_budget: number
+  estimated_tokens: number
+  source: string
+}
+
+export interface AssistantContextPackageDiagnostic {
+  id: string
+  session_id: string
+  dictionary_version_id?: string
+  summary: AssistantContextPackageSummary
+  attention_core: AssistantContextItem[]
+  supporting_context: AssistantContextItem[]
+  risk_and_signals: AssistantContextItem[]
+  omissions: AssistantContextOmission[]
+  weights: Record<string, number>
+  validations: Record<string, unknown>
+  provenance: Record<string, unknown>
+}
+
+export interface AssistantContextHealthSummary {
+  organization_id?: string
+  active_rule_count: number
+  strict_modules: string[]
+  strict_module_coverage: Record<string, number>
+  missing_strict_modules: string[]
+  recent_package_count: number
+  fallback_package_count: number
+  context_build_failure_count: number
+  pending_proposal_count: number
+  approved_proposal_count: number
+  applied_proposal_count: number
+  tool_approval_backlog: number
 }
 
 export interface AssistantProposal {

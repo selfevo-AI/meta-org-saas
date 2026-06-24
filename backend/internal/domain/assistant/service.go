@@ -44,6 +44,7 @@ type Service struct {
 	proposalApplicator ProposalApplicator
 	dictionary         *DictionaryService
 	contextEngine      ContextPackageBuilder
+	contextDiagnostics ContextDiagnosticsRepository
 	runtime            AssistantRuntimeRunner
 	securityKernel     securitykernel.Client
 	maxTurns           int
@@ -73,6 +74,12 @@ func WithDictionaryService(dictionary *DictionaryService) ServiceOption {
 func WithVerifiedContextEngine(engine ContextPackageBuilder) ServiceOption {
 	return func(s *Service) {
 		s.contextEngine = engine
+	}
+}
+
+func WithContextDiagnosticsRepository(repo ContextDiagnosticsRepository) ServiceOption {
+	return func(s *Service) {
+		s.contextDiagnostics = repo
 	}
 }
 
@@ -239,6 +246,45 @@ func (s *Service) PreviewContext(ctx context.Context, actorID uuid.UUID, actorTy
 	return s.contextEngine.BuildContextPackage(ctx, request)
 }
 
+func (s *Service) GetContextPackageDiagnostic(ctx context.Context, id uuid.UUID) (*ContextPackageDiagnostic, error) {
+	if id == uuid.Nil {
+		return nil, fmt.Errorf("%w: context package id is required", ErrValidation)
+	}
+	if s.contextDiagnostics == nil {
+		return nil, fmt.Errorf("%w: context diagnostics repository is not configured", ErrValidation)
+	}
+	pkg, err := s.contextDiagnostics.GetContextPackage(ctx, id, currentTenantOrganizationID(ctx))
+	if err != nil {
+		return nil, err
+	}
+	diagnostic := contextPackageDiagnostic(pkg)
+	return &diagnostic, nil
+}
+
+func (s *Service) GetContextHealth(ctx context.Context, organizationID *uuid.UUID) (*ContextHealthSummary, error) {
+	if s.contextDiagnostics == nil {
+		return nil, fmt.Errorf("%w: context diagnostics repository is not configured", ErrValidation)
+	}
+	if tenantOrganizationID := currentTenantOrganizationID(ctx); tenantOrganizationID != nil {
+		if organizationID != nil && *organizationID != *tenantOrganizationID {
+			return nil, fmt.Errorf("%w: context health organization must match current organization", ErrForbidden)
+		}
+		organizationID = tenantOrganizationID
+	}
+	result, err := s.contextDiagnostics.GetContextHealth(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		result = &ContextHealthSummary{}
+	}
+	if result.OrganizationID == nil && organizationID != nil {
+		id := *organizationID
+		result.OrganizationID = &id
+	}
+	return result, nil
+}
+
 func (s *Service) ListProposals(ctx context.Context, sessionID uuid.UUID, actorID uuid.UUID, actorType string, limit int) ([]Proposal, error) {
 	if _, err := s.repo.GetSession(ctx, sessionID, actorID, actorType); err != nil {
 		return nil, err
@@ -280,6 +326,15 @@ func (s *Service) ConfirmProposal(ctx context.Context, proposalID uuid.UUID, rev
 }
 
 func (s *Service) ApplyContextProposal(ctx context.Context, proposalID uuid.UUID, reviewerID uuid.UUID, reviewerType string) (map[string]any, error) {
+	if s.dictionary != nil {
+		result, err := s.dictionary.ApplyContextProposal(ctx, proposalID, reviewerID, reviewerType)
+		if err == nil {
+			return result, nil
+		}
+		if !isNotFound(err) {
+			return nil, err
+		}
+	}
 	proposal, err := s.ConfirmProposal(ctx, proposalID, reviewerID, reviewerType)
 	if err != nil {
 		return nil, err
@@ -657,15 +712,27 @@ func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, sessio
 		fail(err, 0)
 		return
 	}
-	callID, toolName, turn := approvalStepContext(steps, input.ToolApprovalID, execution.ID)
+	approvalContext := approvalStepContext(steps, input.ToolApprovalID, execution.ID)
 	turnContext, err := s.buildAssistantTurnContext(ctx, session, "resume_after_tool_approval", 4096, engine)
 	if err != nil {
-		fail(err, turn)
+		fail(err, approvalContext.Turn)
 		return
 	}
 	payload := map[string]any{"status": execution.Status, "summary": execution.ResultSummary, "result": execution.Result, "error": execution.ErrorMessage}
 	for key, value := range turnContext.Metadata {
 		payload[key] = value
+	}
+	if approvalContext.ContextPackageID != "" {
+		payload["previous_context_package_id"] = approvalContext.ContextPackageID
+	}
+	if refreshedContextPackageID := stringFromMap(turnContext.Metadata, "context_package_id"); refreshedContextPackageID != "" {
+		payload["refreshed_context_package_id"] = refreshedContextPackageID
+	}
+	if approvalContext.RiskSignalCount != nil {
+		payload["previous_risk_signal_count"] = approvalContext.RiskSignalCount
+	}
+	if approvalContext.OmissionCount != nil {
+		payload["previous_omission_count"] = approvalContext.OmissionCount
 	}
 	resultStep, err := s.repo.AddStep(ctx, session, AddStepInput{
 		ToolExecutionID: &execution.ID,
@@ -674,45 +741,45 @@ func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, sessio
 		Status:          execution.Status,
 		Summary:         execution.ResultSummary,
 		Data:            payload,
-		Turn:            turn,
+		Turn:            approvalContext.Turn,
 	})
 	if err != nil {
-		fail(err, turn)
+		fail(err, approvalContext.Turn)
 		return
 	}
 	if !send(RunEvent{Type: "tool_result", Step: resultStep, Data: payload}) {
 		return
 	}
 	toolContent := marshalToolContent(payload)
-	if _, err := s.repo.AddMessage(ctx, session.ID, "tool", toolContent, callID, toolName, payload); err != nil {
-		fail(err, turn)
+	if _, err := s.repo.AddMessage(ctx, session.ID, "tool", toolContent, approvalContext.CallID, approvalContext.ToolName, payload); err != nil {
+		fail(err, approvalContext.Turn)
 		return
 	}
 
 	scope := sessionScope(session)
 	memories, err := s.repo.ListScopedMemories(ctx, scope, session.ActorID, session.ActorType, 12)
 	if err != nil {
-		fail(err, turn)
+		fail(err, approvalContext.Turn)
 		return
 	}
 	history, err := s.repo.ListMessages(ctx, session.ID, s.maxHistory)
 	if err != nil {
-		fail(err, turn)
+		fail(err, approvalContext.Turn)
 		return
 	}
 	toolDefs, err := s.tools.ListTools(ctx, 100)
 	if err != nil {
-		fail(err, turn)
+		fail(err, approvalContext.Turn)
 		return
 	}
 	messages := buildAIMessages(session, memories, history, turnContext.WorkContext)
 	tools := gatewayTools(toolDefs)
 	providerID, channelID, providerType, model, serviceTier, effort := runModelConfig(session, RunInput{})
 	if (providerID == nil && providerType == "") || model == "" {
-		fail(fmt.Errorf("%w: model provider and model are required", ErrValidation), turn)
+		fail(fmt.Errorf("%w: model provider and model are required", ErrValidation), approvalContext.Turn)
 		return
 	}
-	s.continueAssistantTurns(ctx, send, fail, session, messages, turnContext, tools, providerID, channelID, providerType, model, serviceTier, effort, turn+1)
+	s.continueAssistantTurns(ctx, send, fail, session, messages, turnContext, tools, providerID, channelID, providerType, model, serviceTier, effort, approvalContext.Turn+1)
 }
 
 func (s *Service) continueAssistantTurns(
@@ -975,6 +1042,37 @@ func contextPackageMetadata(pkg *ContextPackage) map[string]any {
 		metadata["context_source"] = source
 	}
 	return metadata
+}
+
+func contextPackageDiagnostic(pkg *ContextPackage) ContextPackageDiagnostic {
+	if pkg == nil {
+		return ContextPackageDiagnostic{}
+	}
+	source := ""
+	if value, ok := pkg.Provenance["source"]; ok {
+		source = fmt.Sprint(value)
+	}
+	return ContextPackageDiagnostic{
+		ID:                  pkg.ID,
+		SessionID:           pkg.SessionID,
+		DictionaryVersionID: pkg.DictionaryVersionID,
+		Summary: ContextPackageSummary{
+			AttentionCoreCount:     len(pkg.AttentionCore),
+			SupportingContextCount: len(pkg.SupportingContext),
+			RiskSignalCount:        len(pkg.RiskAndSignals),
+			OmissionCount:          len(pkg.Omissions),
+			TokenBudget:            pkg.TokenBudget,
+			EstimatedTokens:        pkg.TotalEstimatedTokens(),
+			Source:                 source,
+		},
+		AttentionCore:     append([]ContextItem{}, pkg.AttentionCore...),
+		SupportingContext: append([]ContextItem{}, pkg.SupportingContext...),
+		RiskAndSignals:    append([]ContextItem{}, pkg.RiskAndSignals...),
+		Omissions:         append([]ContextOmission{}, pkg.Omissions...),
+		Weights:           copyFloatMap(pkg.Weights),
+		Validations:       copyMap(pkg.Validations),
+		Provenance:        copyMap(pkg.Provenance),
+	}
 }
 
 func contextPackageToWorkRecordContext(moduleKey string, pkg *ContextPackage) WorkRecordContext {
@@ -1367,7 +1465,16 @@ func toolCallID(call aigateway.ToolCall, index int) string {
 	return fmt.Sprintf("tool_call_%d", index+1)
 }
 
-func approvalStepContext(steps []Step, approvalID uuid.UUID, executionID uuid.UUID) (string, string, int) {
+type approvalStepMetadata struct {
+	CallID           string
+	ToolName         string
+	Turn             int
+	ContextPackageID string
+	RiskSignalCount  any
+	OmissionCount    any
+}
+
+func approvalStepContext(steps []Step, approvalID uuid.UUID, executionID uuid.UUID) approvalStepMetadata {
 	for i := len(steps) - 1; i >= 0; i-- {
 		step := steps[i]
 		if (step.ToolApprovalID != nil && *step.ToolApprovalID == approvalID) ||
@@ -1380,10 +1487,17 @@ func approvalStepContext(steps []Step, approvalID uuid.UUID, executionID uuid.UU
 			if toolName == "" {
 				toolName = executionID.String()
 			}
-			return callID, toolName, step.Turn
+			return approvalStepMetadata{
+				CallID:           callID,
+				ToolName:         toolName,
+				Turn:             step.Turn,
+				ContextPackageID: stringFromMap(step.Data, "context_package_id"),
+				RiskSignalCount:  step.Data["risk_signal_count"],
+				OmissionCount:    step.Data["omission_count"],
+			}
 		}
 	}
-	return approvalID.String(), executionID.String(), 1
+	return approvalStepMetadata{CallID: approvalID.String(), ToolName: executionID.String(), Turn: 1}
 }
 
 func actorIDForAttribution(session *Session) *uuid.UUID {
@@ -1476,6 +1590,14 @@ func currentTenantIsPlatformAdmin(ctx context.Context) bool {
 
 func copyMap(input map[string]any) map[string]any {
 	output := map[string]any{}
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func copyFloatMap(input map[string]float64) map[string]float64 {
+	output := map[string]float64{}
 	for key, value := range input {
 		output[key] = value
 	}

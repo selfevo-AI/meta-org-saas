@@ -106,10 +106,66 @@ func TestDictionaryServiceCreatesMigrationDraftForIntent(t *testing.T) {
 	}
 }
 
+func TestDictionaryServiceAppliesApprovedContextProposal(t *testing.T) {
+	proposalID := uuid.New()
+	reviewerID := uuid.New()
+	ruleID := uuid.New()
+	repo := &fakeDictionaryRepository{
+		contextProposal: &ContextChangeProposal{
+			ID:                  proposalID,
+			DictionaryVersionID: uuid.New(),
+			ProposalType:        "dictionary_change",
+			Status:              DictionaryStatusApproved,
+			Payload: map[string]any{
+				"rules": []any{
+					map[string]any{
+						"id":         ruleID.String(),
+						"module_key": "erp",
+						"entity_key": "requirement",
+						"field_key":  "status",
+						"rule_type":  "attention",
+						"rule":       map[string]any{"base_weight": float64(9)},
+					},
+				},
+			},
+		},
+	}
+	svc := NewDictionaryService(repo, nil)
+
+	result, err := svc.ApplyContextProposal(context.Background(), proposalID, reviewerID, "internal_human")
+	if err != nil {
+		t.Fatalf("ApplyContextProposal returned error: %v", err)
+	}
+	if result["status"] != DictionaryStatusActive {
+		t.Fatalf("result = %#v, want active status", result)
+	}
+	if repo.appliedProposalID != proposalID {
+		t.Fatalf("applied proposal = %s, want %s", repo.appliedProposalID, proposalID)
+	}
+	if len(repo.activatedRules) != 1 || repo.activatedRules[0].ID != ruleID {
+		t.Fatalf("activated rules = %#v, want rule %s", repo.activatedRules, ruleID)
+	}
+}
+
+func TestDictionaryServiceRejectsUnapprovedContextProposalApply(t *testing.T) {
+	proposalID := uuid.New()
+	svc := NewDictionaryService(&fakeDictionaryRepository{
+		contextProposal: &ContextChangeProposal{ID: proposalID, Status: ProposalPending, Payload: map[string]any{}},
+	}, nil)
+
+	_, err := svc.ApplyContextProposal(context.Background(), proposalID, uuid.New(), "internal_human")
+	if err == nil || !strings.Contains(err.Error(), "must be approved") {
+		t.Fatalf("ApplyContextProposal error = %v, want approved proposal validation", err)
+	}
+}
+
 type fakeDictionaryRepository struct {
-	versionID       uuid.UUID
-	proposals       []ContextChangeProposalInput
-	migrationDrafts []ContextMigrationDraftInput
+	versionID         uuid.UUID
+	proposals         []ContextChangeProposalInput
+	migrationDrafts   []ContextMigrationDraftInput
+	contextProposal   *ContextChangeProposal
+	activatedRules    []ContextRuleRecord
+	appliedProposalID uuid.UUID
 }
 
 func (f *fakeDictionaryRepository) CreateDictionaryVersion(context.Context, DictionaryImportModel, *uuid.UUID) (uuid.UUID, error) {
@@ -127,4 +183,30 @@ func (f *fakeDictionaryRepository) CreateContextChangeProposal(_ context.Context
 func (f *fakeDictionaryRepository) CreateContextMigrationDraft(_ context.Context, input ContextMigrationDraftInput) (uuid.UUID, error) {
 	f.migrationDrafts = append(f.migrationDrafts, input)
 	return uuid.New(), nil
+}
+
+func (f *fakeDictionaryRepository) GetContextChangeProposal(_ context.Context, id uuid.UUID) (*ContextChangeProposal, error) {
+	if f.contextProposal == nil || f.contextProposal.ID != id {
+		return nil, ErrNotFound
+	}
+	return f.contextProposal, nil
+}
+
+func (f *fakeDictionaryRepository) ActivateContextRules(_ context.Context, proposal *ContextChangeProposal, reviewerID uuid.UUID, rules []ContextRuleRecord) ([]ContextRuleRecord, error) {
+	f.activatedRules = append([]ContextRuleRecord{}, rules...)
+	for index := range f.activatedRules {
+		f.activatedRules[index].Status = DictionaryStatusActive
+	}
+	return f.activatedRules, nil
+}
+
+func (f *fakeDictionaryRepository) MarkContextChangeProposalApplied(_ context.Context, id uuid.UUID, reviewerID uuid.UUID, result map[string]any) (*ContextChangeProposal, error) {
+	f.appliedProposalID = id
+	if f.contextProposal == nil {
+		return nil, ErrNotFound
+	}
+	f.contextProposal.Status = ProposalApplied
+	f.contextProposal.ReviewerID = &reviewerID
+	f.contextProposal.ApplyResult = result
+	return f.contextProposal, nil
 }

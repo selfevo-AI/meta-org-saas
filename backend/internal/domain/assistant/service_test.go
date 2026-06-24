@@ -188,6 +188,115 @@ func TestApplyContextProposalUsesHumanConfirmation(t *testing.T) {
 	}
 }
 
+func TestApplyContextProposalUsesDictionaryProposalBeforeAssistantProposal(t *testing.T) {
+	proposalID := uuid.New()
+	reviewerID := uuid.New()
+	dictionaryRepo := &fakeDictionaryRepository{
+		contextProposal: &ContextChangeProposal{
+			ID:                  proposalID,
+			DictionaryVersionID: uuid.New(),
+			ProposalType:        "dictionary_change",
+			Status:              DictionaryStatusApproved,
+			Payload: map[string]any{"rules": []any{
+				map[string]any{
+					"module_key": "erp",
+					"entity_key": "project",
+					"field_key":  "status",
+					"rule_type":  "attention",
+					"rule":       map[string]any{"attention_core": true},
+				},
+			}},
+		},
+	}
+	applicator := &fakeProposalApplicator{}
+	svc := NewService(&fakeRepository{}, nil, nil,
+		WithDictionaryService(NewDictionaryService(dictionaryRepo, nil)),
+		WithProposalApplicator(applicator),
+	)
+
+	result, err := svc.ApplyContextProposal(context.Background(), proposalID, reviewerID, "internal_human")
+	if err != nil {
+		t.Fatalf("ApplyContextProposal returned error: %v", err)
+	}
+	if result["status"] != DictionaryStatusActive {
+		t.Fatalf("result = %#v, want active dictionary context", result)
+	}
+	if dictionaryRepo.appliedProposalID != proposalID {
+		t.Fatalf("applied dictionary proposal = %s, want %s", dictionaryRepo.appliedProposalID, proposalID)
+	}
+	if applicator.calls != 0 {
+		t.Fatalf("assistant applicator calls = %d, want 0", applicator.calls)
+	}
+}
+
+func TestGetContextPackageDiagnosticUsesTenantFilter(t *testing.T) {
+	orgID := uuid.New()
+	packageID := uuid.New()
+	diagnosticsRepo := &fakeContextDiagnosticsRepository{
+		pkg: &ContextPackage{
+			ID:             packageID,
+			AttentionCore:  []ContextItem{{EntityKey: "project", FieldKey: "status", EstimatedTokens: 12}},
+			RiskAndSignals: []ContextItem{{EntityKey: "project", FieldKey: "risk", EstimatedTokens: 4}},
+			Omissions:      []ContextOmission{{EntityKey: "project", FieldKey: "owner", Reason: "permission"}},
+			Provenance:     map[string]any{"source": "context_dictionary"},
+			Weights:        map[string]float64{"project.status": 8},
+			Validations:    map[string]any{"finance": "verified"},
+			TokenBudget:    256,
+			SupportingContext: []ContextItem{{EntityKey: "requirement", FieldKey: "summary",
+				EstimatedTokens: 6}},
+		},
+	}
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{OrganizationID: &orgID})
+	svc := NewService(&fakeRepository{}, nil, nil, WithContextDiagnosticsRepository(diagnosticsRepo))
+
+	diagnostic, err := svc.GetContextPackageDiagnostic(ctx, packageID)
+	if err != nil {
+		t.Fatalf("GetContextPackageDiagnostic returned error: %v", err)
+	}
+	if diagnosticsRepo.packageOrganizationID == nil || *diagnosticsRepo.packageOrganizationID != orgID {
+		t.Fatalf("organization filter = %v, want %s", diagnosticsRepo.packageOrganizationID, orgID)
+	}
+	if diagnostic.Summary.AttentionCoreCount != 1 || diagnostic.Summary.RiskSignalCount != 1 || diagnostic.Summary.OmissionCount != 1 {
+		t.Fatalf("diagnostic summary = %#v, want package counts", diagnostic.Summary)
+	}
+	if diagnostic.Summary.Source != "context_dictionary" {
+		t.Fatalf("diagnostic source = %q, want context_dictionary", diagnostic.Summary.Source)
+	}
+}
+
+func TestGetContextHealthRejectsCrossTenantOrganization(t *testing.T) {
+	orgID := uuid.New()
+	otherOrgID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{OrganizationID: &orgID})
+	svc := NewService(&fakeRepository{}, nil, nil, WithContextDiagnosticsRepository(&fakeContextDiagnosticsRepository{}))
+
+	_, err := svc.GetContextHealth(ctx, &otherOrgID)
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("GetContextHealth error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestGetContextHealthUsesTenantOrganization(t *testing.T) {
+	orgID := uuid.New()
+	diagnosticsRepo := &fakeContextDiagnosticsRepository{health: &ContextHealthSummary{
+		ActiveRuleCount:      3,
+		StrictModuleCoverage: map[string]int{"erp": 1, "finance": 1, "governance": 1},
+	}}
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{OrganizationID: &orgID})
+	svc := NewService(&fakeRepository{}, nil, nil, WithContextDiagnosticsRepository(diagnosticsRepo))
+
+	health, err := svc.GetContextHealth(ctx, nil)
+	if err != nil {
+		t.Fatalf("GetContextHealth returned error: %v", err)
+	}
+	if diagnosticsRepo.healthOrganizationID == nil || *diagnosticsRepo.healthOrganizationID != orgID {
+		t.Fatalf("organization filter = %v, want %s", diagnosticsRepo.healthOrganizationID, orgID)
+	}
+	if health.ActiveRuleCount != 3 {
+		t.Fatalf("health = %#v, want active rule count", health)
+	}
+}
+
 func TestConfirmProposalRequiresSessionAccess(t *testing.T) {
 	proposalID := uuid.New()
 	repo := &fakeRepository{
@@ -699,7 +808,20 @@ func (f *fakeRepository) lastStepOfType(stepType string) AddStepInput {
 }
 
 func (f *fakeRepository) ListSteps(context.Context, uuid.UUID, int) ([]Step, error) {
-	return []Step{}, nil
+	steps := make([]Step, 0, len(f.steps))
+	for _, input := range f.steps {
+		steps = append(steps, Step{
+			ID:              uuid.New(),
+			ToolExecutionID: input.ToolExecutionID,
+			ToolApprovalID:  input.ToolApprovalID,
+			StepType:        input.StepType,
+			Status:          input.Status,
+			Summary:         input.Summary,
+			Data:            input.Data,
+			Turn:            input.Turn,
+		})
+	}
+	return steps, nil
 }
 
 func (f *fakeRepository) ListScopedMemories(context.Context, Scope, uuid.UUID, string, int) ([]Memory, error) {
@@ -853,6 +975,29 @@ func (f *fakeProposalApplicator) ApplyProposal(_ context.Context, proposal *Prop
 		return nil, errors.New("missing proposal")
 	}
 	return map[string]any{"target_type": proposal.TargetType, "target_id": uuidString(proposal.TargetID)}, nil
+}
+
+type fakeContextDiagnosticsRepository struct {
+	pkg                   *ContextPackage
+	health                *ContextHealthSummary
+	packageOrganizationID *uuid.UUID
+	healthOrganizationID  *uuid.UUID
+}
+
+func (f *fakeContextDiagnosticsRepository) GetContextPackage(_ context.Context, id uuid.UUID, organizationID *uuid.UUID) (*ContextPackage, error) {
+	f.packageOrganizationID = organizationID
+	if f.pkg == nil || f.pkg.ID != id {
+		return nil, ErrNotFound
+	}
+	return f.pkg, nil
+}
+
+func (f *fakeContextDiagnosticsRepository) GetContextHealth(_ context.Context, organizationID *uuid.UUID) (*ContextHealthSummary, error) {
+	f.healthOrganizationID = organizationID
+	if f.health == nil {
+		return &ContextHealthSummary{}, nil
+	}
+	return f.health, nil
 }
 
 func uuidPtr(id uuid.UUID) *uuid.UUID {

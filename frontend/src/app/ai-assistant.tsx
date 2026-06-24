@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, CheckCircle2, CircleStop, ListChecks, Send, XCircle } from 'lucide-react'
+import { Bot, CheckCircle2, CircleStop, ListChecks, Send, ShieldCheck, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   API_BASE,
@@ -8,7 +8,9 @@ import {
   approveToolApproval,
   createAssistantSession,
   createPlatformAssistantSession,
+  getAssistantContextPackageDiagnostic,
   getAIInvocation,
+  getPlatformAssistantContextPackageDiagnostic,
   getPlatformAIInvocation,
   listModelProviders,
   listModels,
@@ -16,6 +18,7 @@ import {
   listPlatformModels,
   rejectPlatformToolApproval,
   rejectToolApproval,
+  type AssistantContextPackageDiagnostic,
   type AssistantStep,
   type CostBreakdown,
   type ModelCatalogItem,
@@ -638,7 +641,7 @@ export function AIAssistant({
             </div>
             <div className="space-y-2">
               {steps.map((step) => (
-                <StepCard key={step.id} step={step} />
+                <StepCard key={step.id} step={step} token={token} apiScope={apiScope} />
               ))}
             </div>
           </div>
@@ -648,8 +651,12 @@ export function AIAssistant({
   )
 }
 
-function StepCard({ step }: { step: AssistantStep }) {
+function StepCard({ step, token, apiScope }: { step: AssistantStep; token: string; apiScope: 'tenant' | 'platform' }) {
   const { t } = useI18n()
+  const [expanded, setExpanded] = useState(false)
+  const [diagnostic, setDiagnostic] = useState<AssistantContextPackageDiagnostic | null>(null)
+  const [loadingDiagnostic, setLoadingDiagnostic] = useState(false)
+  const [diagnosticError, setDiagnosticError] = useState('')
   const tone =
     step.status === 'completed'
       ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
@@ -659,6 +666,30 @@ function StepCard({ step }: { step: AssistantStep }) {
           ? 'border-red-200 bg-red-50 text-red-800'
           : 'border-slate-200 bg-white text-slate-700'
   const toolName = typeof step.data?.tool_name === 'string' ? step.data.tool_name : ''
+  const contextPackageID = stringFromStepData(step.data, 'context_package_id')
+  const previousContextPackageID = stringFromStepData(step.data, 'previous_context_package_id')
+  const refreshedContextPackageID = stringFromStepData(step.data, 'refreshed_context_package_id')
+  const riskSignalCount = numberFromStepData(step.data, 'risk_signal_count')
+  const omissionCount = numberFromStepData(step.data, 'omission_count')
+  const supportingContextCount = numberFromStepData(step.data, 'supporting_context_count')
+  const hasContext = !!contextPackageID || !!previousContextPackageID || !!refreshedContextPackageID
+
+  async function toggleDiagnostic() {
+    const nextExpanded = !expanded
+    setExpanded(nextExpanded)
+    if (!nextExpanded || !contextPackageID || diagnostic || loadingDiagnostic) return
+    setLoadingDiagnostic(true)
+    setDiagnosticError('')
+    try {
+      const loader = apiScope === 'platform' ? getPlatformAssistantContextPackageDiagnostic : getAssistantContextPackageDiagnostic
+      setDiagnostic(await loader(token, contextPackageID))
+    } catch (err) {
+      setDiagnosticError(err instanceof Error ? err.message : t('assistant.contextLoadFailed'))
+    } finally {
+      setLoadingDiagnostic(false)
+    }
+  }
+
   return (
     <div className={`rounded-lg border px-3 py-2 text-xs ${tone}`}>
       <div className="flex items-center justify-between gap-2">
@@ -671,8 +702,92 @@ function StepCard({ step }: { step: AssistantStep }) {
           {step.tool_execution_id || step.tool_approval_id}
         </p>
       )}
+      {hasContext && (
+        <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]">
+          {contextPackageID && <ContextBadge label={t('assistant.contextPackage')} value={shortID(contextPackageID)} />}
+          {typeof riskSignalCount === 'number' && <ContextBadge label={t('assistant.riskSignals')} value={String(riskSignalCount)} />}
+          {typeof omissionCount === 'number' && <ContextBadge label={t('assistant.omissions')} value={String(omissionCount)} />}
+          {typeof supportingContextCount === 'number' && <ContextBadge label={t('assistant.supportingContext')} value={String(supportingContextCount)} />}
+          {previousContextPackageID && <ContextBadge label={t('assistant.previousContext')} value={shortID(previousContextPackageID)} />}
+          {refreshedContextPackageID && <ContextBadge label={t('assistant.refreshedContext')} value={shortID(refreshedContextPackageID)} />}
+        </div>
+      )}
+      {contextPackageID && (
+        <button
+          type="button"
+          onClick={() => void toggleDiagnostic()}
+          className="mt-2 inline-flex h-7 items-center gap-1 rounded-md border border-current px-2 text-[11px] font-semibold opacity-80 transition hover:opacity-100"
+        >
+          <ShieldCheck className="h-3.5 w-3.5" />
+          {expanded ? t('assistant.hideContextDetails') : t('assistant.contextDetails')}
+        </button>
+      )}
+      {expanded && (
+        <div className="mt-2 rounded-md border border-current/20 bg-white/65 p-2 text-[11px] text-slate-700">
+          {loadingDiagnostic && <p>{t('assistant.loadingContextDetails')}</p>}
+          {diagnosticError && <p className="text-red-700">{diagnosticError}</p>}
+          {diagnostic && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-1">
+                <ContextMetric label={t('assistant.attentionCore')} value={String(diagnostic.summary.attention_core_count)} />
+                <ContextMetric label={t('assistant.supportingContext')} value={String(diagnostic.summary.supporting_context_count)} />
+                <ContextMetric label={t('assistant.riskSignals')} value={String(diagnostic.summary.risk_signal_count)} />
+                <ContextMetric label={t('assistant.omissions')} value={String(diagnostic.summary.omission_count)} />
+                <ContextMetric label={t('assistant.tokens')} value={String(diagnostic.summary.estimated_tokens)} />
+                <ContextMetric label={t('assistant.source')} value={diagnostic.summary.source || t('common.none')} />
+              </div>
+              {diagnostic.omissions.length > 0 && (
+                <div className="space-y-1">
+                  {diagnostic.omissions.slice(0, 3).map((item) => (
+                    <p key={`${item.entity_key}.${item.field_key}.${item.reason}`} className="truncate text-[10px] text-amber-700">
+                      {item.entity_key}.{item.field_key}: {item.reason}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+function ContextBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-current/25 bg-white/60 px-1.5 py-0.5">
+      <span className="shrink-0 opacity-70">{label}</span>
+      <span className="truncate font-semibold">{value}</span>
+    </span>
+  )
+}
+
+function ContextMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded border border-slate-200 bg-white px-2 py-1">
+      <p className="truncate text-[10px] font-semibold text-slate-500">{label}</p>
+      <p className="truncate font-semibold text-slate-900">{value}</p>
+    </div>
+  )
+}
+
+function stringFromStepData(data: Record<string, unknown> | undefined, key: string): string {
+  const value = data?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+function numberFromStepData(data: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = data?.[key]
+  if (typeof value === 'number') return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
+function shortID(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 8)}...` : value
 }
 
 function StateBadge({ state }: { state: AssistantState }) {

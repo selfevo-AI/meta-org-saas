@@ -80,6 +80,14 @@ models, model channels, agents, AI invocation and usage ledger, tool runtime,
 assistant runtime, assistant context, unified skill, skill publication, and AI
 capability platform projections.
 
+Phase 4 Verified Context + Tool Loop changes also belong to `004`: context
+change proposals include the `applied` lifecycle state plus `apply_result` and
+`applied_at`; the baseline seeds the governed tools `erp.action.execute`,
+`schema.change.preview`, `runtime.operation.execute`, and
+`context.proposal.apply`; active ERP/finance/governance context rules are seeded
+so strict modules do not fall back to compatibility context without dictionary
+coverage.
+
 ## Foreign-Key Rule
 
 A migration stage must not create a foreign key to a table that belongs to a

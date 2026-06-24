@@ -181,6 +181,7 @@ func TestAssistantResumeRebuildsContextAfterApproval(t *testing.T) {
 	actorID := uuid.New()
 	approvalID := uuid.New()
 	executionID := uuid.New()
+	previousPkg := uuid.New()
 	refreshedPkg := uuid.New()
 	engine := &sequenceContextEngine{packages: []*ContextPackage{
 		{ID: refreshedPkg, AttentionCore: []ContextItem{{EntityKey: "project", FieldKey: "status", RecordID: "PRJ-1", Value: "active"}}},
@@ -194,6 +195,16 @@ func TestAssistantResumeRebuildsContextAfterApproval(t *testing.T) {
 			ProviderType:  "openai",
 			Model:         "gpt-4o-mini",
 			WorkingMemory: map[string]any{},
+		},
+		steps: []AddStepInput{
+			{
+				ToolExecutionID: &executionID,
+				ToolApprovalID:  &approvalID,
+				StepType:        StepApproval,
+				Status:          StatusApprovalRequired,
+				Data:            map[string]any{"context_package_id": previousPkg.String(), "risk_signal_count": 1, "omission_count": 2},
+				Turn:            4,
+			},
 		},
 	}
 	tools := &fakeToolExecutor{
@@ -225,6 +236,12 @@ func TestAssistantResumeRebuildsContextAfterApproval(t *testing.T) {
 	toolResultStep := repo.lastStepOfType(StepToolResult)
 	if toolResultStep.Data["context_package_id"] != refreshedPkg.String() {
 		t.Fatalf("tool result step data = %#v, want refreshed context package", toolResultStep.Data)
+	}
+	if toolResultStep.Data["previous_context_package_id"] != previousPkg.String() {
+		t.Fatalf("tool result step data = %#v, want previous context package", toolResultStep.Data)
+	}
+	if toolResultStep.Data["refreshed_context_package_id"] != refreshedPkg.String() {
+		t.Fatalf("tool result step data = %#v, want refreshed context package alias", toolResultStep.Data)
 	}
 }
 
