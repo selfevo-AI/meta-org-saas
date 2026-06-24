@@ -12,24 +12,35 @@ type ContextPackageRepository interface {
 }
 
 type VerifiedContextEngineConfig struct {
-	Resolver   ContextResolver
-	Evaluator  *ContextRuleEvaluator
-	Repository ContextPackageRepository
-	RuleSource ContextRuleSource
+	Resolver      ContextResolver
+	Evaluator     *ContextRuleEvaluator
+	Repository    ContextPackageRepository
+	RuleSource    ContextRuleSource
+	StrictModules []string
 }
 
 type VerifiedContextEngine struct {
-	resolver   ContextResolver
-	evaluator  *ContextRuleEvaluator
-	repository ContextPackageRepository
-	ruleSource ContextRuleSource
+	resolver      ContextResolver
+	evaluator     *ContextRuleEvaluator
+	repository    ContextPackageRepository
+	ruleSource    ContextRuleSource
+	strictModules map[string]bool
 }
 
 func NewVerifiedContextEngine(config VerifiedContextEngineConfig) *VerifiedContextEngine {
 	if config.Evaluator == nil {
 		config.Evaluator = NewContextRuleEvaluator(ContextRuleEvaluatorConfig{AttentionCoreRatio: 0.4})
 	}
-	return &VerifiedContextEngine{resolver: config.Resolver, evaluator: config.Evaluator, repository: config.Repository, ruleSource: config.RuleSource}
+	strictModules := map[string]bool{"erp": true, "finance": true, "governance": true}
+	if len(config.StrictModules) > 0 {
+		strictModules = map[string]bool{}
+		for _, module := range config.StrictModules {
+			if normalized := normalizedModule(module); normalized != "" {
+				strictModules[normalized] = true
+			}
+		}
+	}
+	return &VerifiedContextEngine{resolver: config.Resolver, evaluator: config.Evaluator, repository: config.Repository, ruleSource: config.RuleSource, strictModules: strictModules}
 }
 
 func (e *VerifiedContextEngine) BuildContextPackage(ctx context.Context, request ContextRequest) (*ContextPackage, error) {
@@ -66,6 +77,9 @@ func (e *VerifiedContextEngine) BuildContextPackage(ctx context.Context, request
 	source := "context_dictionary"
 	validations := map[string]any{"permission": "checked", "workflow": "checked", "finance": "checked"}
 	if len(items) == 0 {
+		if e.strictModules[normalizedModule(request.ModuleKey)] {
+			return nil, fmt.Errorf("%w: active context rule is required for strict module %s", ErrValidation, normalizedModule(request.ModuleKey))
+		}
 		items = compatibilityContextItems(workContext)
 		source = "compatibility_resolver"
 		validations = map[string]any{"permission": "compatibility_checked", "workflow": "compatibility_checked", "finance": "not_applicable"}

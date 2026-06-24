@@ -67,3 +67,30 @@ func TestContextPackageToWorkRecordContextIncludesRisksAndOmissions(t *testing.T
 		t.Fatalf("prompt missing risk and omission summary: %s", prompt)
 	}
 }
+
+func TestContextPackageDiagnosticExposesReviewableSummary(t *testing.T) {
+	pkg := &ContextPackage{
+		ID:                uuid.New(),
+		AttentionCore:     []ContextItem{{EntityKey: "requirement", FieldKey: "status", RecordID: "REQ-1"}},
+		SupportingContext: []ContextItem{{EntityKey: "project", FieldKey: "status", RecordID: "PRJ-1"}},
+		RiskAndSignals:    []ContextItem{{EntityKey: "cost_ledger_entry", FieldKey: "amount", ValidationState: ValidationFinanceConflict}},
+		Omissions:         []ContextOmission{{EntityKey: "access_decision", FieldKey: "decision", Reason: "permission_denied"}},
+		Validations:       map[string]any{"permission": "checked"},
+		Provenance:        map[string]any{"source": "context_dictionary"},
+	}
+
+	diagnostic := contextPackageDiagnostic(pkg)
+
+	if diagnostic.ID != pkg.ID {
+		t.Fatalf("diagnostic id = %s, want %s", diagnostic.ID, pkg.ID)
+	}
+	if diagnostic.Summary.AttentionCoreCount != 1 || diagnostic.Summary.SupportingContextCount != 1 {
+		t.Fatalf("diagnostic summary = %#v", diagnostic.Summary)
+	}
+	if diagnostic.Summary.RiskSignalCount != 1 || diagnostic.Summary.OmissionCount != 1 {
+		t.Fatalf("diagnostic risk summary = %#v", diagnostic.Summary)
+	}
+	if diagnostic.Provenance["source"] != "context_dictionary" {
+		t.Fatalf("diagnostic provenance = %#v", diagnostic.Provenance)
+	}
+}

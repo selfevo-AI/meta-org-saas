@@ -803,9 +803,11 @@ CREATE TABLE IF NOT EXISTS context_change_proposals (
     summary TEXT NOT NULL DEFAULT '',
     payload JSONB NOT NULL DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'approved', 'rejected', 'blocked')),
+        CHECK (status IN ('pending', 'approved', 'applied', 'rejected', 'blocked')),
     reviewer_id UUID REFERENCES users(id) ON DELETE SET NULL,
     review_reason TEXT NOT NULL DEFAULT '',
+    apply_result JSONB NOT NULL DEFAULT '{}',
+    applied_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -885,6 +887,17 @@ entities AS (
 INSERT INTO context_rules (dictionary_version_id, module_key, entity_key, field_key, rule_type, rule, status)
 SELECT id, 'project', 'project', 'status', 'attention', '{"base_weight":8,"attention_core":true}'::jsonb, 'active' FROM seed_version
 UNION ALL SELECT id, 'project', 'requirement', 'risk_level', 'workflow', '{"stage_multiplier":{"analysis":1.5,"execution":0.8}}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'requirement', 'status', 'workflow', '{"attention_core":true,"table_code":"MREQ","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'project', 'status', 'workflow', '{"attention_core":true,"table_code":"MPRJ","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'purchase_order', 'status', 'workflow', '{"attention_core":true,"table_code":"MPOR","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'goods_receipt_po', 'status', 'workflow', '{"attention_core":true,"table_code":"MPDN","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'sales_order', 'status', 'workflow', '{"attention_core":true,"table_code":"MRDR","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'delivery', 'status', 'workflow', '{"attention_core":true,"table_code":"MDLN","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'ar_invoice', 'status', 'finance', '{"requires_validation":true,"table_code":"MINV","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'ap_invoice', 'status', 'finance', '{"requires_validation":true,"table_code":"MRCT","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'goods_receipt', 'status', 'workflow', '{"attention_core":true,"table_code":"MIGN","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'goods_issue', 'status', 'workflow', '{"attention_core":true,"table_code":"MIGE","strict_module":true}'::jsonb, 'active' FROM seed_version
+UNION ALL SELECT id, 'erp', 'journal_entry', 'status', 'finance', '{"requires_validation":true,"table_code":"MJDT","strict_module":true}'::jsonb, 'active' FROM seed_version
 UNION ALL SELECT id, 'finance', 'cost_ledger_entry', 'amount', 'finance', '{"requires_validation":true,"unverified_as_signal":true}'::jsonb, 'active' FROM seed_version
 UNION ALL SELECT id, 'governance', 'access_decision', 'decision', 'permission', '{"sensitivity":"restricted","explicit_rule_required":true}'::jsonb, 'active' FROM seed_version;
 
@@ -1333,6 +1346,72 @@ ALTER TABLE tool_approvals
 
 CREATE INDEX IF NOT EXISTS idx_tool_definitions_authority
     ON tool_definitions(tool_category, approval_tier_required, required_level);
+
+INSERT INTO tool_definitions (
+    name, description, source_type, default_policy, risk_level, required_level,
+    tool_category, approval_tier_required, input_schema, metadata
+)
+VALUES
+    (
+        'erp.action.execute',
+        'Execute an ERP business action through the governed tool runtime',
+        'internal_api',
+        'approve',
+        'high',
+        'L3',
+        'business_approval',
+        'reviewer',
+        '{"type":"object","properties":{"table_code":{"type":"string"},"key":{"type":"string"},"action":{"type":"string"},"context_package_id":{"type":"string"}},"required":["table_code","key","action"]}'::jsonb,
+        '{"phase":"verified_context_tool_loop","quality_gate":"tool_runtime_approval"}'::jsonb
+    ),
+    (
+        'schema.change.preview',
+        'Verify a schema change request without applying it',
+        'internal_api',
+        'notify',
+        'low',
+        'L2',
+        'execution_operation',
+        'executor',
+        '{"type":"object","properties":{"schema_change_request_id":{"type":"string"},"context_package_id":{"type":"string"}},"required":["schema_change_request_id"]}'::jsonb,
+        '{"phase":"verified_context_tool_loop","quality_gate":"schema_verify"}'::jsonb
+    ),
+    (
+        'runtime.operation.execute',
+        'Execute a platform runtime operation with dynamic approval policy',
+        'internal_api',
+        'notify',
+        'medium',
+        'L2',
+        'execution_operation',
+        'executor',
+        '{"type":"object","properties":{"operation_id":{"type":"string"},"method":{"type":"string"},"arguments":{"type":"object"},"context_package_id":{"type":"string"}},"required":["operation_id"]}'::jsonb,
+        '{"phase":"verified_context_tool_loop","dynamic_policy":true}'::jsonb
+    ),
+    (
+        'context.proposal.apply',
+        'Apply an approved context change proposal',
+        'manual_approval',
+        'approve',
+        'high',
+        'L3',
+        'business_approval',
+        'reviewer',
+        '{"type":"object","properties":{"proposal_id":{"type":"string"},"reviewer_id":{"type":"string"},"reviewer_type":{"type":"string"},"context_package_id":{"type":"string"}},"required":["proposal_id"]}'::jsonb,
+        '{"phase":"verified_context_tool_loop","quality_gate":"human_reviewed_context_change"}'::jsonb
+    )
+ON CONFLICT (name) DO UPDATE SET
+    description = EXCLUDED.description,
+    source_type = EXCLUDED.source_type,
+    default_policy = EXCLUDED.default_policy,
+    risk_level = EXCLUDED.risk_level,
+    required_level = EXCLUDED.required_level,
+    tool_category = EXCLUDED.tool_category,
+    approval_tier_required = EXCLUDED.approval_tier_required,
+    input_schema = EXCLUDED.input_schema,
+    metadata = tool_definitions.metadata || EXCLUDED.metadata,
+    is_active = TRUE,
+    updated_at = NOW();
 
 UPDATE tool_definitions
 SET tool_category = 'core_data',

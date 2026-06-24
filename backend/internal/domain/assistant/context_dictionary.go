@@ -11,6 +11,9 @@ type DictionaryRepository interface {
 	CreateDictionaryVersion(context.Context, DictionaryImportModel, *uuid.UUID) (uuid.UUID, error)
 	CreateContextChangeProposal(context.Context, ContextChangeProposalInput) (uuid.UUID, error)
 	CreateContextMigrationDraft(context.Context, ContextMigrationDraftInput) (uuid.UUID, error)
+	GetContextChangeProposal(context.Context, uuid.UUID) (*ContextChangeProposal, error)
+	ActivateContextRules(context.Context, *ContextChangeProposal, uuid.UUID, []ContextRuleRecord) ([]ContextRuleRecord, error)
+	MarkContextChangeProposalApplied(context.Context, uuid.UUID, uuid.UUID, map[string]any) (*ContextChangeProposal, error)
 }
 
 type SuggestionProvider interface {
@@ -56,6 +59,19 @@ type ContextChangeProposalInput struct {
 	Summary             string
 	Payload             map[string]any
 	Status              string
+}
+
+type ContextChangeProposal struct {
+	ID                  uuid.UUID      `json:"id"`
+	DictionaryVersionID uuid.UUID      `json:"dictionary_version_id"`
+	ProposalType        string         `json:"proposal_type"`
+	Title               string         `json:"title"`
+	Summary             string         `json:"summary"`
+	Payload             map[string]any `json:"payload"`
+	Status              string         `json:"status"`
+	ReviewerID          *uuid.UUID     `json:"reviewer_id,omitempty"`
+	ReviewReason        string         `json:"review_reason,omitempty"`
+	ApplyResult         map[string]any `json:"apply_result"`
 }
 
 type ContextMigrationDraftInput struct {
@@ -147,4 +163,107 @@ func (s *DictionaryService) Import(ctx context.Context, input DictionaryImportRe
 		draftIDs = append(draftIDs, draftID)
 	}
 	return &DictionaryImportResult{DictionaryVersionID: versionID, Validation: validation, ProposalID: &proposalID, MigrationDraftIDs: draftIDs}, nil
+}
+
+func (s *DictionaryService) ApplyContextProposal(ctx context.Context, proposalID uuid.UUID, reviewerID uuid.UUID, reviewerType string) (map[string]any, error) {
+	if proposalID == uuid.Nil || reviewerID == uuid.Nil {
+		return nil, fmt.Errorf("%w: proposal and reviewer are required", ErrValidation)
+	}
+	if !isHumanActor(reviewerType) {
+		return nil, fmt.Errorf("%w: only human users can apply context proposals", ErrValidation)
+	}
+	if s.repo == nil {
+		return nil, fmt.Errorf("%w: dictionary repository is not configured", ErrValidation)
+	}
+	proposal, err := s.repo.GetContextChangeProposal(ctx, proposalID)
+	if err != nil {
+		return nil, err
+	}
+	if proposal.Status == ProposalApplied {
+		return proposal.ApplyResult, nil
+	}
+	if proposal.Status != DictionaryStatusApproved {
+		return nil, fmt.Errorf("%w: context proposal must be approved before apply", ErrValidation)
+	}
+	rules, err := contextRulesFromProposal(proposal)
+	if err != nil {
+		return nil, err
+	}
+	activated, err := s.repo.ActivateContextRules(ctx, proposal, reviewerID, rules)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{
+		"proposal_id":           proposal.ID.String(),
+		"dictionary_version_id": proposal.DictionaryVersionID.String(),
+		"status":                DictionaryStatusActive,
+		"activated_rule_count":  len(activated),
+		"activated_rule_ids":    contextRuleIDs(activated),
+	}
+	if _, err := s.repo.MarkContextChangeProposalApplied(ctx, proposal.ID, reviewerID, result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func contextRulesFromProposal(proposal *ContextChangeProposal) ([]ContextRuleRecord, error) {
+	rawRules, ok := proposal.Payload["rules"]
+	if !ok {
+		rawRules = proposal.Payload["context_rules"]
+	}
+	values, ok := rawRules.([]any)
+	if !ok || len(values) == 0 {
+		return nil, fmt.Errorf("%w: context proposal payload must include rules", ErrValidation)
+	}
+	rules := make([]ContextRuleRecord, 0, len(values))
+	for _, raw := range values {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("%w: context rule payload must be an object", ErrValidation)
+		}
+		rule := ContextRuleRecord{
+			ID:                  uuidFromString(fmt.Sprint(item["id"])),
+			DictionaryVersionID: proposal.DictionaryVersionID,
+			ModuleKey:           fmt.Sprint(item["module_key"]),
+			EntityKey:           fmt.Sprint(item["entity_key"]),
+			FieldKey:            fmt.Sprint(item["field_key"]),
+			RuleType:            fmt.Sprint(item["rule_type"]),
+			Rule:                mapFromAny(item["rule"]),
+			Status:              DictionaryStatusActive,
+		}
+		if rule.ID == uuid.Nil {
+			rule.ID = uuid.New()
+		}
+		if rawDictionaryID := uuidFromString(fmt.Sprint(item["dictionary_version_id"])); rawDictionaryID != uuid.Nil {
+			rule.DictionaryVersionID = rawDictionaryID
+		}
+		if rule.ModuleKey == "" || rule.ModuleKey == "<nil>" || rule.EntityKey == "" || rule.EntityKey == "<nil>" || rule.FieldKey == "" || rule.FieldKey == "<nil>" || rule.RuleType == "" || rule.RuleType == "<nil>" {
+			return nil, fmt.Errorf("%w: context rule requires module_key, entity_key, field_key, and rule_type", ErrValidation)
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func contextRuleIDs(rules []ContextRuleRecord) []string {
+	ids := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		ids = append(ids, rule.ID.String())
+	}
+	return ids
+}
+
+func uuidFromString(value string) uuid.UUID {
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
+}
+
+func mapFromAny(value any) map[string]any {
+	if result, ok := value.(map[string]any); ok {
+		return result
+	}
+	return map[string]any{}
 }

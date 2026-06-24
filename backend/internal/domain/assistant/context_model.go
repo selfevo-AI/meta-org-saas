@@ -124,6 +124,11 @@ type ContextRuleSource interface {
 	ListActiveContextRules(context.Context, ContextRequest) ([]ContextRuleRecord, error)
 }
 
+type ContextDiagnosticsRepository interface {
+	GetContextPackage(context.Context, uuid.UUID, *uuid.UUID) (*ContextPackage, error)
+	GetContextHealth(context.Context, *uuid.UUID) (*ContextHealthSummary, error)
+}
+
 type ContextRequest struct {
 	SessionID      uuid.UUID  `json:"session_id,omitempty"`
 	ActorID        uuid.UUID  `json:"actor_id,omitempty"`
@@ -170,6 +175,45 @@ type ContextPackage struct {
 	Validations         map[string]any     `json:"validations"`
 	Provenance          map[string]any     `json:"provenance"`
 	TokenBudget         int                `json:"token_budget"`
+}
+
+type ContextPackageSummary struct {
+	AttentionCoreCount     int    `json:"attention_core_count"`
+	SupportingContextCount int    `json:"supporting_context_count"`
+	RiskSignalCount        int    `json:"risk_signal_count"`
+	OmissionCount          int    `json:"omission_count"`
+	TokenBudget            int    `json:"token_budget"`
+	EstimatedTokens        int    `json:"estimated_tokens"`
+	Source                 string `json:"source"`
+}
+
+type ContextPackageDiagnostic struct {
+	ID                  uuid.UUID             `json:"id"`
+	SessionID           uuid.UUID             `json:"session_id"`
+	DictionaryVersionID *uuid.UUID            `json:"dictionary_version_id,omitempty"`
+	Summary             ContextPackageSummary `json:"summary"`
+	AttentionCore       []ContextItem         `json:"attention_core"`
+	SupportingContext   []ContextItem         `json:"supporting_context"`
+	RiskAndSignals      []ContextItem         `json:"risk_and_signals"`
+	Omissions           []ContextOmission     `json:"omissions"`
+	Weights             map[string]float64    `json:"weights"`
+	Validations         map[string]any        `json:"validations"`
+	Provenance          map[string]any        `json:"provenance"`
+}
+
+type ContextHealthSummary struct {
+	OrganizationID           *uuid.UUID     `json:"organization_id,omitempty"`
+	ActiveRuleCount          int            `json:"active_rule_count"`
+	StrictModules            []string       `json:"strict_modules"`
+	StrictModuleCoverage     map[string]int `json:"strict_module_coverage"`
+	MissingStrictModules     []string       `json:"missing_strict_modules"`
+	RecentPackageCount       int            `json:"recent_package_count"`
+	FallbackPackageCount     int            `json:"fallback_package_count"`
+	ContextBuildFailureCount int            `json:"context_build_failure_count"`
+	PendingProposalCount     int            `json:"pending_proposal_count"`
+	ApprovedProposalCount    int            `json:"approved_proposal_count"`
+	AppliedProposalCount     int            `json:"applied_proposal_count"`
+	ToolApprovalBacklog      int            `json:"tool_approval_backlog"`
 }
 
 func (p ContextPackage) AttentionCoreTokens() int {

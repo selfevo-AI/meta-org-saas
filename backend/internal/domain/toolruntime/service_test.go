@@ -33,6 +33,28 @@ func TestEffectivePolicyNotifyOverridesAuto(t *testing.T) {
 	}
 }
 
+func TestEffectivePolicyForExecutionApprovesRuntimeWrites(t *testing.T) {
+	policy := EffectivePolicyForExecution(ToolDefinition{
+		Name:          "runtime.operation.execute",
+		DefaultPolicy: PolicyNotify,
+	}, ExecuteToolInput{Arguments: map[string]any{"method": "POST"}}, GovernanceResult{Decision: "notify", Allowed: true})
+
+	if policy != PolicyApprove {
+		t.Fatalf("policy = %q, want approve for runtime write", policy)
+	}
+}
+
+func TestEffectivePolicyForExecutionKeepsRuntimeReadsNotify(t *testing.T) {
+	policy := EffectivePolicyForExecution(ToolDefinition{
+		Name:          "runtime.operation.execute",
+		DefaultPolicy: PolicyNotify,
+	}, ExecuteToolInput{Arguments: map[string]any{"method": "GET"}}, GovernanceResult{Decision: "notify", Allowed: true})
+
+	if policy != PolicyNotify {
+		t.Fatalf("policy = %q, want notify for runtime read", policy)
+	}
+}
+
 func TestExecuteToolUsesCurrentTenantOrganization(t *testing.T) {
 	orgID := uuid.New()
 	toolID := uuid.New()
