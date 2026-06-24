@@ -16,7 +16,7 @@ import {
   Upload,
   Users,
 } from 'lucide-react'
-import { ChangeEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { AIAssistant } from './ai-assistant'
 import { ApiWorkbench } from './api-workbench'
 import {
@@ -33,6 +33,7 @@ import {
   getOrganizationIndustry,
   getOrganizationEntitlements,
   getOrganizationSubscription,
+  getSchemaChangePackageDiff,
   listIndustries,
   listIndustryExtensions,
   listIndustryPackages,
@@ -50,6 +51,7 @@ import {
   type IndustryExtension,
   type IndustryPackage,
   type IndustryPublicationRequest,
+  type IndustrySolutionManifest,
   type OrganizationIndustryAdoption,
   updateOrganizationModules,
   type OrganizationInvitation,
@@ -58,7 +60,10 @@ import {
   type PlatformDetail,
   type PlatformMaster,
   type PlatformPermissionProfile,
+  type PublicationGateResult,
   type SaaSModule,
+  type PackageAssetDiff,
+  type SchemaApplyAssetResult,
   type SchemaApplyJob,
   type SchemaChangeRequest,
   type SchemaPackage,
@@ -202,6 +207,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [schemaJson, setSchemaJson] = useState('')
   const [changeRequest, setChangeRequest] = useState<SchemaChangeRequest | null>(null)
   const [applyJob, setApplyJob] = useState<SchemaApplyJob | null>(null)
+  const [packageAssetDiff, setPackageAssetDiff] = useState<PackageAssetDiff[]>([])
   const [verificationReport, setVerificationReport] = useState<SchemaVerificationReport | null>(null)
   const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
@@ -240,6 +246,18 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const verificationBlocksApply =
     !!changeRequest && verificationReport?.change_request_id === changeRequest.id && verificationReport.can_apply === false
   const schemaDiffItems = useMemo(() => summarizeSchemaDiff(changeRequest?.diff), [changeRequest?.diff])
+  const industryManifest = useMemo(() => {
+    const manifest = changeRequest?.schema_package.metadata?.industry_manifest
+    return manifest && typeof manifest === 'object' ? (manifest as IndustrySolutionManifest) : null
+  }, [changeRequest])
+  const packageAssetsByType = useMemo(() => {
+    const groups = new Map<string, IndustrySolutionManifest['assets']>()
+    for (const asset of industryManifest?.assets ?? []) {
+      groups.set(asset.asset_type, [...(groups.get(asset.asset_type) ?? []), asset])
+    }
+    return Array.from(groups.entries()).map(([assetType, assets]) => ({ assetType, assets }))
+  }, [industryManifest])
+  const assetResults = useMemo<SchemaApplyAssetResult[]>(() => applyJob?.metadata?.asset_results ?? [], [applyJob])
   const selectedIndustryPackage = useMemo(
     () => industryPackages.find((item) => item.id === selectedPackageID) ?? industryPackages[0] ?? null,
     [industryPackages, selectedPackageID],
@@ -275,6 +293,22 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     setIndustryModuleDraft((current) =>
       current.includes(moduleKeyValue) ? current.filter((item) => item !== moduleKeyValue) : [...current, moduleKeyValue],
     )
+  }
+
+  function publicationGates(item: IndustryPublicationRequest): PublicationGateResult[] {
+    return item.metadata?.publication_gates ?? []
+  }
+
+  async function refreshPackageAssetDiff(request: SchemaChangeRequest) {
+    if (!request.schema_package.metadata?.industry_manifest) {
+      setPackageAssetDiff([])
+      return
+    }
+    try {
+      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id))
+    } catch {
+      setPackageAssetDiff([])
+    }
   }
 
   const loadPlatformPermissions = useCallback(async () => {
@@ -545,6 +579,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       })
       setChangeRequest(request)
       setVerificationReport(null)
+      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id))
       setSchemaPackage(request.schema_package)
       setSchemaJson(jsonText(request.schema_package))
       setActiveTab('schema')
@@ -638,6 +673,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setSchemaPackage(pkg)
       setSchemaJson(jsonText(pkg))
       setVerificationReport(null)
+      setPackageAssetDiff([])
     }, 'systemAdmin.schemaExported')
   }
 
@@ -661,6 +697,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setSchemaPackage(pkg)
       setSchemaJson(jsonText(pkg))
       setVerificationReport(null)
+      setPackageAssetDiff([])
       setNotice(t('systemAdmin.jsonImported'))
       setError('')
     } catch {
@@ -689,6 +726,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setChangeRequest(request)
       setApplyJob(null)
       setVerificationReport(null)
+      await refreshPackageAssetDiff(request)
     }, 'systemAdmin.changeCreated')
   }
 
@@ -704,6 +742,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     if (!changeRequest || !canPlatform('schema.manage')) return
     await run(async () => {
       setVerificationReport(await verifySchemaChange(token, changeRequest.id))
+      await refreshPackageAssetDiff(changeRequest)
     }, 'systemAdmin.changeVerified')
   }
 
@@ -1252,31 +1291,51 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {publicationRequests.map((item) => (
-                      <tr key={item.id}>
-                        <td className="px-3 py-3 font-medium text-slate-900">{item.industry_key}</td>
-                        <td className="px-3 py-3 font-mono text-xs text-slate-600">{organizationByID[item.source_organization_id] || item.source_organization_id}</td>
-                        <td className="px-3 py-3"><StatusBadge label={item.status} /></td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void reviewPublication(item.id, 'approve')}
-                              disabled={item.status !== 'pending'}
-                              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {t('systemAdmin.approve')}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void reviewPublication(item.id, 'reject')}
-                              disabled={item.status !== 'pending'}
-                              className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {t('systemAdmin.reject')}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                      <Fragment key={item.id}>
+                        <tr>
+                          <td className="px-3 py-3 font-medium text-slate-900">{item.industry_key}</td>
+                          <td className="px-3 py-3 font-mono text-xs text-slate-600">{organizationByID[item.source_organization_id] || item.source_organization_id}</td>
+                          <td className="px-3 py-3"><StatusBadge label={item.status} /></td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void reviewPublication(item.id, 'approve')}
+                                disabled={item.status !== 'pending'}
+                                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {t('systemAdmin.approve')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void reviewPublication(item.id, 'reject')}
+                                disabled={item.status !== 'pending'}
+                                className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {t('systemAdmin.reject')}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {publicationGates(item).length > 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-3 pb-3">
+                              <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.publicationGates')}</p>
+                                {publicationGates(item).map((gate) => (
+                                  <div key={gate.key} className="rounded-md border border-slate-200 bg-white p-2">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <p className="text-xs font-semibold text-slate-700">{t(`systemAdmin.gate.${gate.key}`)}</p>
+                                      <StatusBadge label={gate.status} />
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-500">{gate.message}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                     {publicationRequests.length === 0 && (
                       <tr>
@@ -1662,6 +1721,22 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   <Metric label={t('systemAdmin.requestId')} value={changeRequest.id} />
                   <Metric label={t('systemAdmin.status')} value={t(changeRequest.status)} />
                   <Metric label={t('systemAdmin.statementCount')} value={String(changeRequest.statements.length)} />
+                  {packageAssetsByType.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.packageAssets')}</p>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        {packageAssetsByType.map((group) => (
+                          <div key={group.assetType} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{t(`systemAdmin.assetType.${group.assetType}`)}</p>
+                              <StatusBadge label={String(group.assets.length)} />
+                            </div>
+                            <p className="mt-1 truncate text-xs text-slate-500">{group.assets[0]?.asset_key || t('common.empty')}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.packageDiff')}</p>
                     {schemaDiffItems.length > 0 ? (
@@ -1674,6 +1749,31 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                       <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-500">{t('systemAdmin.noPackageDiff')}</p>
                     )}
                   </div>
+                  {packageAssetDiff.length > 0 && (
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.metadataAssets')}</p>
+                      <div className="mt-2 space-y-2">
+                        {packageAssetDiff.map((item) => (
+                          <div key={`${item.asset_type}-${item.asset_key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-900">{item.asset_key}</p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {t(`systemAdmin.assetType.${item.asset_type}`)} / {t(item.risk_level)}
+                                </p>
+                              </div>
+                              <StatusBadge label={item.action} />
+                            </div>
+                            {item.blocking_reason && (
+                              <p className="mt-2 rounded-md bg-red-50 p-2 text-xs text-red-700">
+                                {t('systemAdmin.blockingReason')}: {item.blocking_reason}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <pre className="max-h-56 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-600">
                     {changeRequest.statements.join('\n\n') || t('common.empty')}
                   </pre>
@@ -1717,6 +1817,21 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   <Metric label={t('systemAdmin.status')} value={t(applyJob.status)} />
                   <Metric label={t('systemAdmin.statementCount')} value={String(applyJob.statements.length)} />
                   {applyJob.error_message && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{applyJob.error_message}</p>}
+                  {assetResults.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.assetResults')}</p>
+                      {assetResults.map((item) => (
+                        <div key={`${item.asset_type}-${item.asset_key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="min-w-0 truncate text-sm font-semibold text-slate-900">{item.asset_key}</p>
+                            <StatusBadge label={item.status} />
+                          </div>
+                          <p className="mt-1 truncate text-xs text-slate-500">{item.target}</p>
+                          {item.error_message && <p className="mt-2 rounded-md bg-red-50 p-2 text-xs text-red-700">{item.error_message}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
             )}
