@@ -24,6 +24,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/erp/{tableCode}", h.listRecords)
 	r.Post("/erp/{tableCode}", h.createRecord)
 	r.Post("/erp/{tableCode}/{key}/actions/{action}", h.runAction)
+	r.Get("/erp/{tableCode}/{key}/action-executions", h.listActionExecutions)
 	r.Get("/erp/{tableCode}/{key}", h.getRecord)
 	r.Patch("/erp/{tableCode}/{key}", h.updateRecord)
 	r.Delete("/erp/{tableCode}/{key}", h.deleteRecord)
@@ -78,6 +79,20 @@ func (h *Handler) runAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) listActionExecutions(w http.ResponseWriter, r *http.Request) {
+	items, err := h.service.ListActionExecutions(
+		r.Context(),
+		chi.URLParam(r, "tableCode"),
+		chi.URLParam(r, "key"),
+		queryLimit(r),
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"action_executions": items})
 }
 
 func (h *Handler) getRecord(w http.ResponseWriter, r *http.Request) {

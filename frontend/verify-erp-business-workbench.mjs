@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 const workspaceSource = readFileSync(`${frontendRoot}src/app/erp-business-module-workspace.tsx`, 'utf8')
 const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
+const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
+const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
 const packageSource = readFileSync(`${frontendRoot}package.json`, 'utf8')
 
@@ -20,13 +22,33 @@ const requiredWorkspaceSnippets = [
   'isERPActionAvailable',
   'ERPDocumentDetail',
   'ERPDocumentTimeline',
+  'listRuntimeOperations',
+  'listERPActionExecutions',
+  'deriveRuntimeDocuments',
+  'runtimeDocuments',
+  'metadata?.workspace',
+  'actionExecutions',
   "t('erp.business.documentDetail')",
   "t('erp.business.unavailableActions')",
 ]
 
 const requiredApiSnippets = [
   'export async function listERPChildRecords',
+  'export async function listERPActionExecutions',
   '`/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/${encodeURIComponent(childCode)}?limit=${limit}`',
+  '`/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/action-executions?limit=${limit}`',
+]
+
+const requiredOperationsSnippets = [
+  'metadata?: Record<string, unknown>',
+]
+
+const forbiddenPageSnippets = [
+  "from './project-lifecycle-workspace'",
+  "from './procurement-workspace'",
+  "from './sales-workspace'",
+  "from './inventory-workspace'",
+  "from './finance-workspace'",
 ]
 
 const requiredPackageSnippets = ['"test:erp-business": "node verify-erp-business-workbench.mjs"']
@@ -74,6 +96,16 @@ if (missingWorkspaceSnippets.length > 0) {
 const missingApiSnippets = requiredApiSnippets.filter((snippet) => !apiSource.includes(snippet))
 if (missingApiSnippets.length > 0) {
   failures.push(`Missing ERP child row API snippets:\n${missingApiSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+}
+
+const missingOperationsSnippets = requiredOperationsSnippets.filter((snippet) => !operationsSource.includes(snippet))
+if (missingOperationsSnippets.length > 0) {
+  failures.push(`Missing runtime operation metadata snippets:\n${missingOperationsSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+}
+
+const linkedLegacyWorkspaces = forbiddenPageSnippets.filter((snippet) => pageSource.includes(snippet))
+if (linkedLegacyWorkspaces.length > 0) {
+  failures.push(`Legacy semantic workspaces are still linked from page.tsx:\n${linkedLegacyWorkspaces.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
 const missingPackageSnippets = requiredPackageSnippets.filter((snippet) => !packageSource.includes(snippet))

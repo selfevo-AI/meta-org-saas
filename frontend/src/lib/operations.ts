@@ -21,6 +21,7 @@ export interface ApiOperation {
   resultView?: OperationResultView
   assistantEligible?: boolean
   requiresEntityContext?: boolean
+  metadata?: Record<string, unknown>
 }
 
 export type OperationKind = 'direct' | 'contextual' | 'agent_assisted' | 'admin'

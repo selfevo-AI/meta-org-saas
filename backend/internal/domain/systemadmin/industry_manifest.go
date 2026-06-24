@@ -327,16 +327,31 @@ func buildIndustryManifest(input ERPSolutionFlowRequest, metadata map[string]any
 	appendAssets(AssetTypeQualityGate, mapSliceFromAny(metadata["quality_gates"]), "gate_key")
 	appendAssets(AssetTypeVerificationScenario, mapSliceFromAny(metadata["verification_scenarios"]), "scenario_key")
 
-	for _, operation := range stringSliceFromAny(metadata["api_operations"]) {
-		assets = append(assets, IndustrySolutionAsset{
-			AssetKey:  manifestAssetKey(AssetTypeRuntimeOperation, operation),
-			AssetType: AssetTypeRuntimeOperation,
-			Version:   "v1",
-			Source:    "erp_standard_factory",
-			Owner:     "platform",
-			RiskLevel: "medium",
-			Payload:   map[string]any{"path": operation},
-		})
+	if runtimeOperations := mapSliceFromAny(metadata["runtime_operations"]); len(runtimeOperations) > 0 {
+		for _, operation := range runtimeOperations {
+			assetKey := firstNonEmptyString(stringValue(operation["operation_key"]), stringValue(operation["path"]))
+			assets = append(assets, IndustrySolutionAsset{
+				AssetKey:  manifestAssetKey(AssetTypeRuntimeOperation, assetKey),
+				AssetType: AssetTypeRuntimeOperation,
+				Version:   "v1",
+				Source:    "erp_standard_factory",
+				Owner:     "platform",
+				RiskLevel: firstNonEmptyString(stringValue(operation["risk_level"]), stringValue(operation["danger_level"]), "medium"),
+				Payload:   operation,
+			})
+		}
+	} else {
+		for _, operation := range stringSliceFromAny(metadata["api_operations"]) {
+			assets = append(assets, IndustrySolutionAsset{
+				AssetKey:  manifestAssetKey(AssetTypeRuntimeOperation, operation),
+				AssetType: AssetTypeRuntimeOperation,
+				Version:   "v1",
+				Source:    "erp_standard_factory",
+				Owner:     "platform",
+				RiskLevel: "medium",
+				Payload:   map[string]any{"path": operation},
+			})
+		}
 	}
 	for _, workspace := range stringSliceFromAny(metadata["ui_workspaces"]) {
 		assets = append(assets, IndustrySolutionAsset{

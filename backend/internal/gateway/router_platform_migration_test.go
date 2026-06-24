@@ -40,6 +40,9 @@ func TestPlatformOnlyDomainsAreNotMountedInTenantRoutes(t *testing.T) {
 	if !strings.Contains(tenantBlock, "ErpHandler.RegisterRoutes") {
 		t.Fatalf("tenant routes should expose ERP code-table routes")
 	}
+	if !strings.Contains(tenantBlock, "RuntimeHandler.RegisterTenantReadRoutes") {
+		t.Fatalf("tenant routes should expose read-only runtime operation metadata")
+	}
 	if !strings.Contains(platformBlock, "AIGatewayHandler.RegisterRoutes") {
 		t.Fatalf("platform routes should expose AI gateway administration routes")
 	}
@@ -56,6 +59,9 @@ func TestERPRoutesAreMountedForTenantWorkbench(t *testing.T) {
 	}
 	if strings.Contains(tenantBlock, "deps.RuntimeHandler.RegisterRoutes") {
 		t.Fatalf("runtime entity routes should not be mounted in tenant routes after ERP API replacement")
+	}
+	if !strings.Contains(tenantBlock, "deps.RuntimeHandler.RegisterTenantReadRoutes") {
+		t.Fatalf("tenant routes should mount read-only runtime operation metadata for the ERP workbench")
 	}
 }
 

@@ -249,6 +249,28 @@ func (r *PostgresRepository) ListActionGeneratedRecords(ctx context.Context, act
 	return items, nil
 }
 
+func (r *PostgresRepository) ListActionExecutions(ctx context.Context, tableCode string, recordKey string, limit int) ([]ActionExecution, error) {
+	query := fmt.Sprintf(`SELECT "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"
+		FROM %s WHERE "TableCode" = $1 AND "RecordKey" = $2 ORDER BY "StartedAt" DESC LIMIT $3`, quoteIdent(actionExecutionTable))
+	rows, err := r.querier.Query(ctx, query, tableCode, recordKey, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list ERP action executions: %w", err)
+	}
+	defer rows.Close()
+	items := []ActionExecution{}
+	for rows.Next() {
+		item, err := scanActionExecution(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *PostgresRepository) insertRecord(ctx context.Context, tableCode, keyColumn string, values map[string]any) (*Record, error) {
 	names := sortedKeys(values)
 	columns := make([]string, 0, len(names))

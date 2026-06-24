@@ -88,3 +88,7 @@ func (r *gatewayERPRepo) CreateActionGeneratedRecord(ctx context.Context, record
 func (r *gatewayERPRepo) ListActionGeneratedRecords(ctx context.Context, actionID uuid.UUID) ([]erp.ActionGeneratedRecord, error) {
 	return []erp.ActionGeneratedRecord{}, nil
 }
+
+func (r *gatewayERPRepo) ListActionExecutions(ctx context.Context, tableCode string, recordKey string, limit int) ([]erp.ActionExecution, error) {
+	return []erp.ActionExecution{}, nil
+}

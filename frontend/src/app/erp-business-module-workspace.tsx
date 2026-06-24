@@ -3,8 +3,19 @@
 import { CheckCircle2, Clock3, FileText, Play, Plus, RefreshCw, Rows3, ShieldAlert } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
-import { createERPChildRecord, createERPRecord, listERPChildRecords, listERPRecords, runERPAction, type ERPActionResult } from '@/lib/api'
+import {
+  createERPChildRecord,
+  createERPRecord,
+  listERPActionExecutions,
+  listERPChildRecords,
+  listERPRecords,
+  listRuntimeOperations,
+  runERPAction,
+  type ERPActionExecution,
+  type ERPActionResult,
+} from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import type { ApiOperation } from '@/lib/operations'
 
 type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance'
 
@@ -21,6 +32,8 @@ type DocumentConfig = {
   primaryKey: string
   childCode?: string
   actions?: string[]
+  sortOrder?: number
+  actionParams?: Record<string, unknown>
 }
 
 type ERPBusinessModuleWorkspaceProps = {
@@ -78,13 +91,69 @@ const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
   ],
 }
 
+function deriveRuntimeDocuments(operations: ApiOperation[], module: ERPBusinessModule): DocumentConfig[] {
+  const byID = new Map<string, DocumentConfig>()
+  for (const operation of operations) {
+    const workspace = recordMap(operation.metadata?.workspace)
+    if (workspace.module !== module) continue
+    const tableCode = textValue(workspace.table_code)
+    const primaryKey = textValue(workspace.primary_key)
+    const documentID = textValue(workspace.document_id)
+    if (!tableCode || !primaryKey || !documentID) continue
+    const current = byID.get(documentID) ?? {
+      id: documentID,
+      labelKey: textValue(workspace.document_label_key) || `erp.document.${documentID}`,
+      submoduleKey: textValue(workspace.submodule_key) || `erp.submodule.${documentID}`,
+      tableCode,
+      primaryKey,
+      childCode: textValue(workspace.child_code) || undefined,
+      actions: [],
+      sortOrder: numberValue(workspace.sort_order),
+    }
+    const action = textValue(workspace.action)
+    if (action && !(current.actions ?? []).includes(action)) {
+      current.actions = [...(current.actions ?? []), action]
+    }
+    if (workspace.action_params && typeof workspace.action_params === 'object') {
+      current.actionParams = workspace.action_params as Record<string, unknown>
+    }
+    byID.set(documentID, current)
+  }
+  return Array.from(byID.values()).sort((left, right) => (left.sortOrder ?? 999) - (right.sortOrder ?? 999) || left.id.localeCompare(right.id))
+}
+
+function mergeDocumentConfigs(fallback: DocumentConfig[], runtime: DocumentConfig[]) {
+  if (runtime.length === 0) return fallback
+  const merged = runtime.map((document) => {
+    const existing = fallback.find((item) => item.id === document.id || item.tableCode === document.tableCode)
+    return existing ? { ...existing, ...document, actions: mergeActions(existing.actions, document.actions) } : document
+  })
+  for (const document of fallback) {
+    if (!merged.some((item) => item.id === document.id || item.tableCode === document.tableCode)) {
+      merged.push(document)
+    }
+  }
+  return merged.sort((left, right) => (left.sortOrder ?? 999) - (right.sortOrder ?? 999) || left.id.localeCompare(right.id))
+}
+
+function mergeActions(left: string[] | undefined, right: string[] | undefined) {
+  const items: string[] = []
+  for (const action of [...(left ?? []), ...(right ?? [])]) {
+    if (!items.includes(action)) items.push(action)
+  }
+  return items.length > 0 ? items : undefined
+}
+
 export function ERPBusinessModuleWorkspace({ token, module, externalSelection }: ERPBusinessModuleWorkspaceProps) {
   const { t } = useI18n()
-  const documents = moduleDocuments[module]
+  const fallbackDocuments = moduleDocuments[module]
+  const [runtimeDocuments, setRuntimeDocuments] = useState<DocumentConfig[]>([])
+  const documents = useMemo(() => mergeDocumentConfigs(fallbackDocuments, runtimeDocuments), [fallbackDocuments, runtimeDocuments])
   const [activeID, setActiveID] = useState(documents[0]?.id ?? '')
   const activeDocument = useMemo(() => documents.find((item) => item.id === activeID) ?? documents[0], [activeID, documents])
   const [records, setRecords] = useState<ERPBusinessRecord[]>([])
   const [childRows, setChildRows] = useState<ERPBusinessRecord[]>([])
+  const [actionExecutions, setActionExecutions] = useState<ERPActionExecution[]>([])
   const [selectedKey, setSelectedKey] = useState('')
   const [form, setForm] = useState({ key: '', name: '', cardCode: '', itemCode: '', whsCode: '', quantity: '1', price: '0', targetKey: '', amount: '0' })
   const [lineForm, setLineForm] = useState({ lineNum: '1', itemCode: '', whsCode: '', quantity: '1', price: '0' })
@@ -101,12 +170,26 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   const availableActions = actionAvailability.filter((item) => item.available)
   const blockedActions = actionAvailability.filter((item) => !item.available)
   const currentActionResult = actionResult?.table_code === activeDocument?.tableCode && actionResult.key === selectedKey ? actionResult : null
-  const generatedRecords = currentActionResult?.generated_records ?? []
+  const generatedRecords = currentActionResult?.generated_records ?? generatedRecordsFromExecutions(actionExecutions)
   const assistantProposals = useMemo(() => recordArray(selectedRecord?.assistant_confirmed_proposals), [selectedRecord])
   const businessTimeline = useMemo(
-    () => buildBusinessTimeline(selectedRecord, childRows, currentActionResult, assistantProposals),
-    [assistantProposals, childRows, currentActionResult, selectedRecord],
+    () => buildBusinessTimeline(selectedRecord, childRows, currentActionResult, assistantProposals, actionExecutions),
+    [actionExecutions, assistantProposals, childRows, currentActionResult, selectedRecord],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    listRuntimeOperations(token)
+      .then((operations) => {
+        if (!cancelled) setRuntimeDocuments(deriveRuntimeDocuments(operations, module))
+      })
+      .catch(() => {
+        if (!cancelled) setRuntimeDocuments([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [module, token])
 
   async function loadRecords(document = activeDocument) {
     if (!document) return
@@ -138,6 +221,19 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
     } catch (err) {
       setChildRows([])
       setError(err instanceof Error ? err.message : t('erp.business.loadFailed'))
+    }
+  }
+
+  async function loadActionExecutions(document = activeDocument, key = selectedKey) {
+    if (!document || !key) {
+      setActionExecutions([])
+      return
+    }
+    try {
+      const items = await listERPActionExecutions(token, document.tableCode, key, 50)
+      setActionExecutions(items)
+    } catch {
+      setActionExecutions([])
     }
   }
 
@@ -182,6 +278,24 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       cancelled = true
     }
   }, [activeDocument, selectedKey, t, token])
+
+  useEffect(() => {
+    if (!activeDocument || !selectedKey) {
+      const timer = window.setTimeout(() => setActionExecutions([]), 0)
+      return () => window.clearTimeout(timer)
+    }
+    let cancelled = false
+    listERPActionExecutions(token, activeDocument.tableCode, selectedKey, 50)
+      .then((items) => {
+        if (!cancelled) setActionExecutions(items)
+      })
+      .catch(() => {
+        if (!cancelled) setActionExecutions([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeDocument, selectedKey, token])
 
   async function handleCreateRecord() {
     if (!activeDocument || !form.key.trim()) return
@@ -239,6 +353,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       setNotice(t('erp.business.actionDone'))
       await loadRecords(activeDocument)
       await loadChildRows(activeDocument, selectedKey)
+      await loadActionExecutions(activeDocument, selectedKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
     } finally {
@@ -670,6 +785,7 @@ function buildBusinessTimeline(
   childRows: ERPBusinessRecord[],
   actionResult: ERPActionResult<ERPBusinessRecord> | null,
   assistantProposals: Array<Record<string, unknown>>,
+  actionExecutions: ERPActionExecution[],
 ): ERPTimelineEvent[] {
   if (!record) return []
   const events: ERPTimelineEvent[] = [
@@ -685,6 +801,21 @@ function buildBusinessTimeline(
       detail: `${actionResult.table_code}:${actionResult.key} / ${actionResult.action} / ${actionResult.status}`,
     })
   }
+  const currentExecutionID = textValue(actionResult?.execution_id)
+  for (const execution of actionExecutions.filter((item) => item.id !== currentExecutionID)) {
+    events.push({
+      id: `execution-${execution.id}`,
+      titleKey: 'erp.business.actionCompleted',
+      detail: `${execution.table_code}:${execution.record_key} / ${execution.action} / ${execution.status}${execution.failure_message ? ` / ${execution.failure_message}` : ''}`,
+    })
+    for (const generated of execution.generated_records ?? []) {
+      events.push({
+        id: `execution-${execution.id}-generated-${generated.line_num}`,
+        titleKey: 'erp.business.generatedRecords',
+        detail: `${generated.generated_table_code}:${generated.generated_key}`,
+      })
+    }
+  }
   for (const [index, proposal] of assistantProposals.entries()) {
     events.push({
       id: `proposal-${displayValue(proposal.proposal_id)}-${index}`,
@@ -693,6 +824,16 @@ function buildBusinessTimeline(
     })
   }
   return events
+}
+
+function generatedRecordsFromExecutions(actionExecutions: ERPActionExecution[]): NonNullable<ERPActionResult['generated_records']> {
+  return actionExecutions.flatMap((execution) =>
+    (execution.generated_records ?? []).map((record) => ({
+      table_code: record.generated_table_code,
+      key: record.generated_key,
+      data: record.payload ?? {},
+    })),
+  )
 }
 
 function recordArray(value: unknown): Array<Record<string, unknown>> {
@@ -709,6 +850,19 @@ function normalizedStatus(record: ERPBusinessRecord) {
 
 function normalizedText(value: unknown) {
   return String(value ?? '').trim().toLowerCase()
+}
+
+function textValue(value: unknown) {
+  return String(value ?? '').trim()
+}
+
+function numberValue(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function recordMap(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
 function recordTitle(record: ERPBusinessRecord) {

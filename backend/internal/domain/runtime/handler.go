@@ -28,6 +28,10 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/runtime/entities/{entityKey}/records/{recordKey}", h.deleteRecord)
 }
 
+func (h *Handler) RegisterTenantReadRoutes(r chi.Router) {
+	r.Get("/runtime/operations", h.listOperations)
+}
+
 func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request) {
 	operations, err := h.service.ListOperations(r.Context())
 	writeResult(w, http.StatusOK, operations, err)

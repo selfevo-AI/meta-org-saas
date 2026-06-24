@@ -161,6 +161,16 @@ func (r *businessFakeRepository) ListActionGeneratedRecords(_ context.Context, a
 	return append([]ActionGeneratedRecord{}, r.generatedRecords[actionID]...), nil
 }
 
+func (r *businessFakeRepository) ListActionExecutions(_ context.Context, tableCode string, recordKey string, limit int) ([]ActionExecution, error) {
+	items := []ActionExecution{}
+	for _, execution := range r.executions {
+		if execution.TableCode == tableCode && execution.RecordKey == recordKey {
+			items = append(items, execution)
+		}
+	}
+	return items, nil
+}
+
 func (r *businessFakeRepository) RunInTx(_ context.Context, fn func(Repository) error) error {
 	records := cloneRecords(r.records)
 	children := cloneChildren(r.children)

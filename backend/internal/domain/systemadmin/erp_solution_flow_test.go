@@ -35,6 +35,7 @@ func TestBuildERPSolutionFlowBuildsCompleteChangePackage(t *testing.T) {
 		"process_loops",
 		"permissions",
 		"api_operations",
+		"runtime_operations",
 		"ui_workspaces",
 		"assistant_targets",
 		"context_rules",
@@ -60,11 +61,28 @@ func TestBuildERPSolutionFlowBuildsCompleteChangePackage(t *testing.T) {
 			t.Fatalf("schema package missing table %s in %#v", name, result.SchemaPackage.Tables)
 		}
 	}
+	runtimeOperations := mapSliceFromAny(result.SchemaPackage.Metadata["runtime_operations"])
+	if len(runtimeOperations) == 0 {
+		t.Fatalf("schema package runtime_operations is empty in %#v", result.SchemaPackage.Metadata)
+	}
+	if !hasWorkspaceRuntimeOperation(runtimeOperations, "project", "requirement", "MREQ", "convert-to-project") {
+		t.Fatalf("runtime_operations missing project requirement convert workspace metadata: %#v", runtimeOperations)
+	}
 }
 
 func schemaPackageHasTable(pkg SchemaPackage, name string) bool {
 	for _, table := range pkg.Tables {
 		if table.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasWorkspaceRuntimeOperation(operations []map[string]any, module string, documentID string, tableCode string, action string) bool {
+	for _, operation := range operations {
+		workspace, _ := operation["workspace"].(map[string]any)
+		if workspace["module"] == module && workspace["document_id"] == documentID && workspace["table_code"] == tableCode && workspace["action"] == action {
 			return true
 		}
 	}

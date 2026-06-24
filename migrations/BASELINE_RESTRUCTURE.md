@@ -39,6 +39,11 @@ table per asset type:
 Context-rule assets generated from industry packages are stored as draft
 metadata and must not be activated automatically by schema apply.
 
+Phase 3 keeps the same tables and extends the runtime metadata contract:
+industry package `runtime_operation` assets preserve their full payload in
+`platform.runtime_operations.metadata`, including `metadata.workspace` for
+tenant ERP business workbench document/action configuration.
+
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
 tenant departments, project lifecycle, workflow, finance, costing,
 supply-chain, ERP action execution ledger tables, and other ERP-facing domain
