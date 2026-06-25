@@ -272,16 +272,24 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 		},
 	}
 	for _, action := range actions {
+		entrypoint := fmt.Sprintf("/erp/%s/{key}/actions/%s", action.TableCode, action.Action)
+		policy := "erp_action_state_gate"
+		riskLevel := "medium"
+		if action.TableCode == "MGLR" && action.Action == "run" {
+			entrypoint = "/finance/gl/trial-balance"
+			policy = "erp_report_read"
+			riskLevel = "low"
+		}
 		toolDefinitions = append(toolDefinitions, map[string]any{
 			"tool_key":    fmt.Sprintf("erp.%s.%s", strings.ToLower(action.TableCode), action.Action),
 			"table_code":  action.TableCode,
 			"action":      action.Action,
-			"entrypoint":  fmt.Sprintf("/erp/%s/{key}/actions/%s", action.TableCode, action.Action),
-			"policy":      "erp_action_state_gate",
+			"entrypoint":  entrypoint,
+			"policy":      policy,
 			"permissions": []string{"erp:action"},
 			"idempotency": fmt.Sprintf("%s:key:%s", action.TableCode, action.Action),
 			"next_tables": action.NextTables,
-			"risk_level":  "medium",
+			"risk_level":  riskLevel,
 		})
 	}
 	return SchemaPackage{
@@ -312,17 +320,18 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 					{"key": "procure_to_pay", "steps": []string{"MPOR.submit", "MPOR.approve", "MPDN.post", "MPCH"}},
 					{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
 					{"key": "inventory_to_finance", "steps": []string{"MIGN.post", "MIGE.post", "MJDT.post"}},
+					{"key": "finance_close", "steps": []string{"MACT", "MPRC", "MJDT.post", "MGLR.run"}},
 				},
 				"permissions":        []string{"erp:read", "erp:write", "erp:action", "erp:admin", "assistant:erp"},
 				"api_operations":     apiOperations,
 				"runtime_operations": runtimeOperations,
 				"ui_workspaces":      []string{"project", "procurement", "sales", "inventory", "finance", "developer_erp_code"},
-				"assistant_targets":  []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "journal_entry"},
+				"assistant_targets":  []string{"requirement", "project", "purchase_order", "sales_order", "ar_invoice", "ap_invoice", "gl_account", "cost_center", "journal_entry", "trial_balance"},
 				"context_rules": []map[string]any{
 					{
 						"key":                  "erp_document_state_context",
 						"scope":                "erp",
-						"source_tables":        []string{"MREQ", "MPRJ", "MPOR", "MPDN", "MRDR", "MDLN", "MINV", "MRCT", "MIGN", "MIGE", "MJDT"},
+						"source_tables":        []string{"MREQ", "MPRJ", "MPOR", "MPDN", "MRDR", "MDLN", "MINV", "MRCT", "MIGN", "MIGE", "MACT", "MPRC", "MJDT", "MGLR"},
 						"required_permissions": []string{"erp:read"},
 						"workflow_stages":      []string{"draft", "submitted", "approved", "posted", "closed"},
 						"attention_budget":     "document_timeline",
@@ -330,10 +339,10 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 					{
 						"key":                  "erp_finance_validation_context",
 						"scope":                "finance",
-						"source_tables":        []string{"MCST", "MINV", "MPCH", "MRCT", "MJDT"},
+						"source_tables":        []string{"MCST", "MINV", "MPCH", "MRCT", "MACT", "MPRC", "MJDT", "MGLR"},
 						"required_permissions": []string{"erp:read", "assistant:erp"},
-						"workflow_stages":      []string{"cost_refresh", "invoice_posting", "payment_allocation"},
-						"attention_budget":     "cost_and_settlement",
+						"workflow_stages":      []string{"cost_refresh", "invoice_posting", "payment_allocation", "journal_posting", "trial_balance"},
+						"attention_budget":     "finance_close",
 					},
 					{
 						"key":                  "erp_governance_approval_context",
@@ -363,6 +372,12 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 						"targets":       []string{"sales_order", "ar_invoice"},
 						"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
 						"allowed_tools": []string{"erp.mrdr.confirm", "erp.mrdr.approve", "erp.mdln.post", "erp.minv.post", "erp.mrct.allocate"},
+					},
+					{
+						"skill_key":     "erp_finance_close",
+						"targets":       []string{"gl_account", "cost_center", "journal_entry", "trial_balance"},
+						"context_rules": []string{"erp_finance_validation_context"},
+						"allowed_tools": []string{"erp.mjdt.post", "erp.mglr.run"},
 					},
 					{
 						"skill_key":     "schema_change_reviewer",
@@ -408,6 +423,11 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 						"scenario_key": "inventory_to_finance_smoke",
 						"steps":        []string{"MIGN.post", "MIGE.post", "MJDT.post"},
 						"expected":     []string{"inventory_movement", "journal_entry"},
+					},
+					{
+						"scenario_key": "finance_trial_balance_smoke",
+						"steps":        []string{"MACT", "MPRC", "MJDT.post", "MGLR.run"},
+						"expected":     []string{"balanced_debits_credits", "trial_balance"},
 					},
 				},
 			}
@@ -460,10 +480,13 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		{Module: "inventory", DocumentID: "warehouse_balance", LabelKey: "erp.document.warehouseBalance", SubmoduleKey: "erp.submodule.warehouseBalances", TableCode: "MITW", SortOrder: 40},
 		{Module: "inventory", DocumentID: "goods_receipt", LabelKey: "erp.document.goodsReceipt", SubmoduleKey: "erp.submodule.goodsReceipts", TableCode: "MIGN", Actions: []string{"post"}, SortOrder: 50},
 		{Module: "inventory", DocumentID: "goods_issue", LabelKey: "erp.document.goodsIssue", SubmoduleKey: "erp.submodule.goodsIssues", TableCode: "MIGE", Actions: []string{"post"}, SortOrder: 60},
-		{Module: "finance", DocumentID: "journal_entry", LabelKey: "erp.document.journalEntry", SubmoduleKey: "erp.submodule.journalEntries", TableCode: "MJDT", Actions: []string{"post"}, SortOrder: 10},
-		{Module: "finance", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 20},
-		{Module: "finance", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 30},
-		{Module: "finance", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 40},
+		{Module: "finance", DocumentID: "gl_account", LabelKey: "erp.document.glAccount", SubmoduleKey: "erp.submodule.chartOfAccounts", TableCode: "MACT", SortOrder: 10},
+		{Module: "finance", DocumentID: "cost_center", LabelKey: "erp.document.costCenter", SubmoduleKey: "erp.submodule.costCenters", TableCode: "MPRC", SortOrder: 20},
+		{Module: "finance", DocumentID: "journal_entry", LabelKey: "erp.document.journalEntry", SubmoduleKey: "erp.submodule.journalEntries", TableCode: "MJDT", Actions: []string{"post"}, SortOrder: 30},
+		{Module: "finance", DocumentID: "trial_balance", LabelKey: "erp.document.trialBalance", SubmoduleKey: "erp.submodule.trialBalance", TableCode: "MGLR", Actions: []string{"run"}, SortOrder: 40},
+		{Module: "finance", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 50},
+		{Module: "finance", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 60},
+		{Module: "finance", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 70},
 	}
 	operations := []map[string]any{}
 	seenPaths := map[string]bool{}
@@ -520,6 +543,10 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		if len(table.Children) > 0 {
 			childCode = table.Children[0].Code
 		}
+		workspaceKind := "document"
+		if table.Code == "MGLR" {
+			workspaceKind = "report"
+		}
 		workspace := map[string]any{
 			"module":             document.Module,
 			"document_id":        document.DocumentID,
@@ -528,11 +555,11 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 			"table_code":         table.Code,
 			"primary_key":        table.PrimaryKey,
 			"child_code":         childCode,
-			"kind":               "document",
+			"kind":               workspaceKind,
 			"sort_order":         document.SortOrder,
 		}
 		path := fmt.Sprintf("/erp/%s", table.Code)
-		if !seenPaths[path] {
+		if table.Code != "MGLR" && !seenPaths[path] {
 			operations = append(operations, map[string]any{
 				"operation_key":      fmt.Sprintf("erp.workspace.%s.%s.list", document.Module, document.DocumentID),
 				"domain":             "ERP",
@@ -551,6 +578,33 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		for index, actionName := range document.Actions {
 			action, ok := actionDefs[table.Code+":"+actionName]
 			if !ok {
+				continue
+			}
+			if table.Code == "MGLR" && action.Action == "run" {
+				actionPath := "/finance/gl/trial-balance"
+				if seenPaths[actionPath] {
+					continue
+				}
+				actionWorkspace := copyMap(workspace)
+				actionWorkspace["action"] = action.Action
+				actionWorkspace["state_gate"] = table.Code + "." + action.Action
+				actionWorkspace["action_params"] = map[string]any{}
+				actionWorkspace["sort_order"] = document.SortOrder + index + 1
+				operations = append(operations, map[string]any{
+					"operation_key":      "erp.finance.trial_balance.run",
+					"domain":             "ERP",
+					"title":              "operation.erp.MGLR.run",
+					"method":             "GET",
+					"path":               actionPath,
+					"operation_kind":     "direct",
+					"danger_level":       "low",
+					"result_view":        "list",
+					"assistant_eligible": true,
+					"action_type":        "finance.gl.trial_balance",
+					"workspace":          actionWorkspace,
+					"next_tables":        action.NextTables,
+				})
+				seenPaths[actionPath] = true
 				continue
 			}
 			actionPath := fmt.Sprintf("/erp/%s/{key}/actions/%s", table.Code, action.Action)

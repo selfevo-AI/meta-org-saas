@@ -68,6 +68,15 @@ type Repository interface {
 	UpdatePayment(ctx context.Context, id uuid.UUID, input UpdatePaymentInput, paidAt *time.Time) (*Payment, error)
 	VoidPayment(ctx context.Context, id uuid.UUID, reason string) (*Payment, error)
 	AllocatePayment(ctx context.Context, paymentID uuid.UUID, input AllocatePaymentInput) (*PaymentAllocation, error)
+	CreateGLAccount(ctx context.Context, input CreateGLAccountInput) (*GLAccount, error)
+	ListGLAccounts(ctx context.Context, limit int) ([]GLAccount, error)
+	CreateGLCostCenter(ctx context.Context, input CreateGLCostCenterInput) (*GLCostCenter, error)
+	ListGLCostCenters(ctx context.Context, limit int) ([]GLCostCenter, error)
+	CreateGLJournalEntry(ctx context.Context, input CreateGLJournalEntryInput, referenceDate time.Time) (*GLJournalEntry, error)
+	ListGLJournalEntries(ctx context.Context, limit int) ([]GLJournalEntry, error)
+	GetGLJournalEntry(ctx context.Context, id uuid.UUID) (*GLJournalEntry, error)
+	PostGLJournalEntry(ctx context.Context, id uuid.UUID) (*GLJournalEntry, error)
+	GetGLTrialBalance(ctx context.Context, input GLTrialBalanceInput) (*GLTrialBalance, error)
 }
 
 type CostPoster interface {

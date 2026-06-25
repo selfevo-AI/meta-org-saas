@@ -50,6 +50,7 @@ function platformOperationAvailable(operation: ApiOperation): boolean {
 }
 
 function tenantOperationAvailable(operation: ApiOperation): boolean {
+  if (operation.path.startsWith('/finance/gl/')) return true
   return !deprecatedTenantPathPrefixes.some((prefix) => operation.path.startsWith(prefix))
 }
 

@@ -28,6 +28,7 @@ func DefaultActionRegistry() ActionRegistry {
 		{TableCode: "MIGN", Action: "post", Label: "Post goods receipt", Description: "Increase inventory balance"},
 		{TableCode: "MIGE", Action: "post", Label: "Post goods issue", Description: "Decrease inventory balance"},
 		{TableCode: "MJDT", Action: "post", Label: "Post journal entry", Description: "Post journal entry"},
+		{TableCode: "MGLR", Action: "run", Label: "Run trial balance", Description: "Calculate posted journal entry debit and credit totals"},
 	}
 	registry := ActionRegistry{actions: map[string]ActionDefinition{}}
 	for _, def := range defs {

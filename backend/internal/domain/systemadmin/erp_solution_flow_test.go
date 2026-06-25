@@ -68,6 +68,12 @@ func TestBuildERPSolutionFlowBuildsCompleteChangePackage(t *testing.T) {
 	if !hasWorkspaceRuntimeOperation(runtimeOperations, "project", "requirement", "MREQ", "convert-to-project") {
 		t.Fatalf("runtime_operations missing project requirement convert workspace metadata: %#v", runtimeOperations)
 	}
+	if !hasWorkspaceRuntimeOperation(runtimeOperations, "finance", "trial_balance", "MGLR", "run") {
+		t.Fatalf("runtime_operations missing finance trial balance workspace metadata: %#v", runtimeOperations)
+	}
+	if !hasRuntimeOperationPath(runtimeOperations, "/finance/gl/trial-balance") {
+		t.Fatalf("runtime_operations missing GL trial balance API path: %#v", runtimeOperations)
+	}
 }
 
 func schemaPackageHasTable(pkg SchemaPackage, name string) bool {
@@ -83,6 +89,15 @@ func hasWorkspaceRuntimeOperation(operations []map[string]any, module string, do
 	for _, operation := range operations {
 		workspace, _ := operation["workspace"].(map[string]any)
 		if workspace["module"] == module && workspace["document_id"] == documentID && workspace["table_code"] == tableCode && workspace["action"] == action {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRuntimeOperationPath(operations []map[string]any, path string) bool {
+	for _, operation := range operations {
+		if operation["path"] == path {
 			return true
 		}
 	}

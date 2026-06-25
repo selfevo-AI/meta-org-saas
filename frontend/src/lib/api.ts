@@ -903,6 +903,48 @@ export async function listFinanceReconciliation(token: string): Promise<FinanceR
   return apiRequest<FinanceReconciliationItem[]>('/finance/reconciliation', { token })
 }
 
+export async function createFinanceGLAccount(token: string, input: CreateFinanceGLAccountInput): Promise<FinanceGLAccount> {
+  return apiRequest<FinanceGLAccount>('/finance/gl/accounts', { method: 'POST', token, body: input })
+}
+
+export async function listFinanceGLAccounts(token: string): Promise<FinanceGLAccount[]> {
+  return apiRequest<FinanceGLAccount[]>('/finance/gl/accounts', { token })
+}
+
+export async function createFinanceGLCostCenter(token: string, input: CreateFinanceGLCostCenterInput): Promise<FinanceGLCostCenter> {
+  return apiRequest<FinanceGLCostCenter>('/finance/gl/cost-centers', { method: 'POST', token, body: input })
+}
+
+export async function listFinanceGLCostCenters(token: string): Promise<FinanceGLCostCenter[]> {
+  return apiRequest<FinanceGLCostCenter[]>('/finance/gl/cost-centers', { token })
+}
+
+export async function createFinanceGLJournalEntry(token: string, input: CreateFinanceGLJournalEntryInput): Promise<FinanceGLJournalEntry> {
+  return apiRequest<FinanceGLJournalEntry>('/finance/gl/journal-entries', { method: 'POST', token, body: input })
+}
+
+export async function listFinanceGLJournalEntries(token: string): Promise<FinanceGLJournalEntry[]> {
+  return apiRequest<FinanceGLJournalEntry[]>('/finance/gl/journal-entries', { token })
+}
+
+export async function getFinanceGLJournalEntry(token: string, id: string): Promise<FinanceGLJournalEntry> {
+  return apiRequest<FinanceGLJournalEntry>(`/finance/gl/journal-entries/${encodeURIComponent(id)}`, { token })
+}
+
+export async function postFinanceGLJournalEntry(token: string, id: string): Promise<FinanceGLJournalEntry> {
+  return apiRequest<FinanceGLJournalEntry>(`/finance/gl/journal-entries/${encodeURIComponent(id)}/post`, { method: 'POST', token })
+}
+
+export async function getFinanceGLTrialBalance(token: string, input: FinanceGLTrialBalanceInput = {}): Promise<FinanceGLTrialBalance> {
+  const params = new URLSearchParams()
+  if (input.organization_id) params.set('organization_id', input.organization_id)
+  if (input.period_start) params.set('period_start', input.period_start)
+  if (input.period_end) params.set('period_end', input.period_end)
+  if (input.currency) params.set('currency', input.currency)
+  const query = params.toString()
+  return apiRequest<FinanceGLTrialBalance>(`/finance/gl/trial-balance${query ? `?${query}` : ''}`, { token })
+}
+
 export async function importFinanceExpenses(token: string, input: ImportFinanceExpensesInput): Promise<FinanceImportResult> {
   return apiRequest<FinanceImportResult>('/finance/imports', { method: 'POST', token, body: input })
 }
@@ -2709,6 +2751,134 @@ export interface FinanceReconciliationItem {
   error_message: string
   submitted_at?: string
   updated_at: string
+}
+
+export interface FinanceGLAccount {
+  id: string
+  master_key?: string
+  account_code: string
+  name: string
+  account_type: string
+  currency: string
+  parent_account_code: string
+  postable: boolean
+  active: boolean
+  organization_id?: string
+  department_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateFinanceGLAccountInput {
+  account_code: string
+  name: string
+  account_type?: string
+  currency?: string
+  parent_account_code?: string
+  postable?: boolean
+  active?: boolean
+  organization_id?: string
+  department_id?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface FinanceGLCostCenter {
+  id: string
+  master_key?: string
+  cost_center_code: string
+  name: string
+  active: boolean
+  organization_id?: string
+  department_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateFinanceGLCostCenterInput {
+  cost_center_code: string
+  name: string
+  active?: boolean
+  organization_id?: string
+  department_id?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface FinanceGLJournalEntryLine {
+  id: string
+  entry_id: string
+  line_num: number
+  account_code: string
+  account_name: string
+  cost_center_code: string
+  debit: number
+  credit: number
+  description: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface FinanceGLJournalEntry {
+  id: string
+  master_key?: string
+  entry_number: string
+  reference_date: string
+  memo: string
+  status: string
+  currency: string
+  source_type: string
+  source_id?: string
+  organization_id?: string
+  department_id?: string
+  metadata: Record<string, unknown>
+  lines?: FinanceGLJournalEntryLine[]
+  posted_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateFinanceGLJournalEntryInput {
+  entry_number?: string
+  reference_date: string
+  memo?: string
+  currency?: string
+  source_type?: string
+  source_id?: string
+  organization_id?: string
+  department_id?: string
+  metadata?: Record<string, unknown>
+  lines: Array<{
+    account_code: string
+    account_name?: string
+    cost_center_code?: string
+    debit?: number
+    credit?: number
+    description?: string
+    metadata?: Record<string, unknown>
+  }>
+}
+
+export interface FinanceGLTrialBalanceInput {
+  organization_id?: string
+  period_start?: string
+  period_end?: string
+  currency?: string
+}
+
+export interface FinanceGLTrialBalanceRow {
+  account_code: string
+  account_name: string
+  debit: number
+  credit: number
+  net_amount: number
+}
+
+export interface FinanceGLTrialBalance {
+  rows: FinanceGLTrialBalanceRow[]
+  total_debit: number
+  total_credit: number
+  currency: string
 }
 
 export interface ImportFinanceExpensesInput {
