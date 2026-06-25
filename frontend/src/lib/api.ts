@@ -739,6 +739,29 @@ export async function getPlatformAssistantContextHealth(token: string, organizat
   return apiRequest<AssistantContextHealthSummary>(`/platform/admin/assistant/context-health${query}`, { token })
 }
 
+export async function getMonitoringAgentStatus(token: string, organizationID?: string): Promise<MonitoringAgentStatus> {
+  const query = organizationID ? `?organization_id=${encodeURIComponent(organizationID)}` : ''
+  return apiRequest<MonitoringAgentStatus>(`/platform/admin/monitoring-agent/status${query}`, { token })
+}
+
+export async function runMonitoringAgent(
+  token: string,
+  input: { organization_id?: string; lookback_hours?: number } = {},
+): Promise<MonitoringAgentRun> {
+  return apiRequest<MonitoringAgentRun>('/platform/admin/monitoring-agent/runs', {
+    method: 'POST',
+    token,
+    body: input,
+  })
+}
+
+export async function listMonitoringAgentRuns(token: string, organizationID?: string, limit = 20): Promise<MonitoringAgentRun[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (organizationID) params.set('organization_id', organizationID)
+  const result = await apiRequest<{ runs: MonitoringAgentRun[] }>(`/platform/admin/monitoring-agent/runs?${params.toString()}`, { token })
+  return result.runs
+}
+
 export async function listAssistantProposals(token: string, sessionID: string): Promise<AssistantProposal[]> {
   return apiRequest<AssistantProposal[]>(`/assistant/sessions/${sessionID}/proposals`, { token })
 }
@@ -2380,6 +2403,29 @@ export interface AssistantContextHealthSummary {
   approved_proposal_count: number
   applied_proposal_count: number
   tool_approval_backlog: number
+}
+
+export interface MonitoringAgentRun {
+  id: string
+  trigger_type: string
+  organization_id?: string
+  status: string
+  lookback_started_at: string
+  lookback_ended_at: string
+  signals_created: number
+  duplicates_suppressed: number
+  summary: Record<string, unknown>
+  error_message?: string
+  started_at: string
+  completed_at?: string
+}
+
+export interface MonitoringAgentStatus {
+  scheduler_enabled: boolean
+  daily_time: string
+  lookback_hours: number
+  max_signals_per_run: number
+  latest_run?: MonitoringAgentRun
 }
 
 export interface AssistantProposal {

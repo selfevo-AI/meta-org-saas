@@ -37,3 +37,47 @@ func TestLoadSecurityKernelConfig(t *testing.T) {
 		t.Fatalf("MetaOrgLicenseMode = %q", cfg.MetaOrgLicenseMode)
 	}
 }
+
+func TestLoadMonitoringAgentConfigDefaultsToDisabledScheduler(t *testing.T) {
+	t.Setenv("MONITORING_AGENT_SCHEDULER_ENABLED", "")
+	t.Setenv("MONITORING_AGENT_DAILY_TIME", "")
+	t.Setenv("MONITORING_AGENT_LOOKBACK_HOURS", "")
+	t.Setenv("MONITORING_AGENT_MAX_SIGNALS_PER_RUN", "")
+
+	cfg := Load()
+
+	if cfg.MonitoringAgentSchedulerEnabled {
+		t.Fatal("MonitoringAgentSchedulerEnabled = true, want false")
+	}
+	if cfg.MonitoringAgentDailyTime != "02:00" {
+		t.Fatalf("MonitoringAgentDailyTime = %q, want 02:00", cfg.MonitoringAgentDailyTime)
+	}
+	if cfg.MonitoringAgentLookbackHours != 24 {
+		t.Fatalf("MonitoringAgentLookbackHours = %d, want 24", cfg.MonitoringAgentLookbackHours)
+	}
+	if cfg.MonitoringAgentMaxSignalsPerRun != 100 {
+		t.Fatalf("MonitoringAgentMaxSignalsPerRun = %d, want 100", cfg.MonitoringAgentMaxSignalsPerRun)
+	}
+}
+
+func TestLoadMonitoringAgentConfigCanEnableScheduler(t *testing.T) {
+	t.Setenv("MONITORING_AGENT_SCHEDULER_ENABLED", "true")
+	t.Setenv("MONITORING_AGENT_DAILY_TIME", "03:30")
+	t.Setenv("MONITORING_AGENT_LOOKBACK_HOURS", "48")
+	t.Setenv("MONITORING_AGENT_MAX_SIGNALS_PER_RUN", "25")
+
+	cfg := Load()
+
+	if !cfg.MonitoringAgentSchedulerEnabled {
+		t.Fatal("MonitoringAgentSchedulerEnabled = false, want true")
+	}
+	if cfg.MonitoringAgentDailyTime != "03:30" {
+		t.Fatalf("MonitoringAgentDailyTime = %q, want 03:30", cfg.MonitoringAgentDailyTime)
+	}
+	if cfg.MonitoringAgentLookbackHours != 48 {
+		t.Fatalf("MonitoringAgentLookbackHours = %d, want 48", cfg.MonitoringAgentLookbackHours)
+	}
+	if cfg.MonitoringAgentMaxSignalsPerRun != 25 {
+		t.Fatalf("MonitoringAgentMaxSignalsPerRun = %d, want 25", cfg.MonitoringAgentMaxSignalsPerRun)
+	}
+}
