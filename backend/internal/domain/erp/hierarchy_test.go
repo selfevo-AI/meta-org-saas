@@ -19,13 +19,49 @@ func TestDefaultCatalogIncludesERPBusinessHierarchy(t *testing.T) {
 		{"Sales", "Sales Orders", "Sales Order", "MRDR", "RDR1", "confirm"},
 		{"Sales", "A/R Invoices", "A/R Invoice", "MINV", "INV1", "post"},
 		{"Inventory", "Goods Issues", "Goods Issue", "MIGE", "IGE1", "post"},
+		{"Finance", "Chart of Accounts", "G/L Account", "MACT", "AACT", ""},
+		{"Finance", "Cost Centers", "Cost Center", "MPRC", "APRC", ""},
 		{"Finance", "Journal Entries", "Journal Entry", "MJDT", "JDT1", "post"},
+		{"Finance", "Trial Balance", "Trial Balance", "MGLR", "", "run"},
 		{"Master Data", "Items", "Item", "MITM", "ITM1", ""},
 	}
 
 	for _, tc := range cases {
 		if !catalog.HasBusinessDocument(tc.module, tc.submodule, tc.document, tc.table, tc.child, tc.action) {
 			t.Fatalf("catalog missing hierarchy %#v", tc)
+		}
+	}
+}
+
+func TestDefaultCatalogGLFieldsUseProjectCompatibleNames(t *testing.T) {
+	catalog := DefaultCatalog()
+
+	account, ok := catalog.Table("MACT")
+	if !ok {
+		t.Fatal("DefaultCatalog().Table(\"MACT\") missing")
+	}
+	for _, fieldName := range []string{"AcctCode", "Name", "AccountType", "Currency", "ParentAcctCode", "Postable", "Active"} {
+		if _, ok := account.Field(fieldName); !ok {
+			t.Fatalf("MACT missing field %s", fieldName)
+		}
+	}
+
+	journal, ok := catalog.Table("MJDT")
+	if !ok {
+		t.Fatal("DefaultCatalog().Table(\"MJDT\") missing")
+	}
+	for _, fieldName := range []string{"TransId", "ReferenceDate", "Memo", "Status", "Currency", "PostedAt"} {
+		if _, ok := journal.Field(fieldName); !ok {
+			t.Fatalf("MJDT missing field %s", fieldName)
+		}
+	}
+	line, ok := journal.Child("JDT1")
+	if !ok {
+		t.Fatal("MJDT child JDT1 missing")
+	}
+	for _, fieldName := range []string{"LineNum", "AccountCode", "Debit", "Credit", "CostCenterCode"} {
+		if _, ok := line.Field(fieldName); !ok {
+			t.Fatalf("JDT1 missing field %s", fieldName)
 		}
 	}
 }

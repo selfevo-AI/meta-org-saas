@@ -42,6 +42,15 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/finance/accounting-batches/{id}", h.getExportBatch)
 	r.Post("/finance/accounting-batches/{id}/submit", h.submitExportBatch)
 	r.Get("/finance/reconciliation", h.listReconciliation)
+	r.Post("/finance/gl/accounts", h.createGLAccount)
+	r.Get("/finance/gl/accounts", h.listGLAccounts)
+	r.Post("/finance/gl/cost-centers", h.createGLCostCenter)
+	r.Get("/finance/gl/cost-centers", h.listGLCostCenters)
+	r.Post("/finance/gl/journal-entries", h.createGLJournalEntry)
+	r.Get("/finance/gl/journal-entries", h.listGLJournalEntries)
+	r.Get("/finance/gl/journal-entries/{id}", h.getGLJournalEntry)
+	r.Post("/finance/gl/journal-entries/{id}/post", h.postGLJournalEntry)
+	r.Get("/finance/gl/trial-balance", h.getGLTrialBalance)
 	r.Post("/finance/imports", h.importExpenses)
 	r.Post("/finance/imports/files", h.importExpenseFile)
 	r.Post("/finance/imports/{adapterID}/pull", h.pullExpenses)
@@ -161,6 +170,85 @@ func (h *Handler) receiveWebhook(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listReconciliation(w http.ResponseWriter, r *http.Request) {
 	result, err := h.service.ListReconciliation(r.Context(), queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createGLAccount(w http.ResponseWriter, r *http.Request) {
+	var input CreateGLAccountInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.CreateGLAccount(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listGLAccounts(w http.ResponseWriter, r *http.Request) {
+	result, err := h.service.ListGLAccounts(r.Context(), queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createGLCostCenter(w http.ResponseWriter, r *http.Request) {
+	var input CreateGLCostCenterInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.CreateGLCostCenter(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listGLCostCenters(w http.ResponseWriter, r *http.Request) {
+	result, err := h.service.ListGLCostCenters(r.Context(), queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createGLJournalEntry(w http.ResponseWriter, r *http.Request) {
+	var input CreateGLJournalEntryInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.CreateGLJournalEntry(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listGLJournalEntries(w http.ResponseWriter, r *http.Request) {
+	result, err := h.service.ListGLJournalEntries(r.Context(), queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) getGLJournalEntry(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	result, err := h.service.GetGLJournalEntry(r.Context(), id)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) postGLJournalEntry(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	result, err := h.service.PostGLJournalEntry(r.Context(), id)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) getGLTrialBalance(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	input := GLTrialBalanceInput{
+		PeriodStart: query.Get("period_start"),
+		PeriodEnd:   query.Get("period_end"),
+		Currency:    query.Get("currency"),
+	}
+	if raw := query.Get("organization_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization_id"})
+			return
+		}
+		input.OrganizationID = &id
+	}
+	result, err := h.service.GetGLTrialBalance(r.Context(), input)
 	writeResult(w, http.StatusOK, result, err)
 }
 

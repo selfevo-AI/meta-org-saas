@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   createERPChildRecord,
   createERPRecord,
+  getFinanceGLTrialBalance,
   listERPActionExecutions,
   listERPChildRecords,
   listERPRecords,
@@ -13,6 +14,7 @@ import {
   runERPAction,
   type ERPActionExecution,
   type ERPActionResult,
+  type FinanceGLTrialBalance,
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import type { ApiOperation } from '@/lib/operations'
@@ -34,6 +36,7 @@ type DocumentConfig = {
   actions?: string[]
   sortOrder?: number
   actionParams?: Record<string, unknown>
+  kind?: 'document' | 'report'
 }
 
 type ERPBusinessModuleWorkspaceProps = {
@@ -84,10 +87,13 @@ const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
     { id: 'goods_issue', labelKey: 'erp.document.goodsIssue', submoduleKey: 'erp.submodule.goodsIssues', tableCode: 'MIGE', primaryKey: 'DocEntry', childCode: 'IGE1', actions: ['post'] },
   ],
   finance: [
-    { id: 'journal_entry', labelKey: 'erp.document.journalEntry', submoduleKey: 'erp.submodule.journalEntries', tableCode: 'MJDT', primaryKey: 'TransId', childCode: 'JDT1', actions: ['post'] },
-    { id: 'ar_invoice', labelKey: 'erp.document.arInvoice', submoduleKey: 'erp.submodule.arInvoices', tableCode: 'MINV', primaryKey: 'DocEntry', childCode: 'INV1', actions: ['post'] },
-    { id: 'ap_invoice', labelKey: 'erp.document.apInvoice', submoduleKey: 'erp.submodule.apInvoices', tableCode: 'MPCH', primaryKey: 'DocEntry', childCode: 'PCH1' },
-    { id: 'incoming_payment', labelKey: 'erp.document.incomingPayment', submoduleKey: 'erp.submodule.incomingPayments', tableCode: 'MRCT', primaryKey: 'DocEntry', childCode: 'RCT1', actions: ['allocate'] },
+    { id: 'gl_account', labelKey: 'erp.document.glAccount', submoduleKey: 'erp.submodule.chartOfAccounts', tableCode: 'MACT', primaryKey: 'AcctCode', childCode: 'AACT', sortOrder: 10 },
+    { id: 'cost_center', labelKey: 'erp.document.costCenter', submoduleKey: 'erp.submodule.costCenters', tableCode: 'MPRC', primaryKey: 'PrcCode', childCode: 'APRC', sortOrder: 20 },
+    { id: 'journal_entry', labelKey: 'erp.document.journalEntry', submoduleKey: 'erp.submodule.journalEntries', tableCode: 'MJDT', primaryKey: 'TransId', childCode: 'JDT1', actions: ['post'], sortOrder: 30 },
+    { id: 'trial_balance', labelKey: 'erp.document.trialBalance', submoduleKey: 'erp.submodule.trialBalance', tableCode: 'MGLR', primaryKey: 'ReportCode', actions: ['run'], sortOrder: 40, kind: 'report' },
+    { id: 'ar_invoice', labelKey: 'erp.document.arInvoice', submoduleKey: 'erp.submodule.arInvoices', tableCode: 'MINV', primaryKey: 'DocEntry', childCode: 'INV1', actions: ['post'], sortOrder: 50 },
+    { id: 'ap_invoice', labelKey: 'erp.document.apInvoice', submoduleKey: 'erp.submodule.apInvoices', tableCode: 'MPCH', primaryKey: 'DocEntry', childCode: 'PCH1', sortOrder: 60 },
+    { id: 'incoming_payment', labelKey: 'erp.document.incomingPayment', submoduleKey: 'erp.submodule.incomingPayments', tableCode: 'MRCT', primaryKey: 'DocEntry', childCode: 'RCT1', actions: ['allocate'], sortOrder: 70 },
   ],
 }
 
@@ -109,6 +115,7 @@ function deriveRuntimeDocuments(operations: ApiOperation[], module: ERPBusinessM
       childCode: textValue(workspace.child_code) || undefined,
       actions: [],
       sortOrder: numberValue(workspace.sort_order),
+      kind: textValue(workspace.kind) === 'report' ? 'report' : 'document',
     }
     const action = textValue(workspace.action)
     if (action && !(current.actions ?? []).includes(action)) {
@@ -142,6 +149,24 @@ function mergeActions(left: string[] | undefined, right: string[] | undefined) {
     if (!items.includes(action)) items.push(action)
   }
   return items.length > 0 ? items : undefined
+}
+
+async function loadBusinessRecords(token: string, document: DocumentConfig): Promise<ERPBusinessRecord[]> {
+  if (document.kind === 'report' && document.tableCode === 'MGLR') {
+    return trialBalanceRecords(await getFinanceGLTrialBalance(token, { currency: 'CNY' }))
+  }
+  return listERPRecords<ERPBusinessRecord>(token, document.tableCode, 100)
+}
+
+function trialBalanceRecords(balance: FinanceGLTrialBalance): ERPBusinessRecord[] {
+  return (balance.rows ?? []).map((row) => ({
+    ...row,
+    key: row.account_code,
+    ReportCode: 'trial-balance',
+    Currency: balance.currency,
+    TotalDebit: balance.total_debit,
+    TotalCredit: balance.total_credit,
+  }))
 }
 
 export function ERPBusinessModuleWorkspace({ token, module, externalSelection }: ERPBusinessModuleWorkspaceProps) {
@@ -196,13 +221,17 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
     setBusy(true)
     setError('')
     try {
-      const items = await listERPRecords<ERPBusinessRecord>(token, document.tableCode, 100)
+      const items = await loadBusinessRecords(token, document)
       setRecords(items)
       setSelectedKey((current) => {
         if (current && items.some((item) => item.key === current)) return current
         if (externalSelection?.targetID && items.some((item) => item.key === externalSelection.targetID)) return externalSelection.targetID
         return items[0]?.key || ''
       })
+      if (document.kind === 'report') {
+        setChildRows([])
+        setActionExecutions([])
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('erp.business.loadFailed'))
     } finally {
@@ -240,7 +269,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   useEffect(() => {
     if (!activeDocument) return
     let cancelled = false
-    listERPRecords<ERPBusinessRecord>(token, activeDocument.tableCode, 100)
+    loadBusinessRecords(token, activeDocument)
       .then((items) => {
         if (cancelled) return
         setRecords(items)
@@ -259,7 +288,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   }, [activeDocument, externalSelection?.targetID, t, token])
 
   useEffect(() => {
-    if (!activeDocument?.childCode || !selectedKey) {
+    if (!activeDocument?.childCode || activeDocument.kind === 'report' || !selectedKey) {
       const timer = window.setTimeout(() => setChildRows([]), 0)
       return () => window.clearTimeout(timer)
     }
@@ -280,7 +309,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   }, [activeDocument, selectedKey, t, token])
 
   useEffect(() => {
-    if (!activeDocument || !selectedKey) {
+    if (!activeDocument || activeDocument.kind === 'report' || !selectedKey) {
       const timer = window.setTimeout(() => setActionExecutions([]), 0)
       return () => window.clearTimeout(timer)
     }
@@ -298,7 +327,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   }, [activeDocument, selectedKey, token])
 
   async function handleCreateRecord() {
-    if (!activeDocument || !form.key.trim()) return
+    if (!activeDocument || activeDocument.kind === 'report' || !form.key.trim()) return
     setBusy(true)
     setError('')
     setNotice('')
@@ -316,7 +345,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   }
 
   async function handleCreateLine() {
-    if (!activeDocument?.childCode || !selectedKey) return
+    if (!activeDocument?.childCode || activeDocument.kind === 'report' || !selectedKey) return
     setBusy(true)
     setError('')
     setNotice('')
@@ -343,11 +372,16 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
   }
 
   async function handleAction(action: string) {
-    if (!activeDocument || !selectedKey) return
+    if (!activeDocument || (!selectedKey && activeDocument.kind !== 'report')) return
     setBusy(true)
     setError('')
     setNotice('')
     try {
+      if (activeDocument.kind === 'report' && activeDocument.tableCode === 'MGLR' && action === 'run') {
+        await loadRecords(activeDocument)
+        setNotice(t('erp.business.reportRan'))
+        return
+      }
       const result = await runERPAction<ERPBusinessRecord>(token, activeDocument.tableCode, selectedKey, action, buildActionData(action, form))
       setActionResult(result)
       setNotice(t('erp.business.actionDone'))
@@ -444,25 +478,27 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
               businessTimeline={businessTimeline}
             />
 
-            <section className="rounded-lg border border-slate-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.createDocument')}</h3>
-              <div className="mt-3 space-y-2">
-                <ERPInput label={t('erp.business.key')} value={form.key} onChange={(value) => setForm((current) => ({ ...current, key: value }))} placeholder={activeDocument.primaryKey} />
-                <ERPInput label={t('erp.business.name')} value={form.name} onChange={(value) => setForm((current) => ({ ...current, name: value }))} placeholder={t(activeDocument.labelKey)} />
-                <ERPInput label={t('erp.business.cardCode')} value={form.cardCode} onChange={(value) => setForm((current) => ({ ...current, cardCode: value }))} placeholder="C-1001" />
-                <button
-                  type="button"
-                  onClick={() => void handleCreateRecord()}
-                  disabled={busy || !form.key.trim()}
-                  className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-white transition hover:bg-[#B84F18] disabled:opacity-50"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('erp.business.createDocument')}
-                </button>
-              </div>
-            </section>
+            {activeDocument.kind !== 'report' && (
+              <section className="rounded-lg border border-slate-200 bg-white p-4">
+                <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.createDocument')}</h3>
+                <div className="mt-3 space-y-2">
+                  <ERPInput label={t('erp.business.key')} value={form.key} onChange={(value) => setForm((current) => ({ ...current, key: value }))} placeholder={activeDocument.primaryKey} />
+                  <ERPInput label={t('erp.business.name')} value={form.name} onChange={(value) => setForm((current) => ({ ...current, name: value }))} placeholder={t(activeDocument.labelKey)} />
+                  <ERPInput label={t('erp.business.cardCode')} value={form.cardCode} onChange={(value) => setForm((current) => ({ ...current, cardCode: value }))} placeholder="C-1001" />
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateRecord()}
+                    disabled={busy || !form.key.trim()}
+                    className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-white transition hover:bg-[#B84F18] disabled:opacity-50"
+                  >
+                    <Plus className="h-4 w-4" />
+                    {t('erp.business.createDocument')}
+                  </button>
+                </div>
+              </section>
+            )}
 
-            {activeDocument.childCode && (
+            {activeDocument.kind !== 'report' && activeDocument.childCode && (
               <section className="rounded-lg border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.createLine')}</h3>
                 <div className="mt-3 space-y-2">
@@ -501,7 +537,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
                       key={action}
                       type="button"
                       onClick={() => void handleAction(action)}
-                      disabled={busy || !selectedKey}
+                      disabled={busy || (!selectedKey && activeDocument.kind !== 'report')}
                       className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:opacity-50"
                     >
                       <Play className="h-4 w-4" />
@@ -579,12 +615,22 @@ function ERPDocumentDetail({
     )
   }
   const status = recordStatus(record) || 'ready'
-  const fields = [
-    { label: document.primaryKey, value: record.key },
-    { label: 'erp.business.statusReason', value: status },
-    { label: 'erp.business.relatedProject', value: String(record.ProjectCode || record.PrjCode || record.RequirementCode || record.BaseEntry || '') },
-    { label: 'erp.business.costImpact', value: String(record.DocTotal || record.PaidToDate || record.OpenBal || record.LastCostCode || '') },
-  ]
+  const fields =
+    document.kind === 'report'
+      ? [
+          { label: 'finance.accountCode', value: String(record.account_code || record.key) },
+          { label: 'common.name', value: String(record.account_name || '') },
+          { label: 'finance.debit', value: displayValue(record.debit) },
+          { label: 'finance.credit', value: displayValue(record.credit) },
+          { label: 'finance.netAmount', value: displayValue(record.net_amount) },
+          { label: 'finance.currency', value: String(record.Currency || '') },
+        ]
+      : [
+          { label: document.primaryKey, value: record.key },
+          { label: 'erp.business.statusReason', value: status },
+          { label: 'erp.business.relatedProject', value: String(record.ProjectCode || record.PrjCode || record.RequirementCode || record.BaseEntry || '') },
+          { label: 'erp.business.costImpact', value: String(record.DocTotal || record.PaidToDate || record.OpenBal || record.LastCostCode || '') },
+        ]
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="flex items-start justify-between gap-3">
@@ -735,6 +781,9 @@ function buildActionData(action: string, form: { targetKey: string; amount: stri
 
 function isERPActionAvailable(document: DocumentConfig | undefined, record: ERPBusinessRecord | undefined, action: string): ERPActionAvailability {
   if (!document || !record) {
+    if (document?.kind === 'report' && action === 'run') {
+      return { action, available: true, reasonKey: 'ready' }
+    }
     return { action, available: false, reasonKey: 'common.notSelected' }
   }
   if (isClosedOrPosted(record) && !['refresh-cost', 'close-feedback'].includes(action)) {
@@ -866,7 +915,7 @@ function recordMap(value: unknown): Record<string, unknown> {
 }
 
 function recordTitle(record: ERPBusinessRecord) {
-  return String(record.Name || record.CardCode || record.ItemCode || record.WhsCode || record.PrjCode || record.DocEntry || record.TransId || record.key)
+  return String(record.Name || record.name || record.account_name || record.account_code || record.CardCode || record.ItemCode || record.WhsCode || record.PrjCode || record.DocEntry || record.TransId || record.key)
 }
 
 function recordStatus(record: ERPBusinessRecord) {

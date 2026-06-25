@@ -49,7 +49,10 @@ tenant departments, project lifecycle, workflow, finance, costing,
 supply-chain, ERP action execution ledger tables, and other ERP-facing domain
 structures. This file can change when the SaaS platform creates or adjusts an
 industry solution. The ERP action ledger uses `MAEX` and `AEX1`; `MACT` remains
-the ERP G/L account table.
+the ERP G/L account table. Semantic GL runtime tables such as `gl_accounts`,
+`gl_cost_centers`, `gl_journal_entries`, and `gl_journal_entry_lines` also
+belong here because they are tenant ERP/finance structures behind the
+compatible ERP table codes (`MACT`, `MPRC`, `MJDT`, `JDT1`, `MGLR`).
 
 ## Organization And Department Boundary
 
@@ -73,7 +76,9 @@ they are AI capability structures owned by `004_ai_capability_baseline.sql`.
 
 `002_erp_platform_integration_baseline.sql` owns runtime integration between the
 ERP baseline and the SaaS platform: platform projections, module synchronization,
-and ERP/platform master-data integration.
+ERP/platform master-data integration, and cross-stage runtime operations that
+depend on ERP assets, such as the Finance trial-balance operation
+`erp.finance.trial_balance.run` mapped to `/finance/gl/trial-balance`.
 
 `004_ai_capability_baseline.sql` owns AI capability structures: model providers,
 models, model channels, agents, AI invocation and usage ledger, tool runtime,

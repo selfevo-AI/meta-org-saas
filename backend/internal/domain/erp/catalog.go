@@ -4,6 +4,11 @@ func DefaultCatalog() Catalog {
 	tables := []TableDefinition{
 		table("MACT", "G/L Accounts", "finance", "AcctCode", []FieldDefinition{
 			field("AcctCode", "nVarChar", "15", "Account Code", true),
+			field("Name", "nVarChar", "155", "Account Name", false),
+			field("AccountType", "VarChar", "20", "Account Type", false),
+			field("Currency", "nVarChar", "3", "Currency", false),
+			field("ParentAcctCode", "nVarChar", "15", "Parent Account Code", false),
+			field("Active", "VarChar", "1", "Active", false),
 			field("Finanse", "VarChar", "1", "Cash Account", false),
 			field("Budget", "VarChar", "1", "Budget", false),
 			field("Frozen", "VarChar", "1", "Account on Hold [Y/N]", false),
@@ -21,14 +26,22 @@ func DefaultCatalog() Catalog {
 			field("BatchNum", "Int", "11", "Batch Number", true),
 			field("Status", "VarChar", "1", "Open/Closed Document", false),
 		}),
-		table("MBTF", "Journal Voucher Entry", "finance", "BatchNum", journalFields("BatchNum"), child("BTF1", "Journal Voucher - Rows", "BatchNum")),
-		table("MJDT", "Journal Entry", "finance", "TransId", journalFields("TransId"), child("JDT1", "Journal Entry - Rows", "TransId")),
+		table("MBTF", "Journal Voucher Entry", "finance", "BatchNum", journalFields("BatchNum"), journalRowChild("BTF1", "Journal Voucher - Rows", "BatchNum")),
+		table("MJDT", "Journal Entry", "finance", "TransId", journalFields("TransId"), journalRowChild("JDT1", "Journal Entry - Rows", "TransId")),
 		table("MPRC", "Cost Center", "finance", "PrcCode", []FieldDefinition{
 			field("PrcCode", "nVarChar", "8", "Cost Center Code", true),
 			field("Locked", "VarChar", "1", "Locked", false),
 			field("DataSource", "VarChar", "1", "Data Source", false),
 			field("Active", "VarChar", "1", "Active", false),
 		}, child("APRC", "Cost Center", "PrcCode")),
+		table("MGLR", "Trial Balance", "finance", "ReportCode", []FieldDefinition{
+			field("ReportCode", "nVarChar", "64", "Report Code", true),
+			field("PeriodStart", "Date", "", "Period Start", false),
+			field("PeriodEnd", "Date", "", "Period End", false),
+			field("Currency", "nVarChar", "3", "Currency", false),
+			field("TotalDebit", "Numeric", "19,6", "Total Debit", false),
+			field("TotalCredit", "Numeric", "19,6", "Total Credit", false),
+		}),
 		table("MCRD", "Business Partners", "partner", "CardCode", append([]FieldDefinition{
 			field("CardCode", "nVarChar", "15", "Business Partner Code", true),
 			field("CardName", "nVarChar", "100", "Business Partner Name", false),
@@ -197,6 +210,7 @@ func defaultModules() []ModuleDefinition {
 			submoduleDef("chart_of_accounts", "Chart of Accounts", docDef("gl_account", "G/L Account", "MACT", []string{"AACT"}, nil)),
 			submoduleDef("cost_centers", "Cost Centers", docDef("cost_center", "Cost Center", "MPRC", []string{"APRC"}, nil)),
 			submoduleDef("journal_entries", "Journal Entries", docDef("journal_entry", "Journal Entry", "MJDT", []string{"JDT1"}, []string{"post"})),
+			submoduleDef("trial_balance", "Trial Balance", docDef("trial_balance", "Trial Balance", "MGLR", nil, []string{"run"})),
 			submoduleDef("journal_vouchers", "Journal Vouchers", docDef("journal_voucher", "Journal Voucher", "MBTF", []string{"BTF1"}, nil)),
 		),
 		moduleDef("platform", "Platform",
@@ -237,6 +251,19 @@ func child(code, name, parentKey string) ChildTableDefinition {
 	}
 }
 
+func journalRowChild(code, name, parentKey string) ChildTableDefinition {
+	def := child(code, name, parentKey)
+	def.Fields = append(def.Fields,
+		field("AccountCode", "nVarChar", "15", "Account Code", false),
+		field("AccountName", "nVarChar", "155", "Account Name", false),
+		field("Debit", "Numeric", "19,6", "Debit", false),
+		field("Credit", "Numeric", "19,6", "Credit", false),
+		field("CostCenterCode", "nVarChar", "8", "Cost Center Code", false),
+		field("Description", "nVarChar", "254", "Description", false),
+	)
+	return def
+}
+
 func field(name, dataType, size, description string, primaryKey bool) FieldDefinition {
 	return FieldDefinition{Name: name, DataType: dataType, Size: size, Description: description, PrimaryKey: primaryKey}
 }
@@ -254,6 +281,11 @@ func journalFields(primaryKey string) []FieldDefinition {
 		field("Printed", "VarChar", "1", "Printed", false),
 		field("Project", "nVarChar", "20", "Project", false),
 		field("RefDate", "Date", "", "Reference Date", false),
+		field("ReferenceDate", "Date", "", "Reference Date", false),
+		field("Memo", "nVarChar", "254", "Memo", false),
+		field("Status", "VarChar", "20", "Status", false),
+		field("Currency", "nVarChar", "3", "Currency", false),
+		field("PostedAt", "DateTime", "", "Posted At", false),
 	}
 }
 

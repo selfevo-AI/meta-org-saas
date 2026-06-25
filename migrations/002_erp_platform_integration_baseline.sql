@@ -191,6 +191,62 @@ ON CONFLICT (operation_key) DO UPDATE SET
     entity_key = EXCLUDED.entity_key,
     updated_at = NOW();
 
+INSERT INTO platform.runtime_operations(
+    operation_key, domain, title, method, path, auth, query_params,
+    operation_kind, danger_level, result_view, assistant_eligible,
+    action_type, entity_key, metadata
+)
+VALUES (
+    'erp.finance.trial_balance.run',
+    'ERP',
+    'operation.erp.MGLR.run',
+    'GET',
+    '/finance/gl/trial-balance',
+    TRUE,
+    '[
+        {"name":"period_start","label":"operation.param.periodStart","placeholder":"YYYY-MM-DD"},
+        {"name":"period_end","label":"operation.param.periodEnd","placeholder":"YYYY-MM-DD"},
+        {"name":"currency","label":"operation.param.currency","placeholder":"CNY"}
+    ]'::jsonb,
+    'direct',
+    'low',
+    'list',
+    TRUE,
+    'finance.gl.trial_balance',
+    NULL,
+    '{
+        "source":"erp_platform_integration_seed",
+        "workspace":{
+            "module":"finance",
+            "document_id":"trial_balance",
+            "document_label_key":"erp.document.trialBalance",
+            "submodule_key":"erp.submodule.trialBalance",
+            "table_code":"MGLR",
+            "primary_key":"ReportCode",
+            "child_code":"",
+            "kind":"report",
+            "action":"run",
+            "state_gate":"MGLR.run",
+            "action_params":{},
+            "sort_order":41
+        }
+    }'::jsonb
+)
+ON CONFLICT (operation_key) DO UPDATE SET
+    domain = EXCLUDED.domain,
+    title = EXCLUDED.title,
+    method = EXCLUDED.method,
+    path = EXCLUDED.path,
+    query_params = EXCLUDED.query_params,
+    operation_kind = EXCLUDED.operation_kind,
+    danger_level = EXCLUDED.danger_level,
+    result_view = EXCLUDED.result_view,
+    assistant_eligible = EXCLUDED.assistant_eligible,
+    action_type = EXCLUDED.action_type,
+    entity_key = EXCLUDED.entity_key,
+    metadata = platform.runtime_operations.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
 
 SELECT platform.provision_runtime_organization(id)
 FROM public.organizations;

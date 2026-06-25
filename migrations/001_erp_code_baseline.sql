@@ -82,6 +82,7 @@ BEGIN
             ('JDT1','Journal Entry - Rows','finance','TransId','child','MJDT'),
             ('MPRC','Cost Center','finance','PrcCode','master',''),
             ('APRC','Cost Center','finance','PrcCode','child','MPRC'),
+            ('MGLR','Trial Balance','finance','ReportCode','master',''),
             ('MCRD','Business Partners','partner','CardCode','master',''),
             ('CRD1','Business Partners - Addresses','partner','CardCode','child','MCRD'),
             ('MITM','Items','product','ItemCode','master',''),
@@ -1038,6 +1039,109 @@ CREATE INDEX IF NOT EXISTS idx_finance_receipt_allocations_receipt
 CREATE INDEX IF NOT EXISTS idx_finance_receipt_allocations_receivable
     ON finance_receipt_allocations(receivable_id);
 
+CREATE TABLE IF NOT EXISTS gl_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_key TEXT NOT NULL DEFAULT next_business_key('gl_accounts', 'GLA'),
+    account_code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    account_type TEXT NOT NULL DEFAULT 'expense'
+        CHECK (account_type IN ('asset', 'liability', 'equity', 'revenue', 'expense', 'other')),
+    currency TEXT NOT NULL DEFAULT 'CNY' REFERENCES currencies(code) ON DELETE RESTRICT,
+    parent_account_code TEXT NOT NULL DEFAULT '',
+    postable BOOLEAN NOT NULL DEFAULT TRUE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    legacy_id UUID,
+    parent_master_table TEXT,
+    parent_master_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_accounts_master_key ON gl_accounts(master_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_accounts_org_code
+    ON gl_accounts(COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), account_code);
+CREATE INDEX IF NOT EXISTS idx_gl_accounts_active ON gl_accounts(active, account_type, account_code);
+
+CREATE TABLE IF NOT EXISTS gl_cost_centers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_key TEXT NOT NULL DEFAULT next_business_key('gl_cost_centers', 'GLC'),
+    cost_center_code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    legacy_id UUID,
+    parent_master_table TEXT,
+    parent_master_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_cost_centers_master_key ON gl_cost_centers(master_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_cost_centers_org_code
+    ON gl_cost_centers(COALESCE(organization_id, '00000000-0000-0000-0000-000000000000'::uuid), cost_center_code);
+CREATE INDEX IF NOT EXISTS idx_gl_cost_centers_active ON gl_cost_centers(active, cost_center_code);
+
+CREATE TABLE IF NOT EXISTS gl_journal_entries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_key TEXT NOT NULL DEFAULT next_business_key('gl_journal_entries', 'GLJ'),
+    entry_number TEXT NOT NULL DEFAULT '',
+    reference_date DATE NOT NULL,
+    memo TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'posted', 'void')),
+    currency TEXT NOT NULL DEFAULT 'CNY' REFERENCES currencies(code) ON DELETE RESTRICT,
+    source_type TEXT NOT NULL DEFAULT '',
+    source_id UUID,
+    organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    posted_at TIMESTAMPTZ,
+    legacy_id UUID,
+    parent_master_table TEXT,
+    parent_master_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_journal_entries_master_key ON gl_journal_entries(master_key);
+CREATE INDEX IF NOT EXISTS idx_gl_journal_entries_org_status
+    ON gl_journal_entries(organization_id, status, reference_date DESC);
+CREATE INDEX IF NOT EXISTS idx_gl_journal_entries_source
+    ON gl_journal_entries(source_type, source_id)
+    WHERE source_type <> '' AND source_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS gl_journal_entry_lines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    master_key TEXT NOT NULL DEFAULT next_business_key('gl_journal_entry_lines', 'GLL'),
+    entry_id UUID NOT NULL REFERENCES gl_journal_entries(id) ON DELETE CASCADE,
+    line_num INT NOT NULL,
+    account_code TEXT NOT NULL,
+    account_name TEXT NOT NULL DEFAULT '',
+    cost_center_code TEXT NOT NULL DEFAULT '',
+    debit NUMERIC(18,8) NOT NULL DEFAULT 0 CHECK (debit >= 0),
+    credit NUMERIC(18,8) NOT NULL DEFAULT 0 CHECK (credit >= 0),
+    description TEXT NOT NULL DEFAULT '',
+    metadata JSONB NOT NULL DEFAULT '{}',
+    legacy_id UUID,
+    parent_master_table TEXT,
+    parent_master_key TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_gl_journal_entry_lines_side CHECK (
+        (debit > 0 AND credit = 0) OR (credit > 0 AND debit = 0)
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_journal_entry_lines_master_key ON gl_journal_entry_lines(master_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_gl_journal_entry_lines_entry_line
+    ON gl_journal_entry_lines(entry_id, line_num);
+CREATE INDEX IF NOT EXISTS idx_gl_journal_entry_lines_account
+    ON gl_journal_entry_lines(account_code, cost_center_code);
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -1179,6 +1283,10 @@ VALUES
     ('finance', 'finance_webhook_events', 'finance_webhook_event', 'detail', 'finance_adapters', 'adapter_id', 'FWE'),
     ('finance', 'finance_import_batches', 'finance_import_batch', 'detail', 'finance_adapters', 'adapter_id', 'FIB'),
     ('finance', 'finance_import_records', 'finance_import_record', 'detail', 'finance_import_batches', 'batch_id', 'FIR'),
+    ('finance', 'gl_accounts', 'gl_account', 'master', NULL, NULL, 'GLA'),
+    ('finance', 'gl_cost_centers', 'gl_cost_center', 'master', NULL, NULL, 'GLC'),
+    ('finance', 'gl_journal_entries', 'gl_journal_entry', 'master', NULL, NULL, 'GLJ'),
+    ('finance', 'gl_journal_entry_lines', 'gl_journal_entry_line', 'detail', 'gl_journal_entries', 'entry_id', 'GLL'),
     ('finance', 'finance_payables', 'finance_payable', 'master', NULL, NULL, 'FPY'),
     ('finance', 'finance_payments', 'finance_payment', 'master', NULL, NULL, 'FPM'),
     ('finance', 'finance_payment_allocations', 'finance_payment_allocation', 'detail', 'finance_payments', 'payment_id', 'FPA'),

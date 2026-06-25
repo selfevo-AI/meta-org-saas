@@ -2,6 +2,7 @@ package finance
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -181,6 +182,9 @@ type fakeRepository struct {
 	receivableStatus                    string
 	mutateReceivableOnReceiptAllocation bool
 	payableForVoid                      *Payable
+	glAccounts                          map[string]GLAccount
+	glCostCenters                       map[string]GLCostCenter
+	glJournalEntries                    map[uuid.UUID]GLJournalEntry
 }
 
 func (f *fakeRepository) CreateAdapter(context.Context, CreateAdapterInput) (*FinanceAdapter, error) {
@@ -402,6 +406,225 @@ func (f *fakeRepository) UpdatePayment(context.Context, uuid.UUID, UpdatePayment
 
 func (f *fakeRepository) VoidPayment(context.Context, uuid.UUID, string) (*Payment, error) {
 	return &Payment{}, nil
+}
+
+func newFakeGLRepository() *fakeRepository {
+	return &fakeRepository{
+		glAccounts:       map[string]GLAccount{},
+		glCostCenters:    map[string]GLCostCenter{},
+		glJournalEntries: map[uuid.UUID]GLJournalEntry{},
+	}
+}
+
+func (f *fakeRepository) ensureGLStorage() {
+	if f.glAccounts == nil {
+		f.glAccounts = map[string]GLAccount{}
+	}
+	if f.glCostCenters == nil {
+		f.glCostCenters = map[string]GLCostCenter{}
+	}
+	if f.glJournalEntries == nil {
+		f.glJournalEntries = map[uuid.UUID]GLJournalEntry{}
+	}
+}
+
+func (f *fakeRepository) CreateGLAccount(_ context.Context, input CreateGLAccountInput) (*GLAccount, error) {
+	f.ensureGLStorage()
+	now := time.Now()
+	account := GLAccount{
+		ID:                uuid.New(),
+		MasterKey:         input.AccountCode,
+		AccountCode:       input.AccountCode,
+		Name:              input.Name,
+		AccountType:       input.AccountType,
+		Currency:          input.Currency,
+		ParentAccountCode: input.ParentAccountCode,
+		Postable:          boolFromPtr(input.Postable, true),
+		Active:            boolFromPtr(input.Active, true),
+		OrganizationID:    input.OrganizationID,
+		DepartmentID:      input.DepartmentID,
+		Metadata:          input.Metadata,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	f.glAccounts[account.AccountCode] = account
+	return &account, nil
+}
+
+func (f *fakeRepository) ListGLAccounts(context.Context, int) ([]GLAccount, error) {
+	f.ensureGLStorage()
+	items := make([]GLAccount, 0, len(f.glAccounts))
+	for _, item := range f.glAccounts {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].AccountCode < items[j].AccountCode
+	})
+	return items, nil
+}
+
+func (f *fakeRepository) CreateGLCostCenter(_ context.Context, input CreateGLCostCenterInput) (*GLCostCenter, error) {
+	f.ensureGLStorage()
+	now := time.Now()
+	center := GLCostCenter{
+		ID:             uuid.New(),
+		MasterKey:      input.CostCenterCode,
+		CostCenterCode: input.CostCenterCode,
+		Name:           input.Name,
+		Active:         boolFromPtr(input.Active, true),
+		OrganizationID: input.OrganizationID,
+		DepartmentID:   input.DepartmentID,
+		Metadata:       input.Metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	f.glCostCenters[center.CostCenterCode] = center
+	return &center, nil
+}
+
+func (f *fakeRepository) ListGLCostCenters(context.Context, int) ([]GLCostCenter, error) {
+	f.ensureGLStorage()
+	items := make([]GLCostCenter, 0, len(f.glCostCenters))
+	for _, item := range f.glCostCenters {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CostCenterCode < items[j].CostCenterCode
+	})
+	return items, nil
+}
+
+func (f *fakeRepository) CreateGLJournalEntry(_ context.Context, input CreateGLJournalEntryInput, referenceDate time.Time) (*GLJournalEntry, error) {
+	f.ensureGLStorage()
+	now := time.Now()
+	entry := GLJournalEntry{
+		ID:             uuid.New(),
+		MasterKey:      input.EntryNumber,
+		EntryNumber:    input.EntryNumber,
+		ReferenceDate:  referenceDate,
+		Memo:           input.Memo,
+		Status:         "draft",
+		Currency:       input.Currency,
+		SourceType:     input.SourceType,
+		SourceID:       input.SourceID,
+		OrganizationID: input.OrganizationID,
+		DepartmentID:   input.DepartmentID,
+		Metadata:       input.Metadata,
+		Lines:          make([]GLJournalEntryLine, 0, len(input.Lines)),
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if entry.MasterKey == "" {
+		entry.MasterKey = entry.ID.String()
+	}
+	for index, line := range input.Lines {
+		accountName := line.AccountName
+		if accountName == "" {
+			if account, ok := f.glAccounts[line.AccountCode]; ok {
+				accountName = account.Name
+			}
+		}
+		entry.Lines = append(entry.Lines, GLJournalEntryLine{
+			ID:             uuid.New(),
+			EntryID:        entry.ID,
+			LineNum:        index + 1,
+			AccountCode:    line.AccountCode,
+			AccountName:    accountName,
+			CostCenterCode: line.CostCenterCode,
+			Debit:          line.Debit,
+			Credit:         line.Credit,
+			Description:    line.Description,
+			Metadata:       line.Metadata,
+			CreatedAt:      now,
+		})
+	}
+	f.glJournalEntries[entry.ID] = entry
+	return &entry, nil
+}
+
+func (f *fakeRepository) ListGLJournalEntries(context.Context, int) ([]GLJournalEntry, error) {
+	f.ensureGLStorage()
+	items := make([]GLJournalEntry, 0, len(f.glJournalEntries))
+	for _, item := range f.glJournalEntries {
+		items = append(items, item)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ReferenceDate.After(items[j].ReferenceDate)
+	})
+	return items, nil
+}
+
+func (f *fakeRepository) GetGLJournalEntry(_ context.Context, id uuid.UUID) (*GLJournalEntry, error) {
+	f.ensureGLStorage()
+	entry, ok := f.glJournalEntries[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &entry, nil
+}
+
+func (f *fakeRepository) PostGLJournalEntry(_ context.Context, id uuid.UUID) (*GLJournalEntry, error) {
+	f.ensureGLStorage()
+	entry, ok := f.glJournalEntries[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	now := time.Now()
+	entry.Status = "posted"
+	entry.PostedAt = &now
+	entry.UpdatedAt = now
+	f.glJournalEntries[id] = entry
+	return &entry, nil
+}
+
+func (f *fakeRepository) GetGLTrialBalance(_ context.Context, input GLTrialBalanceInput) (*GLTrialBalance, error) {
+	f.ensureGLStorage()
+	rowsByAccount := map[string]*GLTrialBalanceRow{}
+	for _, entry := range f.glJournalEntries {
+		if entry.Status != "posted" {
+			continue
+		}
+		if input.OrganizationID != nil && (entry.OrganizationID == nil || *entry.OrganizationID != *input.OrganizationID) {
+			continue
+		}
+		if input.periodStartTime != nil && entry.ReferenceDate.Before(*input.periodStartTime) {
+			continue
+		}
+		if input.periodEndTime != nil && entry.ReferenceDate.After(*input.periodEndTime) {
+			continue
+		}
+		if input.Currency != "" && entry.Currency != input.Currency {
+			continue
+		}
+		for _, line := range entry.Lines {
+			row := rowsByAccount[line.AccountCode]
+			if row == nil {
+				row = &GLTrialBalanceRow{AccountCode: line.AccountCode, AccountName: line.AccountName}
+				if row.AccountName == "" {
+					if account, ok := f.glAccounts[line.AccountCode]; ok {
+						row.AccountName = account.Name
+					}
+				}
+				rowsByAccount[line.AccountCode] = row
+			}
+			row.Debit += line.Debit
+			row.Credit += line.Credit
+			row.NetAmount = row.Debit - row.Credit
+		}
+	}
+	accountCodes := make([]string, 0, len(rowsByAccount))
+	for accountCode := range rowsByAccount {
+		accountCodes = append(accountCodes, accountCode)
+	}
+	sort.Strings(accountCodes)
+	balance := &GLTrialBalance{Rows: []GLTrialBalanceRow{}, Currency: input.Currency}
+	for _, accountCode := range accountCodes {
+		row := *rowsByAccount[accountCode]
+		balance.TotalDebit += row.Debit
+		balance.TotalCredit += row.Credit
+		balance.Rows = append(balance.Rows, row)
+	}
+	return balance, nil
 }
 
 type fakeCostPoster struct{}
