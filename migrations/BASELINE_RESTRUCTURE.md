@@ -37,6 +37,15 @@ databases:
   platform-authoritative package and marketplace catalog for industry
   solutions, function modules, API capabilities, AI model profiles, and skills.
 
+The staged baseline seeds a local-development industry solution sample,
+`local_manufacturing_demo`, into `platform.capability_packages` and
+`platform.marketplace_listings`. It is metadata only: the package manifest
+declares a sample tenant database template, the `sample_work_orders` sample
+table, and the `sample.work_order.create` sample function. Physical database
+creation remains the responsibility of tenant database provisioning or approved
+database maintenance jobs because `CREATE DATABASE` cannot be executed inside
+the baseline transaction.
+
 The platform control plane owns package definitions, publication, review,
 authorization, marketplace listing, settlement policy, tenant database routing,
 and backup/restore orchestration. Tenant business databases own instantiated
@@ -120,6 +129,13 @@ platform control-plane target table, not derive deployment topology only from
 `org_<uuid>` schema names. Private deployments run a local platform control
 plane copy and synchronize only package, license, authorization, and settlement
 summaries with the central SaaS platform.
+
+SaaS onboarding now records the target first in the platform transaction and
+then attempts physical tenant database provisioning after the transaction has
+committed. A successful provisioning attempt marks the target `provisioned` and
+records the migration version. A failed attempt marks the target `failed` with
+diagnostic metadata while preserving the already-created platform organization,
+so a later maintenance/retry worker can continue from the catalog state.
 
 `002_erp_platform_integration_baseline.sql` owns runtime integration between the
 ERP baseline and the SaaS platform: platform projections, module synchronization,

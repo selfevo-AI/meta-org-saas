@@ -2188,6 +2188,136 @@ CREATE TABLE IF NOT EXISTS platform.marketplace_listings (
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_status
     ON platform.marketplace_listings(status, visibility, updated_at DESC);
 
+WITH sample_industry_solution AS (
+    INSERT INTO platform.capability_packages(
+        package_key, package_type, version_key, display_name, status,
+        artifact_hash, manifest, metadata
+    )
+    VALUES (
+        'local_manufacturing_demo',
+        'industry_solution',
+        'v1',
+        'Local Manufacturing Demo',
+        'published',
+        'sample-local-manufacturing-demo-v1',
+        '{
+            "manifest_version": "meta-org.industry-solution.v1",
+            "industry_key": "local_manufacturing",
+            "package_key": "local_manufacturing_demo",
+            "package_version": "v1",
+            "dependencies": ["tenant_database.provisioning", "platform.runtime_operations"],
+            "quality_gates": ["sample_work_order_schema_smoke"],
+            "verification_scenarios": ["sample_work_order_create"],
+            "assets": [
+                {
+                    "asset_key": "database_asset.sample_work_order",
+                    "asset_type": "database_asset",
+                    "version": "v1",
+                    "source": "platform_sample_seed",
+                    "owner": "platform",
+                    "risk_level": "low",
+                    "payload": {
+                        "table_name": "sample_work_orders",
+                        "display_name": "Sample work orders",
+                        "tenant_database_template": {
+                            "deployment_mode": "dedicated_database",
+                            "schema_name": "public",
+                            "database_name_prefix": "meta_org_tenant_sample_"
+                        },
+                        "fields": [
+                            {"field_name": "id", "data_type": "uuid", "primary_key": true, "default": "gen_random_uuid()"},
+                            {"field_name": "work_order_no", "data_type": "varchar(64)", "required": true},
+                            {"field_name": "status", "data_type": "varchar(32)", "required": true, "default": "draft"},
+                            {"field_name": "payload", "data_type": "jsonb", "required": true, "default": "{}"}
+                        ]
+                    }
+                },
+                {
+                    "asset_key": "runtime_operation.sample_work_order_create",
+                    "asset_type": "runtime_operation",
+                    "version": "v1",
+                    "source": "platform_sample_seed",
+                    "owner": "platform",
+                    "risk_level": "low",
+                    "payload": {
+                        "operation_key": "sample.work_order.create",
+                        "domain": "manufacturing_sample",
+                        "title": "operation.sample.workOrder.create",
+                        "method": "POST",
+                        "path": "/runtime/sample/work-orders",
+                        "operation_kind": "direct",
+                        "danger_level": "low",
+                        "result_view": "detail",
+                        "action_type": "sample.work_order.create",
+                        "workspace": {
+                            "module": "manufacturing_sample",
+                            "document_id": "sample_work_order",
+                            "kind": "document",
+                            "table_code": "SWOR",
+                            "action": "create"
+                        }
+                    }
+                },
+                {
+                    "asset_key": "ui_workspace.sample_work_order",
+                    "asset_type": "ui_workspace",
+                    "version": "v1",
+                    "source": "platform_sample_seed",
+                    "owner": "platform",
+                    "risk_level": "low",
+                    "payload": {
+                        "workspace_key": "sample.work_orders",
+                        "module": "manufacturing_sample",
+                        "document_id": "sample_work_order",
+                        "primary_operation": "sample.work_order.create"
+                    }
+                }
+            ]
+        }'::jsonb,
+        '{
+            "seed": true,
+            "sample_industry_solution": true,
+            "sample_scope": "local_development",
+            "tenant_database_template": {
+                "deployment_mode": "dedicated_database",
+                "schema_name": "public",
+                "database_name_prefix": "meta_org_tenant_sample_"
+            },
+            "notes": "Sample tenant database and sample function definition for SaaS management planning. Physical database creation is executed by tenant database provisioning, not by this baseline migration."
+        }'::jsonb
+    )
+    ON CONFLICT (package_key, package_type, version_key) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        status = EXCLUDED.status,
+        artifact_hash = EXCLUDED.artifact_hash,
+        manifest = EXCLUDED.manifest,
+        metadata = platform.capability_packages.metadata || EXCLUDED.metadata,
+        updated_at = NOW()
+    RETURNING id
+)
+INSERT INTO platform.marketplace_listings(
+    package_id, listing_type, status, visibility,
+    pricing_policy, license_policy, settlement_policy, metadata
+)
+SELECT
+    id,
+    'industry_solution',
+    'published',
+    'platform',
+    '{"billing_mode":"free_sample"}'::jsonb,
+    '{"license_scope":"local_development","private_deployment_allowed":true}'::jsonb,
+    '{"settlement_mode":"none"}'::jsonb,
+    '{"seed":true,"sample_industry_solution":true,"catalog":"saas_management_samples"}'::jsonb
+FROM sample_industry_solution
+ON CONFLICT (package_id, listing_type) DO UPDATE SET
+    status = EXCLUDED.status,
+    visibility = EXCLUDED.visibility,
+    pricing_policy = EXCLUDED.pricing_policy,
+    license_policy = EXCLUDED.license_policy,
+    settlement_policy = EXCLUDED.settlement_policy,
+    metadata = platform.marketplace_listings.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
 CREATE TABLE IF NOT EXISTS platform.database_maintenance_jobs (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_type      TEXT NOT NULL

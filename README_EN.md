@@ -175,6 +175,8 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 
 The stage principle is SaaS management platform first, then platform-created or platform-adjusted industry solutions, then the ERP baseline and AI capability baseline. Future database structure, relationship, foreign-key, index, seed-data, or schema-generation changes must update the matching stage SQL and `migrations/BASELINE_RESTRUCTURE.md`.
 
+The `000` baseline seeds a `local_manufacturing_demo` industry-solution sample in the SaaS management catalog. It includes a sample tenant database template, the `sample_work_orders` sample table, and `sample.work_order.create` sample function metadata. The physical sample database is still created by tenant database provisioning or a later maintenance job, not directly inside the SQL baseline transaction.
+
 ## API Overview
 
 All API routes are mounted under `/api/v1`.
@@ -323,7 +325,7 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `SERVER_PORT` | `8080` | Backend listen port. |
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | Backward-compatible PostgreSQL connection string; also used as the platform control database when `PLATFORM_DATABASE_URL` is unset. |
 | `PLATFORM_DATABASE_URL` | Follows `DATABASE_URL` | SaaS platform control database connection string for platform administration, tenant organizations, capability packages, marketplace catalog, and tenant database routing metadata. |
-| `TENANT_DATABASE_ADMIN_URL` | Follows `PLATFORM_DATABASE_URL` | Administrative connection string for future physical tenant business database creation and maintenance; locally it can point to the same PostgreSQL instance. |
+| `TENANT_DATABASE_ADMIN_URL` | Follows `PLATFORM_DATABASE_URL` | Administrative connection string for physical tenant business database creation and maintenance; locally it can point to the same PostgreSQL instance. SaaS onboarding uses it to try creating tenant databases in `dedicated_database` mode. |
 | `TENANT_DATABASE_NAME_PREFIX` | `meta_org_tenant_` | Prefix used when deriving physical tenant business database names from tenant organization IDs. |
 | `TENANT_DATABASE_MODE` | `dedicated_database` | Tenant database target mode; `dedicated_database` records one physical database per tenant, `shared_schema` preserves the compatibility single-database schema mode. |
 | `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | Default tenant database cluster key recorded in the platform catalog. |

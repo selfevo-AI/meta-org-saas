@@ -545,6 +545,22 @@ func (r *Repository) GetTenantDatabaseTarget(ctx context.Context, orgID uuid.UUI
 	`, orgID))
 }
 
+func (r *Repository) UpdateTenantDatabaseTarget(ctx context.Context, target tenantdb.Target) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tenant database target update: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if err := r.upsertTenantDatabaseTarget(ctx, tx, target); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tenant database target update: %w", err)
+	}
+	return nil
+}
+
 func (r *Repository) UpdateOrganizationModules(ctx context.Context, orgID uuid.UUID, enabledModules []string) (map[string]bool, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {

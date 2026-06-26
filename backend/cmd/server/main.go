@@ -83,7 +83,21 @@ func main() {
 		ClusterKey:         cfg.TenantDatabaseDefaultCluster,
 		Region:             cfg.TenantDatabaseDefaultRegion,
 	}))
-	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saas.WithSecurityKernel(securityKernel), saas.WithIndustryPolicy(industrySvc))
+	saasOptions := []saas.ServiceOption{saas.WithSecurityKernel(securityKernel), saas.WithIndustryPolicy(industrySvc)}
+	if cfg.MetaOrgMode == saas.ModeSaaS && cfg.TenantDatabaseMode == tenantdb.DeploymentModeDedicatedDatabase {
+		tenantConnCtx, tenantConnCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		tenantAdminDB, err := database.Connect(tenantConnCtx, cfg.TenantDatabaseAdminURL)
+		tenantConnCancel()
+		if err != nil {
+			log.Fatalf("tenant database admin connection failed: %v", err)
+		}
+		defer tenantAdminDB.Close()
+		saasOptions = append(saasOptions, saas.WithTenantDatabaseProvisioner(tenantdb.NewProvisioner(tenantdb.ProvisionerConfig{
+			AdminURL: cfg.TenantDatabaseAdminURL,
+			Creator:  tenantdb.NewCatalogDatabaseCreator(tenantdb.NewPGDatabaseCatalog(tenantAdminDB)),
+		})))
+	}
+	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saasOptions...)
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
 		log.Fatalf("platform admin bootstrap failed: %v", err)
 	}
