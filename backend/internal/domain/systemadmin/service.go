@@ -339,11 +339,37 @@ func (s *Service) CreateDatabaseMaintenanceJob(ctx context.Context, actorID uuid
 	if input.Reason == "" {
 		return nil, fmt.Errorf("%w: reason is required", ErrValidation)
 	}
+	if input.Metadata == nil {
+		input.Metadata = map[string]any{}
+	}
+	if err := applyDatabaseMaintenanceScopeMetadata(input.Scope, input.Metadata); err != nil {
+		return nil, err
+	}
 	return s.repo.CreateDatabaseMaintenanceJob(ctx, CreateDatabaseMaintenanceJobRecord{
 		CreateDatabaseMaintenanceJobInput: input,
 		Status:                            DatabaseMaintenancePendingApproval,
 		RequestedBy:                       actorID,
 	})
+}
+
+func applyDatabaseMaintenanceScopeMetadata(scope string, metadata map[string]any) error {
+	switch {
+	case scope == "platform" || scope == "platform_control":
+		metadata["target_scope"] = "platform_control"
+	case scope == "all_tenants" || scope == "tenant_databases":
+		metadata["target_scope"] = "tenant_databases"
+	case strings.HasPrefix(scope, "tenant_database:"):
+		rawID := strings.TrimPrefix(scope, "tenant_database:")
+		orgID, err := uuid.Parse(rawID)
+		if err != nil {
+			return fmt.Errorf("%w: tenant_database scope must be tenant_database:<organization_id>", ErrValidation)
+		}
+		metadata["target_scope"] = "tenant_database"
+		metadata["organization_id"] = orgID.String()
+	default:
+		return fmt.Errorf("%w: scope must be platform, tenant_databases, or tenant_database:<organization_id>", ErrValidation)
+	}
+	return nil
 }
 
 func (s *Service) ReviewDatabaseMaintenanceJob(ctx context.Context, actorID uuid.UUID, jobID uuid.UUID, input ReviewDatabaseMaintenanceJobInput) (*DatabaseMaintenanceJob, error) {

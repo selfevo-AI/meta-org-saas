@@ -30,6 +30,13 @@ type TenantContext struct {
 	AuthorityTier    string
 	EnabledModules   map[string]bool
 	OnboardingStatus string
+
+	TenantDatabaseDeploymentMode string
+	TenantDatabaseClusterKey     string
+	TenantDatabaseRegion         string
+	TenantDatabaseName           string
+	TenantDatabaseStatus         string
+	TenantSchemaName             string
 }
 
 type TenantResolver interface {

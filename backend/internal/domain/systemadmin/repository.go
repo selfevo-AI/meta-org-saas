@@ -475,10 +475,13 @@ func (r *Repository) ListSchemaTargets(ctx context.Context, limit int) ([]Organi
 		limit = 100
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT organization_id, schema_name, template_version, status, last_change_request_id,
-		       metadata, created_at, updated_at
-		FROM platform.organization_schema_targets
-		ORDER BY updated_at DESC, schema_name
+		SELECT st.organization_id, st.schema_name, st.template_version, st.status, st.last_change_request_id,
+		       st.metadata, st.created_at, st.updated_at,
+		       COALESCE(tdt.deployment_mode, ''), COALESCE(tdt.cluster_key, ''), COALESCE(tdt.region, ''),
+		       COALESCE(tdt.database_name, ''), COALESCE(tdt.status, '')
+		FROM platform.organization_schema_targets st
+		LEFT JOIN platform.tenant_database_targets tdt ON tdt.organization_id = st.organization_id
+		ORDER BY st.updated_at DESC, st.schema_name
 		LIMIT $1
 	`, limit)
 	if err != nil {
@@ -502,10 +505,13 @@ func (r *Repository) ListSchemaTargets(ctx context.Context, limit int) ([]Organi
 
 func (r *Repository) GetSchemaTarget(ctx context.Context, orgID uuid.UUID) (*OrganizationSchemaTarget, error) {
 	return scanSchemaTarget(r.db.QueryRow(ctx, `
-		SELECT organization_id, schema_name, template_version, status, last_change_request_id,
-		       metadata, created_at, updated_at
-		FROM platform.organization_schema_targets
-		WHERE organization_id = $1
+		SELECT st.organization_id, st.schema_name, st.template_version, st.status, st.last_change_request_id,
+		       st.metadata, st.created_at, st.updated_at,
+		       COALESCE(tdt.deployment_mode, ''), COALESCE(tdt.cluster_key, ''), COALESCE(tdt.region, ''),
+		       COALESCE(tdt.database_name, ''), COALESCE(tdt.status, '')
+		FROM platform.organization_schema_targets st
+		LEFT JOIN platform.tenant_database_targets tdt ON tdt.organization_id = st.organization_id
+		WHERE st.organization_id = $1
 	`, orgID))
 }
 
@@ -747,6 +753,11 @@ func scanSchemaTarget(row interface{ Scan(dest ...any) error }) (*OrganizationSc
 		&metadataJSON,
 		&item.CreatedAt,
 		&item.UpdatedAt,
+		&item.TenantDatabaseDeploymentMode,
+		&item.TenantDatabaseClusterKey,
+		&item.TenantDatabaseRegion,
+		&item.TenantDatabaseName,
+		&item.TenantDatabaseStatus,
 	); err != nil {
 		return nil, fmt.Errorf("scan schema target: %w", err)
 	}

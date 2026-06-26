@@ -9,6 +9,12 @@ import (
 type Config struct {
 	ServerPort                      int
 	DatabaseURL                     string
+	PlatformDatabaseURL             string
+	TenantDatabaseAdminURL          string
+	TenantDatabaseNamePrefix        string
+	TenantDatabaseMode              string
+	TenantDatabaseDefaultCluster    string
+	TenantDatabaseDefaultRegion     string
 	JWTSecret                       string
 	ModelSecretKey                  string
 	CorsOrigins                     []string
@@ -32,9 +38,17 @@ func Load() *Config {
 	if mode != "saas" {
 		mode = "single_org"
 	}
+	databaseURL := getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable")
+	platformDatabaseURL := getEnv("PLATFORM_DATABASE_URL", databaseURL)
 	return &Config{
 		ServerPort:                      getEnvInt("SERVER_PORT", 8080),
-		DatabaseURL:                     getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable"),
+		DatabaseURL:                     databaseURL,
+		PlatformDatabaseURL:             platformDatabaseURL,
+		TenantDatabaseAdminURL:          getEnv("TENANT_DATABASE_ADMIN_URL", platformDatabaseURL),
+		TenantDatabaseNamePrefix:        normalizedTenantDatabasePrefix(getEnv("TENANT_DATABASE_NAME_PREFIX", "meta_org_tenant_")),
+		TenantDatabaseMode:              normalizedTenantDatabaseMode(getEnv("TENANT_DATABASE_MODE", "dedicated_database")),
+		TenantDatabaseDefaultCluster:    strings.TrimSpace(getEnv("TENANT_DATABASE_DEFAULT_CLUSTER", "local-primary")),
+		TenantDatabaseDefaultRegion:     strings.TrimSpace(getEnv("TENANT_DATABASE_DEFAULT_REGION", "local")),
 		JWTSecret:                       getEnv("JWT_SECRET", "dev-secret-change-in-production"),
 		ModelSecretKey:                  getEnv("MODEL_SECRET_KEY", "dev-model-secret-key-32-bytes!!!"),
 		CorsOrigins:                     getEnvSlice("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
@@ -52,6 +66,41 @@ func Load() *Config {
 		MonitoringAgentLookbackHours:    getEnvInt("MONITORING_AGENT_LOOKBACK_HOURS", 24),
 		MonitoringAgentMaxSignalsPerRun: getEnvInt("MONITORING_AGENT_MAX_SIGNALS_PER_RUN", 100),
 	}
+}
+
+func normalizedTenantDatabaseMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "shared_schema":
+		return "shared_schema"
+	default:
+		return "dedicated_database"
+	}
+}
+
+func normalizedTenantDatabasePrefix(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "meta_org_tenant_"
+	}
+	var b strings.Builder
+	lastUnderscore := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastUnderscore = false
+		default:
+			if !lastUnderscore {
+				b.WriteByte('_')
+				lastUnderscore = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "_")
+	if out == "" {
+		return "meta_org_tenant_"
+	}
+	return out + "_"
 }
 
 func normalizedDistributionMode(value string) string {

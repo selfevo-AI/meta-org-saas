@@ -3,11 +3,13 @@ package saas
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 func TestCompleteOnboardingRequiresSecurityKernelAuthorization(t *testing.T) {
@@ -26,6 +28,66 @@ func TestCompleteOnboardingRequiresSecurityKernelAuthorization(t *testing.T) {
 	}
 	if kernel.lastRequest.Resource.ResourceType != "owner_attestation" || kernel.lastRequest.Resource.Action != "verify" {
 		t.Fatalf("security resource = %#v, want owner attestation verify", kernel.lastRequest.Resource)
+	}
+}
+
+func TestCompleteOnboardingProvisionsTenantDatabaseTarget(t *testing.T) {
+	userID := uuid.New()
+	orgID := uuid.New()
+	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	repo := &fakeRepository{onboardingOrgID: orgID, tenantTarget: &target}
+	provisioned := target
+	provisioned.Status = tenantdb.TargetStatusProvisioned
+	provisioned.MigrationVersion = "tenant-business-v1"
+	provisioner := &fakeTenantDatabaseProvisioner{result: tenantdb.ProvisionResult{Target: provisioned}}
+	svc := NewService(repo, ModeSaaS, WithTenantDatabaseProvisioner(provisioner))
+
+	_, err := svc.CompleteOnboarding(context.Background(), userID, OnboardingOrganizationInput{OrganizationName: "Acme"})
+
+	if err != nil {
+		t.Fatalf("CompleteOnboarding error = %v", err)
+	}
+	if provisioner.target.OrganizationID != orgID {
+		t.Fatalf("provision target org = %s, want %s", provisioner.target.OrganizationID, orgID)
+	}
+	if repo.updatedTenantTarget == nil {
+		t.Fatalf("tenant database target was not updated after provisioning")
+	}
+	if repo.updatedTenantTarget.Status != tenantdb.TargetStatusProvisioned {
+		t.Fatalf("updated target status = %q, want provisioned", repo.updatedTenantTarget.Status)
+	}
+	if repo.updatedTenantTarget.MigrationVersion != "tenant-business-v1" {
+		t.Fatalf("updated migration version = %q", repo.updatedTenantTarget.MigrationVersion)
+	}
+}
+
+func TestCompleteOnboardingRecordsFailedTenantDatabaseProvisioning(t *testing.T) {
+	userID := uuid.New()
+	orgID := uuid.New()
+	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	repo := &fakeRepository{onboardingOrgID: orgID, tenantTarget: &target}
+	failed := target
+	failed.Status = tenantdb.TargetStatusFailed
+	failed.Metadata = map[string]any{"error": "createdb denied"}
+	provisioner := &fakeTenantDatabaseProvisioner{
+		result: tenantdb.ProvisionResult{Target: failed},
+		err:    errors.New("createdb denied"),
+	}
+	svc := NewService(repo, ModeSaaS, WithTenantDatabaseProvisioner(provisioner))
+
+	_, err := svc.CompleteOnboarding(context.Background(), userID, OnboardingOrganizationInput{OrganizationName: "Acme"})
+
+	if err != nil {
+		t.Fatalf("CompleteOnboarding error = %v, want onboarding success with failed provisioning status", err)
+	}
+	if repo.updatedTenantTarget == nil {
+		t.Fatalf("tenant database target was not updated after provisioning failure")
+	}
+	if repo.updatedTenantTarget.Status != tenantdb.TargetStatusFailed {
+		t.Fatalf("updated target status = %q, want failed", repo.updatedTenantTarget.Status)
+	}
+	if repo.updatedTenantTarget.Metadata["error"] != "createdb denied" {
+		t.Fatalf("error metadata = %#v", repo.updatedTenantTarget.Metadata["error"])
 	}
 }
 
@@ -128,6 +190,51 @@ func TestResolveTenantRejectsClosedOrganization(t *testing.T) {
 	}
 }
 
+func TestResolveTenantIncludesTenantDatabaseTarget(t *testing.T) {
+	userID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{
+		profile: &UserProfile{
+			ID:                    userID,
+			OnboardingStatus:      OnboardingComplete,
+			DefaultOrganizationID: &orgID,
+		},
+		membership: &membershipRecord{ID: uuid.New(), OrganizationID: orgID, AuthorityTier: AuthorityOwner},
+		organization: &OrganizationAccount{
+			ID:     orgID,
+			Status: OrganizationStatusActive,
+		},
+		tenantTarget: &tenantdb.Target{
+			OrganizationID: orgID,
+			DeploymentMode: tenantdb.DeploymentModeDedicatedDatabase,
+			ClusterKey:     "local-primary",
+			Region:         "local",
+			DatabaseName:   "meta_org_tenant_" + strings.ReplaceAll(orgID.String(), "-", ""),
+			SchemaName:     "public",
+			Status:         tenantdb.TargetStatusProvisioned,
+		},
+	}
+	svc := NewService(repo, ModeSaaS)
+
+	tenant, err := svc.ResolveTenant(context.Background(), middleware.AuthenticatedUser{ID: userID.String(), Type: "human"}, orgID.String())
+
+	if err != nil {
+		t.Fatalf("ResolveTenant() error = %v", err)
+	}
+	if tenant.TenantDatabaseName != repo.tenantTarget.DatabaseName {
+		t.Fatalf("TenantDatabaseName = %q, want %q", tenant.TenantDatabaseName, repo.tenantTarget.DatabaseName)
+	}
+	if tenant.TenantDatabaseDeploymentMode != tenantdb.DeploymentModeDedicatedDatabase {
+		t.Fatalf("TenantDatabaseDeploymentMode = %q", tenant.TenantDatabaseDeploymentMode)
+	}
+	if tenant.TenantDatabaseClusterKey != "local-primary" {
+		t.Fatalf("TenantDatabaseClusterKey = %q", tenant.TenantDatabaseClusterKey)
+	}
+	if tenant.TenantSchemaName != "public" {
+		t.Fatalf("TenantSchemaName = %q, want public", tenant.TenantSchemaName)
+	}
+}
+
 type fakeRepository struct {
 	completedOnboarding bool
 	updatedModules      bool
@@ -137,6 +244,9 @@ type fakeRepository struct {
 	membership          *membershipRecord
 	organization        *OrganizationAccount
 	platformRole        string
+	tenantTarget        *tenantdb.Target
+	onboardingOrgID     uuid.UUID
+	updatedTenantTarget *tenantdb.Target
 }
 
 func (f *fakeRepository) BootstrapPlatformAdmin(context.Context, string, string) error {
@@ -160,7 +270,11 @@ func (f *fakeRepository) ListDefaultModuleKeys(context.Context) ([]string, error
 
 func (f *fakeRepository) CompleteOnboarding(context.Context, uuid.UUID, OnboardingOrganizationInput, []string) (*OrganizationAccount, error) {
 	f.completedOnboarding = true
-	return &OrganizationAccount{ID: uuid.New(), AuthorityTier: AuthorityOwner, IsOwner: true}, nil
+	orgID := f.onboardingOrgID
+	if orgID == uuid.Nil {
+		orgID = uuid.New()
+	}
+	return &OrganizationAccount{ID: orgID, AuthorityTier: AuthorityOwner, IsOwner: true}, nil
 }
 
 func (f *fakeRepository) ListOrganizationsForPlatform(context.Context, int) ([]OrganizationAccount, error) {
@@ -225,6 +339,29 @@ func (f *fakeRepository) GetPlatformRole(context.Context, uuid.UUID) (string, er
 		return "", ErrForbidden
 	}
 	return f.platformRole, nil
+}
+
+func (f *fakeRepository) GetTenantDatabaseTarget(context.Context, uuid.UUID) (*tenantdb.Target, error) {
+	if f.tenantTarget == nil {
+		return nil, ErrValidation
+	}
+	return f.tenantTarget, nil
+}
+
+func (f *fakeRepository) UpdateTenantDatabaseTarget(_ context.Context, target tenantdb.Target) error {
+	f.updatedTenantTarget = &target
+	return nil
+}
+
+type fakeTenantDatabaseProvisioner struct {
+	target tenantdb.Target
+	result tenantdb.ProvisionResult
+	err    error
+}
+
+func (f *fakeTenantDatabaseProvisioner) Provision(_ context.Context, target tenantdb.Target) (tenantdb.ProvisionResult, error) {
+	f.target = target
+	return f.result, f.err
 }
 
 type fakeSecurityKernel struct {

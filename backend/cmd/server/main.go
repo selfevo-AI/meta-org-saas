@@ -42,6 +42,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/server"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 func main() {
@@ -52,7 +53,7 @@ func main() {
 	connCtx, connCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer connCancel()
 
-	db, err := database.Connect(connCtx, cfg.DatabaseURL)
+	db, err := database.Connect(connCtx, cfg.PlatformDatabaseURL)
 	if err != nil {
 		log.Fatalf("database connection failed: %v", err)
 	}
@@ -76,8 +77,27 @@ func main() {
 	industrySvc := industry.NewService(industryRepo)
 	industryHandler := industry.NewHandler(industrySvc)
 
-	saasRepo := saas.NewRepository(db)
-	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saas.WithSecurityKernel(securityKernel), saas.WithIndustryPolicy(industrySvc))
+	saasRepo := saas.NewRepository(db, saas.WithTenantDatabaseDefaults(tenantdb.Defaults{
+		DeploymentMode:     cfg.TenantDatabaseMode,
+		DatabaseNamePrefix: cfg.TenantDatabaseNamePrefix,
+		ClusterKey:         cfg.TenantDatabaseDefaultCluster,
+		Region:             cfg.TenantDatabaseDefaultRegion,
+	}))
+	saasOptions := []saas.ServiceOption{saas.WithSecurityKernel(securityKernel), saas.WithIndustryPolicy(industrySvc)}
+	if cfg.MetaOrgMode == saas.ModeSaaS && cfg.TenantDatabaseMode == tenantdb.DeploymentModeDedicatedDatabase {
+		tenantConnCtx, tenantConnCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		tenantAdminDB, err := database.Connect(tenantConnCtx, cfg.TenantDatabaseAdminURL)
+		tenantConnCancel()
+		if err != nil {
+			log.Fatalf("tenant database admin connection failed: %v", err)
+		}
+		defer tenantAdminDB.Close()
+		saasOptions = append(saasOptions, saas.WithTenantDatabaseProvisioner(tenantdb.NewProvisioner(tenantdb.ProvisionerConfig{
+			AdminURL: cfg.TenantDatabaseAdminURL,
+			Creator:  tenantdb.NewCatalogDatabaseCreator(tenantdb.NewPGDatabaseCatalog(tenantAdminDB)),
+		})))
+	}
+	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saasOptions...)
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
 		log.Fatalf("platform admin bootstrap failed: %v", err)
 	}

@@ -81,3 +81,65 @@ func TestLoadMonitoringAgentConfigCanEnableScheduler(t *testing.T) {
 		t.Fatalf("MonitoringAgentMaxSignalsPerRun = %d, want 25", cfg.MonitoringAgentMaxSignalsPerRun)
 	}
 }
+
+func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable")
+	t.Setenv("PLATFORM_DATABASE_URL", "")
+	t.Setenv("TENANT_DATABASE_ADMIN_URL", "")
+	t.Setenv("TENANT_DATABASE_NAME_PREFIX", "")
+	t.Setenv("TENANT_DATABASE_MODE", "")
+	t.Setenv("TENANT_DATABASE_DEFAULT_CLUSTER", "")
+	t.Setenv("TENANT_DATABASE_DEFAULT_REGION", "")
+
+	cfg := Load()
+
+	if cfg.PlatformDatabaseURL != cfg.DatabaseURL {
+		t.Fatalf("PlatformDatabaseURL = %q, want DatabaseURL fallback %q", cfg.PlatformDatabaseURL, cfg.DatabaseURL)
+	}
+	if cfg.TenantDatabaseAdminURL != cfg.PlatformDatabaseURL {
+		t.Fatalf("TenantDatabaseAdminURL = %q, want PlatformDatabaseURL fallback %q", cfg.TenantDatabaseAdminURL, cfg.PlatformDatabaseURL)
+	}
+	if cfg.TenantDatabaseNamePrefix != "meta_org_tenant_" {
+		t.Fatalf("TenantDatabaseNamePrefix = %q, want meta_org_tenant_", cfg.TenantDatabaseNamePrefix)
+	}
+	if cfg.TenantDatabaseMode != "dedicated_database" {
+		t.Fatalf("TenantDatabaseMode = %q, want dedicated_database", cfg.TenantDatabaseMode)
+	}
+	if cfg.TenantDatabaseDefaultCluster != "local-primary" {
+		t.Fatalf("TenantDatabaseDefaultCluster = %q, want local-primary", cfg.TenantDatabaseDefaultCluster)
+	}
+	if cfg.TenantDatabaseDefaultRegion != "local" {
+		t.Fatalf("TenantDatabaseDefaultRegion = %q, want local", cfg.TenantDatabaseDefaultRegion)
+	}
+}
+
+func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/legacy?sslmode=disable")
+	t.Setenv("PLATFORM_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org_platform?sslmode=disable")
+	t.Setenv("TENANT_DATABASE_ADMIN_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	t.Setenv("TENANT_DATABASE_NAME_PREFIX", "customer_org_")
+	t.Setenv("TENANT_DATABASE_MODE", "shared_schema")
+	t.Setenv("TENANT_DATABASE_DEFAULT_CLUSTER", "cn-east-1-a")
+	t.Setenv("TENANT_DATABASE_DEFAULT_REGION", "cn-east-1")
+
+	cfg := Load()
+
+	if cfg.PlatformDatabaseURL != "postgres://postgres:postgres@localhost:5432/meta_org_platform?sslmode=disable" {
+		t.Fatalf("PlatformDatabaseURL = %q", cfg.PlatformDatabaseURL)
+	}
+	if cfg.TenantDatabaseAdminURL != "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" {
+		t.Fatalf("TenantDatabaseAdminURL = %q", cfg.TenantDatabaseAdminURL)
+	}
+	if cfg.TenantDatabaseNamePrefix != "customer_org_" {
+		t.Fatalf("TenantDatabaseNamePrefix = %q", cfg.TenantDatabaseNamePrefix)
+	}
+	if cfg.TenantDatabaseMode != "shared_schema" {
+		t.Fatalf("TenantDatabaseMode = %q, want shared_schema", cfg.TenantDatabaseMode)
+	}
+	if cfg.TenantDatabaseDefaultCluster != "cn-east-1-a" {
+		t.Fatalf("TenantDatabaseDefaultCluster = %q", cfg.TenantDatabaseDefaultCluster)
+	}
+	if cfg.TenantDatabaseDefaultRegion != "cn-east-1" {
+		t.Fatalf("TenantDatabaseDefaultRegion = %q", cfg.TenantDatabaseDefaultRegion)
+	}
+}

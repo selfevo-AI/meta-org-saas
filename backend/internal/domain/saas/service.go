@@ -13,6 +13,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -23,10 +24,11 @@ var (
 )
 
 type Service struct {
-	repo           repository
-	mode           string
-	securityKernel securitykernel.Client
-	industryPolicy industryPolicy
+	repo                      repository
+	mode                      string
+	securityKernel            securitykernel.Client
+	industryPolicy            industryPolicy
+	tenantDatabaseProvisioner tenantDatabaseProvisioner
 }
 
 type ServiceOption func(*Service)
@@ -56,6 +58,18 @@ type repository interface {
 	GetPlatformRole(context.Context, uuid.UUID) (string, error)
 }
 
+type tenantDatabaseTargetProvider interface {
+	GetTenantDatabaseTarget(context.Context, uuid.UUID) (*tenantdb.Target, error)
+}
+
+type tenantDatabaseTargetUpdater interface {
+	UpdateTenantDatabaseTarget(context.Context, tenantdb.Target) error
+}
+
+type tenantDatabaseProvisioner interface {
+	Provision(context.Context, tenantdb.Target) (tenantdb.ProvisionResult, error)
+}
+
 func WithSecurityKernel(client securitykernel.Client) ServiceOption {
 	return func(s *Service) {
 		s.securityKernel = client
@@ -65,6 +79,12 @@ func WithSecurityKernel(client securitykernel.Client) ServiceOption {
 func WithIndustryPolicy(policy industryPolicy) ServiceOption {
 	return func(s *Service) {
 		s.industryPolicy = policy
+	}
+}
+
+func WithTenantDatabaseProvisioner(provisioner tenantDatabaseProvisioner) ServiceOption {
+	return func(s *Service) {
+		s.tenantDatabaseProvisioner = provisioner
 	}
 }
 
@@ -172,6 +192,7 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, inpu
 	if err != nil {
 		return nil, err
 	}
+	s.provisionTenantDatabase(ctx, org.ID)
 	profile, err := s.GetProfile(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -334,14 +355,16 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 		enabled, _ := s.repo.ListEnabledModules(ctx, *requested)
 		membershipID := membership.ID
 		orgID := membership.OrganizationID
-		return &middleware.TenantContext{
+		tenant := &middleware.TenantContext{
 			Mode:           s.mode,
 			UserID:         actorID,
 			OrganizationID: &orgID,
 			MembershipID:   &membershipID,
 			AuthorityTier:  membership.AuthorityTier,
 			EnabledModules: enabled,
-		}, nil
+		}
+		s.applyTenantDatabaseTarget(ctx, tenant, orgID)
+		return tenant, nil
 	}
 
 	profile, err := s.GetProfile(ctx, actorID)
@@ -389,7 +412,7 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 		authorityTier = membership.AuthorityTier
 	}
 	enabled, _ := s.repo.ListEnabledModules(ctx, *orgID)
-	return &middleware.TenantContext{
+	tenant := &middleware.TenantContext{
 		Mode:             s.mode,
 		UserID:           actorID,
 		OrganizationID:   orgID,
@@ -399,7 +422,77 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 		AuthorityTier:    authorityTier,
 		EnabledModules:   enabled,
 		OnboardingStatus: profile.OnboardingStatus,
-	}, nil
+	}
+	s.applyTenantDatabaseTarget(ctx, tenant, *orgID)
+	return tenant, nil
+}
+
+func (s *Service) applyTenantDatabaseTarget(ctx context.Context, tenant *middleware.TenantContext, orgID uuid.UUID) {
+	target := s.resolveTenantDatabaseTarget(ctx, orgID)
+	tenant.TenantDatabaseDeploymentMode = target.DeploymentMode
+	tenant.TenantDatabaseClusterKey = target.ClusterKey
+	tenant.TenantDatabaseRegion = target.Region
+	tenant.TenantDatabaseName = target.DatabaseName
+	tenant.TenantDatabaseStatus = target.Status
+	tenant.TenantSchemaName = target.SchemaName
+}
+
+func (s *Service) resolveTenantDatabaseTarget(ctx context.Context, orgID uuid.UUID) tenantdb.Target {
+	if provider, ok := s.repo.(tenantDatabaseTargetProvider); ok {
+		if target, err := provider.GetTenantDatabaseTarget(ctx, orgID); err == nil && target != nil {
+			if target.SchemaName == "" {
+				target.SchemaName = tenantdb.SchemaNameForOrganization(orgID)
+			}
+			return *target
+		}
+	}
+	return tenantdb.Target{
+		OrganizationID: orgID,
+		DeploymentMode: tenantdb.DeploymentModeSharedSchema,
+		ClusterKey:     "local-primary",
+		Region:         "local",
+		SchemaName:     tenantdb.SchemaNameForOrganization(orgID),
+		Status:         tenantdb.TargetStatusProvisioned,
+	}
+}
+
+func (s *Service) provisionTenantDatabase(ctx context.Context, orgID uuid.UUID) {
+	if s.tenantDatabaseProvisioner == nil {
+		return
+	}
+	provider, ok := s.repo.(tenantDatabaseTargetProvider)
+	if !ok {
+		return
+	}
+	updater, ok := s.repo.(tenantDatabaseTargetUpdater)
+	if !ok {
+		return
+	}
+	target, err := provider.GetTenantDatabaseTarget(ctx, orgID)
+	if err != nil || target == nil || target.Status == tenantdb.TargetStatusArchived {
+		return
+	}
+	result, err := s.tenantDatabaseProvisioner.Provision(ctx, *target)
+	updated := result.Target
+	if updated.OrganizationID == uuid.Nil {
+		updated = *target
+	}
+	if err != nil && updated.Status == "" {
+		updated.Status = tenantdb.TargetStatusFailed
+		updated.Metadata = mergeTenantDatabaseMetadata(updated.Metadata, map[string]any{"error": err.Error()})
+	}
+	_ = updater.UpdateTenantDatabaseTarget(ctx, updated)
+}
+
+func mergeTenantDatabaseMetadata(base map[string]any, extra map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range base {
+		out[key] = value
+	}
+	for key, value := range extra {
+		out[key] = value
+	}
+	return out
 }
 
 func (s *Service) requirePlatformAdmin(ctx context.Context, userID uuid.UUID) error {

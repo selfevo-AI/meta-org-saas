@@ -23,6 +23,39 @@ job governance for backup/restore requests. These structures are metadata and
 approval records only; they do not grant arbitrary code, SQL, or plugin
 execution from the UI.
 
+It also owns the physical database topology control plane. The target
+architecture separates the SaaS platform control database from tenant business
+databases:
+
+- `platform.database_clusters` records logical PostgreSQL clusters, regions,
+  deployment scope, capacity, and secret references.
+- `platform.tenant_database_targets` maps each tenant organization to its
+  physical business database or the compatibility shared-schema target.
+- `platform.tenant_database_migrations` tracks migration state per tenant
+  database target.
+- `platform.capability_packages` and `platform.marketplace_listings` hold the
+  platform-authoritative package and marketplace catalog for industry
+  solutions, function modules, API capabilities, AI model profiles, and skills.
+
+The staged baseline seeds a local-development industry solution sample,
+`local_manufacturing_demo`, into `platform.capability_packages` and
+`platform.marketplace_listings`. It is metadata only: the package manifest
+declares a sample tenant database template, the `sample_work_orders` sample
+table, and the `sample.work_order.create` sample function. Physical database
+creation remains the responsibility of tenant database provisioning or approved
+database maintenance jobs because `CREATE DATABASE` cannot be executed inside
+the baseline transaction.
+
+The platform control plane owns package definitions, publication, review,
+authorization, marketplace listing, settlement policy, tenant database routing,
+and backup/restore orchestration. Tenant business databases own instantiated
+business data, installed solution/module/runtime tables, tenant-specific API
+configuration, private model channels, private skills, assistant context, and
+tenant execution logs. Do not add cross-database foreign keys or assume
+cross-database transactions; use UUID references, metadata projections, and
+event/outbox style synchronization for future multi-service and cluster
+deployments.
+
 ### Phase 2 Industry Solution Factory Storage
 
 The industry solution factory remains a platform management capability and
@@ -86,6 +119,23 @@ assistant, governance, and platform administration schema changes belong in
 `000_saas_platform_management_baseline.sql`. Future tenant department or
 ERP/industry-solution structures belong in `001_erp_code_baseline.sql` unless
 they are AI capability structures owned by `004_ai_capability_baseline.sql`.
+
+Tenant runtime is moving from compatibility shared schemas toward physical
+tenant business databases. During the transition, `organization_schema_targets`
+remains the compatibility runtime-schema registry, while
+`tenant_database_targets` is the source of truth for physical database routing.
+New platform code must read or write tenant database placement through the
+platform control-plane target table, not derive deployment topology only from
+`org_<uuid>` schema names. Private deployments run a local platform control
+plane copy and synchronize only package, license, authorization, and settlement
+summaries with the central SaaS platform.
+
+SaaS onboarding now records the target first in the platform transaction and
+then attempts physical tenant database provisioning after the transaction has
+committed. A successful provisioning attempt marks the target `provisioned` and
+records the migration version. A failed attempt marks the target `failed` with
+diagnostic metadata while preserving the already-created platform organization,
+so a later maintenance/retry worker can continue from the catalog state.
 
 `002_erp_platform_integration_baseline.sql` owns runtime integration between the
 ERP baseline and the SaaS platform: platform projections, module synchronization,

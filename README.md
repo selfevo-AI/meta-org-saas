@@ -175,6 +175,8 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 
 阶段原则：先有 SaaS 管理平台，再由平台创建或调整行业解决方案，最后落到 ERP 基线和 AI 能力基线。未来任何数据库结构、表关系、外键、索引、种子数据或 schema 生成逻辑调整，都必须同步更新对应阶段 SQL 和 `migrations/BASELINE_RESTRUCTURE.md`。
 
+`000` baseline 会在 SaaS 管理平台目录中写入 `local_manufacturing_demo` 行业解决方案样例，包含样例租户库模板、`sample_work_orders` 样例表和 `sample.work_order.create` 样例功能元数据。物理样例库仍由租户数据库 provisioning 或后续维护任务创建，不在 SQL baseline 事务中直接创建。
+
 ## API 概览
 
 所有 API 默认挂载在 `/api/v1` 下。
@@ -327,7 +329,13 @@ AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必�
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `SERVER_PORT` | `8080` | 后端监听端口。 |
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | PostgreSQL 连接串。 |
+| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | 兼容旧入口的 PostgreSQL 连接串；未设置 `PLATFORM_DATABASE_URL` 时也作为平台控制库连接串。 |
+| `PLATFORM_DATABASE_URL` | 跟随 `DATABASE_URL` | SaaS 平台控制库连接串，保存平台管理、租户组织、能力包、市场和租户数据库目录。 |
+| `TENANT_DATABASE_ADMIN_URL` | 跟随 `PLATFORM_DATABASE_URL` | 租户物理业务库创建/维护的管理连接串，本地可指向同一个 PostgreSQL 实例的管理库；SaaS onboarding 在 `dedicated_database` 模式下会用它尝试创建租户库。 |
+| `TENANT_DATABASE_NAME_PREFIX` | `meta_org_tenant_` | 按租户组织生成物理业务库名的前缀。 |
+| `TENANT_DATABASE_MODE` | `dedicated_database` | 租户数据库目标模式；`dedicated_database` 为每租户物理库，`shared_schema` 为兼容的单库多 schema。 |
+| `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | 平台目录中默认租户数据库集群 key。 |
+| `TENANT_DATABASE_DEFAULT_REGION` | `local` | 平台目录中默认租户数据库区域。 |
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT 签名密钥，生产环境必须替换。 |
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32 字符密钥，用于模型供应商和财务适配器密钥加密，生产环境必须替换。 |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | 允许访问 API 的前端来源。 |

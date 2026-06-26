@@ -238,14 +238,19 @@ type CreateIndustrySolutionSchemaChangeInput struct {
 }
 
 type OrganizationSchemaTarget struct {
-	OrganizationID      uuid.UUID      `json:"organization_id"`
-	SchemaName          string         `json:"schema_name"`
-	TemplateVersion     string         `json:"template_version"`
-	Status              string         `json:"status"`
-	LastChangeRequestID *uuid.UUID     `json:"last_change_request_id,omitempty"`
-	Metadata            map[string]any `json:"metadata"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	OrganizationID               uuid.UUID      `json:"organization_id"`
+	SchemaName                   string         `json:"schema_name"`
+	TemplateVersion              string         `json:"template_version"`
+	Status                       string         `json:"status"`
+	LastChangeRequestID          *uuid.UUID     `json:"last_change_request_id,omitempty"`
+	TenantDatabaseDeploymentMode string         `json:"tenant_database_deployment_mode,omitempty"`
+	TenantDatabaseClusterKey     string         `json:"tenant_database_cluster_key,omitempty"`
+	TenantDatabaseRegion         string         `json:"tenant_database_region,omitempty"`
+	TenantDatabaseName           string         `json:"tenant_database_name,omitempty"`
+	TenantDatabaseStatus         string         `json:"tenant_database_status,omitempty"`
+	Metadata                     map[string]any `json:"metadata"`
+	CreatedAt                    time.Time      `json:"created_at"`
+	UpdatedAt                    time.Time      `json:"updated_at"`
 }
 
 type SchemaChangeRequest struct {
