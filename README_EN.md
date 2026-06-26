@@ -321,7 +321,13 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | Environment Variable | Default | Description |
 |---|---|---|
 | `SERVER_PORT` | `8080` | Backend listen port. |
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | PostgreSQL connection string. |
+| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | Backward-compatible PostgreSQL connection string; also used as the platform control database when `PLATFORM_DATABASE_URL` is unset. |
+| `PLATFORM_DATABASE_URL` | Follows `DATABASE_URL` | SaaS platform control database connection string for platform administration, tenant organizations, capability packages, marketplace catalog, and tenant database routing metadata. |
+| `TENANT_DATABASE_ADMIN_URL` | Follows `PLATFORM_DATABASE_URL` | Administrative connection string for future physical tenant business database creation and maintenance; locally it can point to the same PostgreSQL instance. |
+| `TENANT_DATABASE_NAME_PREFIX` | `meta_org_tenant_` | Prefix used when deriving physical tenant business database names from tenant organization IDs. |
+| `TENANT_DATABASE_MODE` | `dedicated_database` | Tenant database target mode; `dedicated_database` records one physical database per tenant, `shared_schema` preserves the compatibility single-database schema mode. |
+| `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | Default tenant database cluster key recorded in the platform catalog. |
+| `TENANT_DATABASE_DEFAULT_REGION` | `local` | Default tenant database region recorded in the platform catalog. |
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing secret. Replace in production. |
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32-character key for model provider and finance adapter secret encryption. Replace in production. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Frontend origins allowed to call the API. |

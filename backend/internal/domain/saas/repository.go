@@ -14,11 +14,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type Repository struct {
-	db *pgxpool.Pool
+	db                     *pgxpool.Pool
+	tenantDatabaseDefaults tenantdb.Defaults
 }
+
+type RepositoryOption func(*Repository)
 
 type membershipRecord struct {
 	ID             uuid.UUID
@@ -26,8 +30,25 @@ type membershipRecord struct {
 	AuthorityTier  string
 }
 
-func NewRepository(db *pgxpool.Pool) *Repository {
-	return &Repository{db: db}
+func NewRepository(db *pgxpool.Pool, opts ...RepositoryOption) *Repository {
+	r := &Repository{
+		db: db,
+		tenantDatabaseDefaults: tenantdb.Defaults{
+			DeploymentMode: tenantdb.DeploymentModeSharedSchema,
+			ClusterKey:     "local-primary",
+			Region:         "local",
+		},
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+func WithTenantDatabaseDefaults(defaults tenantdb.Defaults) RepositoryOption {
+	return func(r *Repository) {
+		r.tenantDatabaseDefaults = defaults
+	}
 }
 
 func (r *Repository) BootstrapPlatformAdmin(ctx context.Context, email string, passwordHash string) error {
@@ -230,6 +251,15 @@ func (r *Repository) CloseOrganization(ctx context.Context, orgID uuid.UUID, act
 	`, orgID, actorID, reason); err != nil {
 		return nil, fmt.Errorf("archive organization schema target: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE platform.tenant_database_targets
+		SET status = 'archived',
+		    metadata = metadata || jsonb_build_object('closed_by', $2::text, 'closed_reason', $3),
+		    updated_at = NOW()
+		WHERE organization_id = $1
+	`, orgID, actorID, reason); err != nil {
+		return nil, fmt.Errorf("archive tenant database target: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit close organization: %w", err)
 	}
@@ -408,6 +438,9 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 	if _, err := tx.Exec(ctx, `SELECT platform.provision_runtime_organization($1)`, org.ID); err != nil {
 		return nil, fmt.Errorf("provision runtime organization schema: %w", err)
 	}
+	if err := r.upsertTenantDatabaseTarget(ctx, tx, r.tenantDatabaseDefaults.TargetForOrganization(org.ID)); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit onboarding: %w", err)
@@ -501,6 +534,15 @@ func (r *Repository) ListEnabledModules(ctx context.Context, orgID uuid.UUID) (m
 		return nil, fmt.Errorf("list enabled modules iteration: %w", err)
 	}
 	return enabled, nil
+}
+
+func (r *Repository) GetTenantDatabaseTarget(ctx context.Context, orgID uuid.UUID) (*tenantdb.Target, error) {
+	return scanTenantDatabaseTarget(r.db.QueryRow(ctx, `
+		SELECT organization_id, deployment_mode, cluster_key, region, database_name, schema_name,
+		       connection_secret_ref, migration_version, status, metadata
+		FROM platform.tenant_database_targets
+		WHERE organization_id = $1
+	`, orgID))
 }
 
 func (r *Repository) UpdateOrganizationModules(ctx context.Context, orgID uuid.UUID, enabledModules []string) (map[string]bool, error) {
@@ -801,6 +843,56 @@ func unmarshalMap(data []byte) map[string]any {
 		return map[string]any{}
 	}
 	return out
+}
+
+func (r *Repository) upsertTenantDatabaseTarget(ctx context.Context, tx pgx.Tx, target tenantdb.Target) error {
+	metadataJSON := mustJSON(target.Metadata)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform.tenant_database_targets(
+		    organization_id, deployment_mode, cluster_key, region, database_name, schema_name,
+		    connection_secret_ref, migration_version, status, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+		ON CONFLICT (organization_id) DO UPDATE SET
+		    deployment_mode = EXCLUDED.deployment_mode,
+		    cluster_key = EXCLUDED.cluster_key,
+		    region = EXCLUDED.region,
+		    database_name = EXCLUDED.database_name,
+		    schema_name = EXCLUDED.schema_name,
+		    connection_secret_ref = EXCLUDED.connection_secret_ref,
+		    migration_version = EXCLUDED.migration_version,
+		    status = CASE
+		        WHEN platform.tenant_database_targets.status = 'archived' THEN 'archived'
+		        ELSE EXCLUDED.status
+		    END,
+		    metadata = platform.tenant_database_targets.metadata || EXCLUDED.metadata,
+		    updated_at = NOW()
+	`, target.OrganizationID, target.DeploymentMode, target.ClusterKey, target.Region, target.DatabaseName, target.SchemaName,
+		target.ConnectionSecretRef, target.MigrationVersion, target.Status, metadataJSON); err != nil {
+		return fmt.Errorf("upsert tenant database target: %w", err)
+	}
+	return nil
+}
+
+func scanTenantDatabaseTarget(scan interface{ Scan(dest ...any) error }) (*tenantdb.Target, error) {
+	var target tenantdb.Target
+	var metadataJSON []byte
+	if err := scan.Scan(
+		&target.OrganizationID,
+		&target.DeploymentMode,
+		&target.ClusterKey,
+		&target.Region,
+		&target.DatabaseName,
+		&target.SchemaName,
+		&target.ConnectionSecretRef,
+		&target.MigrationVersion,
+		&target.Status,
+		&metadataJSON,
+	); err != nil {
+		return nil, fmt.Errorf("get tenant database target: %w", err)
+	}
+	target.Metadata = unmarshalMap(metadataJSON)
+	return &target, nil
 }
 
 func uuidPointer(value pgtype.UUID) *uuid.UUID {

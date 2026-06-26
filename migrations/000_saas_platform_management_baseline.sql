@@ -2056,12 +2056,147 @@ CREATE TABLE IF NOT EXISTS platform.platform_user_roles (
 CREATE INDEX IF NOT EXISTS idx_platform_user_roles_role
     ON platform.platform_user_roles(role_key, status);
 
+CREATE TABLE IF NOT EXISTS platform.database_clusters (
+    cluster_key           TEXT PRIMARY KEY,
+    display_name          TEXT NOT NULL,
+    cluster_type          TEXT NOT NULL DEFAULT 'postgresql'
+        CHECK (cluster_type IN ('postgresql', 'postgresql_cluster', 'managed_postgresql', 'private_postgresql')),
+    region                TEXT NOT NULL DEFAULT 'local',
+    deployment_scope      TEXT NOT NULL DEFAULT 'local'
+        CHECK (deployment_scope IN ('local', 'saas_shared', 'tenant_dedicated', 'private_deployment')),
+    status                TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'draining', 'maintenance', 'disabled')),
+    admin_connection_secret_ref TEXT NOT NULL DEFAULT '',
+    capacity              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(capacity) = 'object'),
+    metadata              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO platform.database_clusters(
+    cluster_key, display_name, cluster_type, region, deployment_scope, status, metadata
+)
+VALUES (
+    'local-primary', 'Local primary PostgreSQL', 'postgresql', 'local', 'local', 'active',
+    '{"seed":true,"purpose":"local_development_and_default_tenant_database_cluster"}'::jsonb
+)
+ON CONFLICT (cluster_key) DO UPDATE SET
+    display_name = EXCLUDED.display_name,
+    cluster_type = EXCLUDED.cluster_type,
+    region = EXCLUDED.region,
+    deployment_scope = EXCLUDED.deployment_scope,
+    status = EXCLUDED.status,
+    metadata = platform.database_clusters.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
+CREATE TABLE IF NOT EXISTS platform.tenant_database_targets (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id       UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    deployment_mode       TEXT NOT NULL DEFAULT 'dedicated_database'
+        CHECK (deployment_mode IN ('dedicated_database', 'shared_schema')),
+    cluster_key           TEXT NOT NULL DEFAULT 'local-primary'
+        REFERENCES platform.database_clusters(cluster_key) ON UPDATE CASCADE,
+    region                TEXT NOT NULL DEFAULT 'local',
+    database_name         TEXT NOT NULL DEFAULT '',
+    schema_name           TEXT NOT NULL DEFAULT 'public',
+    connection_secret_ref TEXT NOT NULL DEFAULT '',
+    migration_version     TEXT NOT NULL DEFAULT '',
+    status                TEXT NOT NULL DEFAULT 'provisioning'
+        CHECK (status IN ('provisioning', 'provisioned', 'failed', 'archived')),
+    last_provisioned_at   TIMESTAMPTZ,
+    metadata              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (organization_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_database_targets_status
+    ON platform.tenant_database_targets(status, cluster_key, updated_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_database_targets_physical_name
+    ON platform.tenant_database_targets(cluster_key, database_name)
+    WHERE database_name <> '';
+
+CREATE TABLE IF NOT EXISTS platform.tenant_database_migrations (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_database_id  UUID NOT NULL REFERENCES platform.tenant_database_targets(id) ON DELETE CASCADE,
+    migration_key       TEXT NOT NULL,
+    migration_stage     TEXT NOT NULL DEFAULT 'tenant_runtime',
+    status              TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'applied', 'failed', 'skipped')),
+    checksum            TEXT NOT NULL DEFAULT '',
+    error_message       TEXT NOT NULL DEFAULT '',
+    applied_at          TIMESTAMPTZ,
+    metadata            JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (tenant_database_id, migration_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_database_migrations_status
+    ON platform.tenant_database_migrations(status, migration_stage, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS platform.capability_packages (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    package_key           TEXT NOT NULL,
+    package_type          TEXT NOT NULL
+        CHECK (package_type IN ('industry_solution', 'function_module', 'api_capability', 'ai_model_profile', 'skill', 'tenant_base')),
+    version_key           TEXT NOT NULL,
+    display_name          TEXT NOT NULL,
+    status                TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'reviewing', 'published', 'deprecated', 'archived')),
+    owner_organization_id UUID REFERENCES public.organizations(id) ON DELETE SET NULL,
+    artifact_hash         TEXT NOT NULL DEFAULT '',
+    manifest              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(manifest) = 'object'),
+    metadata              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (package_key, package_type, version_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_capability_packages_type_status
+    ON platform.capability_packages(package_type, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS platform.marketplace_listings (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    package_id            UUID NOT NULL REFERENCES platform.capability_packages(id) ON DELETE CASCADE,
+    listing_type          TEXT NOT NULL DEFAULT 'shared_capability'
+        CHECK (listing_type IN ('shared_capability', 'industry_solution', 'api_capability', 'skill')),
+    status                TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'reviewing', 'published', 'suspended', 'archived')),
+    visibility            TEXT NOT NULL DEFAULT 'platform'
+        CHECK (visibility IN ('platform', 'private_contract', 'deployment')),
+    pricing_policy        JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(pricing_policy) = 'object'),
+    license_policy        JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(license_policy) = 'object'),
+    settlement_policy     JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(settlement_policy) = 'object'),
+    metadata              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (package_id, listing_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketplace_listings_status
+    ON platform.marketplace_listings(status, visibility, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS platform.database_maintenance_jobs (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_type      TEXT NOT NULL
         CHECK (job_type IN ('backup', 'restore')),
     scope         TEXT NOT NULL DEFAULT 'platform'
-        CHECK (scope IN ('platform', 'tenant', 'all')),
+        CHECK (
+            scope IN ('platform', 'platform_control', 'tenant', 'all', 'all_tenants', 'tenant_databases')
+            OR scope ~ '^tenant_database:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        ),
     status        TEXT NOT NULL DEFAULT 'pending_approval'
         CHECK (status IN ('pending_approval', 'approved', 'rejected', 'cancelled', 'completed', 'failed')),
     reason        TEXT NOT NULL DEFAULT '',
@@ -2438,6 +2573,28 @@ INSERT INTO platform.organization_schema_targets(organization_id, schema_name, t
 SELECT id, platform.organization_schema_name(id), 'meta-org.schema.v1', 'pending', '{"source":"existing_organizations"}'::JSONB
 FROM public.organizations
 ON CONFLICT (organization_id) DO NOTHING;
+
+INSERT INTO platform.tenant_database_targets(
+    organization_id, deployment_mode, cluster_key, region, database_name, schema_name, status, metadata
+)
+SELECT
+    o.id,
+    'dedicated_database',
+    'local-primary',
+    'local',
+    'meta_org_tenant_' || REPLACE(o.id::TEXT, '-', ''),
+    'public',
+    'provisioning',
+    '{"source":"existing_organizations","physical_database_target":true}'::JSONB
+FROM public.organizations o
+ON CONFLICT (organization_id) DO UPDATE SET
+    deployment_mode = EXCLUDED.deployment_mode,
+    cluster_key = EXCLUDED.cluster_key,
+    region = EXCLUDED.region,
+    database_name = EXCLUDED.database_name,
+    schema_name = EXCLUDED.schema_name,
+    metadata = platform.tenant_database_targets.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
 
 DO $$
 DECLARE

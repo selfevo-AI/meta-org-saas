@@ -309,6 +309,43 @@ func TestDatabaseMaintenanceJobLifecycleRequiresSeparateApproval(t *testing.T) {
 	}
 }
 
+func TestCreateDatabaseMaintenanceJobSupportsTenantDatabaseScope(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{
+		role: "maintenance_admin",
+		rolePermissions: map[string][]string{
+			"maintenance_admin": {
+				platformauth.PermissionPlatformRead,
+				platformauth.PermissionDatabaseMaintenanceManage,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	job, err := service.CreateDatabaseMaintenanceJob(context.Background(), actorID, CreateDatabaseMaintenanceJobInput{
+		JobType: "backup",
+		Scope:   "tenant_database:" + orgID.String(),
+		Reason:  "export tenant business database before solution upgrade",
+	})
+
+	if err != nil {
+		t.Fatalf("CreateDatabaseMaintenanceJob() error = %v", err)
+	}
+	if job.Scope != "tenant_database:"+orgID.String() {
+		t.Fatalf("Scope = %q, want tenant_database:<org_id>", job.Scope)
+	}
+	if repo.createdMaintenanceJob == nil {
+		t.Fatal("repository did not receive maintenance job")
+	}
+	if repo.createdMaintenanceJob.Metadata["target_scope"] != "tenant_database" {
+		t.Fatalf("metadata target_scope = %#v, want tenant_database", repo.createdMaintenanceJob.Metadata["target_scope"])
+	}
+	if repo.createdMaintenanceJob.Metadata["organization_id"] != orgID.String() {
+		t.Fatalf("metadata organization_id = %#v, want %s", repo.createdMaintenanceJob.Metadata["organization_id"], orgID)
+	}
+}
+
 func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalSchemaPackage(t *testing.T) {
 	actorID := uuid.New()
 	orgID := uuid.New()

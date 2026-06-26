@@ -3,11 +3,13 @@ package saas
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 func TestCompleteOnboardingRequiresSecurityKernelAuthorization(t *testing.T) {
@@ -128,6 +130,51 @@ func TestResolveTenantRejectsClosedOrganization(t *testing.T) {
 	}
 }
 
+func TestResolveTenantIncludesTenantDatabaseTarget(t *testing.T) {
+	userID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{
+		profile: &UserProfile{
+			ID:                    userID,
+			OnboardingStatus:      OnboardingComplete,
+			DefaultOrganizationID: &orgID,
+		},
+		membership: &membershipRecord{ID: uuid.New(), OrganizationID: orgID, AuthorityTier: AuthorityOwner},
+		organization: &OrganizationAccount{
+			ID:     orgID,
+			Status: OrganizationStatusActive,
+		},
+		tenantTarget: &tenantdb.Target{
+			OrganizationID: orgID,
+			DeploymentMode: tenantdb.DeploymentModeDedicatedDatabase,
+			ClusterKey:     "local-primary",
+			Region:         "local",
+			DatabaseName:   "meta_org_tenant_" + strings.ReplaceAll(orgID.String(), "-", ""),
+			SchemaName:     "public",
+			Status:         tenantdb.TargetStatusProvisioned,
+		},
+	}
+	svc := NewService(repo, ModeSaaS)
+
+	tenant, err := svc.ResolveTenant(context.Background(), middleware.AuthenticatedUser{ID: userID.String(), Type: "human"}, orgID.String())
+
+	if err != nil {
+		t.Fatalf("ResolveTenant() error = %v", err)
+	}
+	if tenant.TenantDatabaseName != repo.tenantTarget.DatabaseName {
+		t.Fatalf("TenantDatabaseName = %q, want %q", tenant.TenantDatabaseName, repo.tenantTarget.DatabaseName)
+	}
+	if tenant.TenantDatabaseDeploymentMode != tenantdb.DeploymentModeDedicatedDatabase {
+		t.Fatalf("TenantDatabaseDeploymentMode = %q", tenant.TenantDatabaseDeploymentMode)
+	}
+	if tenant.TenantDatabaseClusterKey != "local-primary" {
+		t.Fatalf("TenantDatabaseClusterKey = %q", tenant.TenantDatabaseClusterKey)
+	}
+	if tenant.TenantSchemaName != "public" {
+		t.Fatalf("TenantSchemaName = %q, want public", tenant.TenantSchemaName)
+	}
+}
+
 type fakeRepository struct {
 	completedOnboarding bool
 	updatedModules      bool
@@ -137,6 +184,7 @@ type fakeRepository struct {
 	membership          *membershipRecord
 	organization        *OrganizationAccount
 	platformRole        string
+	tenantTarget        *tenantdb.Target
 }
 
 func (f *fakeRepository) BootstrapPlatformAdmin(context.Context, string, string) error {
@@ -225,6 +273,13 @@ func (f *fakeRepository) GetPlatformRole(context.Context, uuid.UUID) (string, er
 		return "", ErrForbidden
 	}
 	return f.platformRole, nil
+}
+
+func (f *fakeRepository) GetTenantDatabaseTarget(context.Context, uuid.UUID) (*tenantdb.Target, error) {
+	if f.tenantTarget == nil {
+		return nil, ErrValidation
+	}
+	return f.tenantTarget, nil
 }
 
 type fakeSecurityKernel struct {
