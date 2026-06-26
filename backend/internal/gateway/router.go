@@ -189,6 +189,27 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	if deps.ErpHandler != nil {
 		deps.ErpHandler.RegisterRoutes(r)
 	}
+	if deps.CostingHandler != nil {
+		deps.CostingHandler.RegisterRoutes(r)
+	}
+	if deps.WorkflowHandler != nil {
+		deps.WorkflowHandler.RegisterRoutes(r)
+	}
+	if deps.ProjectHandler != nil {
+		deps.ProjectHandler.RegisterRoutes(r)
+	}
+	if deps.FinanceHandler != nil {
+		deps.FinanceHandler.RegisterRoutes(r)
+	}
+	if deps.InventoryHandler != nil {
+		deps.InventoryHandler.RegisterRoutes(r)
+	}
+	if deps.ProcurementHandler != nil {
+		deps.ProcurementHandler.RegisterRoutes(r)
+	}
+	if deps.SalesHandler != nil {
+		deps.SalesHandler.RegisterRoutes(r)
+	}
 }
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {

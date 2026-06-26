@@ -62,6 +62,8 @@ func main() {
 	if err := database.RunMigrations(context.Background(), db, cfg.MigrationsPath); err != nil {
 		log.Fatalf("migrations failed: %v", err)
 	}
+	tenantBusinessDB := tenantdb.NewPoolRouter(db, cfg.TenantDatabaseAdminURL)
+	defer tenantBusinessDB.Close()
 
 	modelSecretBox, err := secretbox.New(cfg.ModelSecretKey)
 	if err != nil {
@@ -95,7 +97,9 @@ func main() {
 		saasOptions = append(saasOptions, saas.WithTenantDatabaseProvisioner(tenantdb.NewProvisioner(tenantdb.ProvisionerConfig{
 			AdminURL: cfg.TenantDatabaseAdminURL,
 			Creator:  tenantdb.NewCatalogDatabaseCreator(tenantdb.NewPGDatabaseCatalog(tenantAdminDB)),
+			Migrator: tenantdb.FileTenantMigrator{MigrationsDir: cfg.TenantMigrationsPath},
 		})))
+		saasOptions = append(saasOptions, saas.WithTenantDatabaseBootstrapper(tenantdb.TenantBootstrapper{AdminURL: cfg.TenantDatabaseAdminURL}))
 	}
 	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saasOptions...)
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
@@ -123,7 +127,7 @@ func main() {
 	metaResourceSvc := metaresource.NewService(metaResourceRepo)
 	metaResourceHandler := metaresource.NewHandler(metaResourceSvc)
 
-	orgRepo := organization.NewRepository(db)
+	orgRepo := organization.NewRepository(tenantBusinessDB)
 	orgSvc := organization.NewService(
 		orgRepo,
 		organization.WithGovernanceService(govSvc),
@@ -140,7 +144,7 @@ func main() {
 	capRouter := capability.NewRouter(capRepo)
 	capHandler := capability.NewHandler(capRepo, capRouter, evoSvc)
 
-	costRepo := costing.NewRepository(db)
+	costRepo := costing.NewRepository(tenantBusinessDB)
 	costSvc := costing.NewService(costRepo)
 	costHandler := costing.NewHandler(costSvc)
 
@@ -175,11 +179,11 @@ func main() {
 	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel))
 	aiHandler := aigateway.NewHandler(aiSvc)
 
-	wfRepo := workflow.NewRepository(db)
+	wfRepo := workflow.NewRepository(tenantBusinessDB)
 	wfSvc := workflow.NewService(wfRepo)
 	wfHandler := workflow.NewHandler(wfSvc)
 
-	projectRepo := project.NewRepository(db)
+	projectRepo := project.NewRepository(tenantBusinessDB)
 	projectSvc := project.NewService(
 		projectRepo,
 		project.WithGovernanceService(govSvc),
@@ -191,15 +195,15 @@ func main() {
 	)
 	projectHandler := project.NewHandler(projectSvc)
 
-	financeRepo := finance.NewRepository(db, modelSecretBox)
+	financeRepo := finance.NewRepository(tenantBusinessDB, modelSecretBox)
 	financeSvc := finance.NewService(financeRepo, finance.WithCostPoster(projectSvc), finance.WithObservability(obsSvc))
 	financeHandler := finance.NewHandler(financeSvc)
 
-	inventoryRepo := inventory.NewRepository(db)
+	inventoryRepo := inventory.NewRepository(tenantBusinessDB)
 	inventorySvc := inventory.NewService(inventoryRepo)
 	inventoryHandler := inventory.NewHandler(inventorySvc)
 
-	procurementRepo := procurement.NewRepository(db)
+	procurementRepo := procurement.NewRepository(tenantBusinessDB)
 	procurementSvc := procurement.NewService(
 		procurementRepo,
 		procurement.WithInventoryPoster(inventorySvc),
@@ -207,7 +211,7 @@ func main() {
 	)
 	procurementHandler := procurement.NewHandler(procurementSvc)
 
-	salesRepo := sales.NewRepository(db)
+	salesRepo := sales.NewRepository(tenantBusinessDB)
 	salesSvc := sales.NewService(
 		salesRepo,
 		sales.WithInventoryPoster(inventorySvc),
@@ -219,7 +223,7 @@ func main() {
 	runtimeSvc := domainruntime.NewService(runtimeRepo)
 	runtimeHandler := domainruntime.NewHandler(runtimeSvc)
 
-	erpRepo := erp.NewRepository(db)
+	erpRepo := erp.NewRepository(tenantBusinessDB)
 	erpSvc := erp.NewService(erpRepo, erp.DefaultCatalog())
 	erpHandler := erp.NewHandler(erpSvc)
 

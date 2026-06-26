@@ -8,6 +8,17 @@ This directory now uses staged baseline migrations instead of the historical
 3. `002_erp_platform_integration_baseline.sql`
 4. `004_ai_capability_baseline.sql`
 
+Physical tenant databases use their own tenant migration directory:
+
+1. `tenant/001_tenant_business_baseline.sql`
+
+The tenant baseline creates tenant-local projections for platform-owned actors,
+organizations, departments, memberships, workflow metadata, module snapshots,
+and sample validation data, then includes `001_erp_code_baseline.sql` so each
+dedicated tenant database owns its ERP, project, workflow, costing, finance,
+inventory, procurement, and sales runtime tables without cross-database foreign
+keys.
+
 ## Stage Ownership
 
 `000_saas_platform_management_baseline.sql` owns the SaaS management platform:
@@ -45,6 +56,20 @@ table, and the `sample.work_order.create` sample function. Physical database
 creation remains the responsibility of tenant database provisioning or approved
 database maintenance jobs because `CREATE DATABASE` cannot be executed inside
 the baseline transaction.
+
+The business-closure sample tenant is not created by baseline startup. SaaS
+administrators create it explicitly from the SaaS management console or
+`POST /api/v1/platform/admin/sample-tenants/business-closure`. That flow creates
+the platform organization, enables all currently registered SaaS modules,
+provisions the dedicated tenant database, runs the tenant migration set, and
+bootstraps tenant-local sample projections and ERP/inventory sample records.
+
+Tenant private deployment export is reserved in this stage as database
+maintenance metadata only through
+`POST /api/v1/platform/admin/organizations/{id}/private-deployment-exports`.
+The job scope is `tenant_database:<organization_id>` and records the intended
+private-deployment package contents, but actual `pg_dump`, package signing, and
+private runtime import remain deferred implementation steps.
 
 The platform control plane owns package definitions, publication, review,
 authorization, marketplace listing, settlement policy, tenant database routing,
@@ -130,6 +155,14 @@ platform control-plane target table, not derive deployment topology only from
 plane copy and synchronize only package, license, authorization, and settlement
 summaries with the central SaaS platform.
 
+ERP, project, workflow, costing, finance, inventory, procurement, sales, and
+tenant organization runtime repositories route through the tenant database
+router. Provisioned `dedicated_database` tenants use their physical tenant
+database; shared-schema or not-yet-provisioned tenants continue to use the
+platform pool as the compatibility fallback. Tenant-facing routes for those
+business domains remain mounted in the tenant closure so new tenants are created
+through the same permission, module entitlement, and database provisioning flow.
+
 SaaS onboarding now records the target first in the platform transaction and
 then attempts physical tenant database provisioning after the transaction has
 committed. A successful provisioning attempt marks the target `provisioned` and
@@ -201,3 +234,13 @@ module/table catalogs must update both:
 Do not put schema changes only in backend code, frontend assumptions, ad hoc SQL,
 or informal notes. Fresh-database validation must run the active stage order
 before the change is considered complete.
+
+Fresh tenant-database validation is available with:
+
+```bash
+RUN_FRESH_TENANT_DB_MIGRATION_TEST=1 go test ./internal/pkg/tenantdb -run TestFreshTenantBusinessMigrationAgainstPostgres -count=1 -v
+```
+
+It creates a temporary PostgreSQL database from `MIGRATION_TEST_ADMIN_URL`, runs
+`migrations/tenant`, checks core ERP/finance/project/workflow/supply-chain
+tables, and bootstraps the business-closure sample data.

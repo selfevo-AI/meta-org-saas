@@ -124,28 +124,34 @@ func TestTenantRoutesExposeDepartmentWorkspaceOnly(t *testing.T) {
 	}
 }
 
-func TestLegacyTenantBusinessRoutesAreNotMounted(t *testing.T) {
+func TestTenantBusinessClosureRoutesAreMounted(t *testing.T) {
 	sourceBytes, err := os.ReadFile("router.go")
 	if err != nil {
 		t.Fatalf("read router.go: %v", err)
 	}
 	tenantBlock := functionBlock(t, string(sourceBytes), "registerTenantRoutes")
 	for _, snippet := range []string{
-		"OrganizationHandler.RegisterRoutes",
-		"CostingHandler.RegisterRoutes",
-		"MetaResourceHandler.RegisterRoutes",
-		"AssistantHandler.RegisterRoutes",
-		"AIGatewayHandler.RegisterTenantRoutes",
-		"WorkflowHandler.RegisterRoutes",
-		"ProjectHandler.RegisterRoutes",
-		"FinanceHandler.RegisterRoutes",
-		"InventoryHandler.RegisterRoutes",
-		"ProcurementHandler.RegisterRoutes",
-		"SalesHandler.RegisterRoutes",
-		"ToolRuntimeHandler.RegisterRoutes",
+		"deps.CostingHandler.RegisterRoutes",
+		"deps.WorkflowHandler.RegisterRoutes",
+		"deps.ProjectHandler.RegisterRoutes",
+		"deps.FinanceHandler.RegisterRoutes",
+		"deps.InventoryHandler.RegisterRoutes",
+		"deps.ProcurementHandler.RegisterRoutes",
+		"deps.SalesHandler.RegisterRoutes",
 	} {
-		if strings.Contains(tenantBlock, snippet) {
-			t.Fatalf("tenant routes still mount legacy API %q", snippet)
+		if !strings.Contains(tenantBlock, snippet) {
+			t.Fatalf("tenant routes should mount business closure API %q", snippet)
+		}
+	}
+	for _, forbidden := range []string{
+		"deps.OrganizationHandler.RegisterRoutes",
+		"deps.MetaResourceHandler.RegisterRoutes",
+		"deps.AssistantHandler.RegisterRoutes",
+		"deps.AIGatewayHandler.RegisterTenantRoutes",
+		"deps.ToolRuntimeHandler.RegisterRoutes",
+	} {
+		if strings.Contains(tenantBlock, forbidden) {
+			t.Fatalf("tenant routes should not mount platform/AI legacy API %q", forbidden)
 		}
 	}
 }

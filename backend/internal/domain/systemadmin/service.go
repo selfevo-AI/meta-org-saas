@@ -352,6 +352,24 @@ func (s *Service) CreateDatabaseMaintenanceJob(ctx context.Context, actorID uuid
 	})
 }
 
+func (s *Service) CreatePrivateDeploymentExportJob(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID) (*DatabaseMaintenanceJob, error) {
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	return s.CreateDatabaseMaintenanceJob(ctx, actorID, CreateDatabaseMaintenanceJobInput{
+		JobType: "backup",
+		Scope:   "tenant_database:" + orgID.String(),
+		Reason:  "Reserve tenant private deployment export package generation",
+		Metadata: map[string]any{
+			"export_purpose":   "private_deployment",
+			"execution_mode":   "metadata_only_reserved",
+			"package_format":   "tenant_private_deployment_bundle",
+			"includes":         []string{"tenant_business_database", "module_entitlements", "industry_solution_manifest", "tenant_database_migration_state"},
+			"deferred_actions": []string{"pg_dump_generation", "package_signing", "private_runtime_import"},
+		},
+	})
+}
+
 func applyDatabaseMaintenanceScopeMetadata(scope string, metadata map[string]any) error {
 	switch {
 	case scope == "platform" || scope == "platform_control":

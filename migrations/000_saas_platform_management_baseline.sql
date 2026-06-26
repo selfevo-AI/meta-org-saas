@@ -1600,8 +1600,12 @@ INSERT INTO saas_modules(module_key, display_name, category, enabled_default, li
     ('assistant', 'AI Assistant', 'ai', true, 'commercial'),
     ('ai_gateway', 'AI Gateway', 'ai', true, 'commercial'),
     ('toolruntime', 'Tool Runtime', 'ai', true, 'commercial'),
+    ('erp', 'ERP', 'business', true, 'commercial'),
     ('finance', 'Finance', 'finance', true, 'commercial'),
     ('costing', 'Costing', 'finance', true, 'mit'),
+    ('inventory', 'Inventory', 'business', true, 'commercial'),
+    ('procurement', 'Procurement', 'business', true, 'commercial'),
+    ('sales', 'Sales', 'business', true, 'commercial'),
     ('developer_tools', 'Developer Tools', 'system', true, 'commercial')
 ON CONFLICT (module_key) DO UPDATE SET
     display_name = EXCLUDED.display_name,

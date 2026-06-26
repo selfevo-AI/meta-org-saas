@@ -451,6 +451,174 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 	return &org, nil
 }
 
+func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, record CreateSampleTenantRecord) (*CreatedSampleTenant, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin sample tenant creation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var ownerID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (name, email, password_hash, onboarding_status, account_status)
+		VALUES ($1, lower($2), $3, 'complete', 'active')
+		ON CONFLICT (email) DO UPDATE SET
+		    name = EXCLUDED.name,
+		    password_hash = EXCLUDED.password_hash,
+		    onboarding_status = 'complete',
+		    account_status = 'active',
+		    updated_at = NOW()
+		RETURNING id
+	`, record.OwnerName, record.OwnerEmail, record.PasswordHash).Scan(&ownerID); err != nil {
+		return nil, fmt.Errorf("upsert sample tenant owner: %w", err)
+	}
+
+	var existingOrgID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT o.id
+		FROM organizations o
+		JOIN organization_memberships om ON om.organization_id = o.id
+		WHERE om.user_id = $1
+		  AND om.metadata->>'sample_key' = $2
+		  AND COALESCE(o.status, 'active') = 'active'
+		ORDER BY o.created_at ASC
+		LIMIT 1
+	`, ownerID, record.SampleKey).Scan(&existingOrgID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("find existing sample tenant: %w", err)
+	}
+
+	var org OrganizationAccount
+	var membershipID uuid.UUID
+	if existingOrgID == uuid.Nil {
+		var createdBy pgtype.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO organizations (name, description, created_by)
+			VALUES ($1, $2, $3)
+			RETURNING id, name, COALESCE(description, ''), created_by
+		`, record.OrganizationName, record.Description, record.ActorID).Scan(&org.ID, &org.Name, &org.Description, &createdBy); err != nil {
+			return nil, fmt.Errorf("create sample tenant organization: %w", err)
+		}
+	} else {
+		if err := tx.QueryRow(ctx, `
+			UPDATE organizations
+			SET name = $2, description = $3, status = 'active', updated_at = NOW()
+			WHERE id = $1
+			RETURNING id, name, COALESCE(description, '')
+		`, existingOrgID, record.OrganizationName, record.Description).Scan(&org.ID, &org.Name, &org.Description); err != nil {
+			return nil, fmt.Errorf("update sample tenant organization: %w", err)
+		}
+	}
+
+	var deptID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO departments (organization_id, name, code, description, metadata)
+		VALUES ($1, 'Default Department', 'DEFAULT', 'Sample tenant default department', jsonb_build_object('system_created', true, 'sample_key', $2))
+		ON CONFLICT (organization_id, code) WHERE code IS NOT NULL AND code <> ''
+		DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, metadata = departments.metadata || EXCLUDED.metadata, updated_at = NOW()
+		RETURNING id
+	`, org.ID, record.SampleKey).Scan(&deptID); err != nil {
+		return nil, fmt.Errorf("upsert sample tenant department: %w", err)
+	}
+
+	err = tx.QueryRow(ctx, `
+		SELECT id
+		FROM organization_memberships
+		WHERE organization_id = $1 AND user_id = $2 AND member_type = 'internal'
+		LIMIT 1
+	`, org.ID, ownerID).Scan(&membershipID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO organization_memberships (
+				organization_id, department_id, member_type, user_id, title, authority_tier, status, metadata
+			)
+			VALUES ($1, $2, 'internal', $3, 'Owner', 'organization_creator', 'active', jsonb_build_object('source', 'sample_tenant', 'sample_key', $4))
+			RETURNING id
+		`, org.ID, deptID, ownerID, record.SampleKey).Scan(&membershipID)
+	} else if err == nil {
+		_, err = tx.Exec(ctx, `
+			UPDATE organization_memberships
+			SET department_id = $2,
+			    title = 'Owner',
+			    authority_tier = 'organization_creator',
+			    status = 'active',
+			    metadata = metadata || jsonb_build_object('source', 'sample_tenant', 'sample_key', $3),
+			    updated_at = NOW()
+			WHERE id = $1
+		`, membershipID, deptID, record.SampleKey)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("upsert sample tenant membership: %w", err)
+	}
+
+	var planID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM saas_plans WHERE code = 'foundation'`).Scan(&planID); err != nil {
+		return nil, fmt.Errorf("get foundation plan: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO organization_subscriptions (
+			organization_id, plan_id, status, trial_ends_at, current_period_start, current_period_end, metadata
+		)
+		VALUES ($1, $2, 'trialing', NOW() + INTERVAL '365 days', NOW(), NOW() + INTERVAL '365 days', jsonb_build_object('source', 'sample_tenant', 'sample_key', $3))
+		ON CONFLICT (organization_id) DO UPDATE SET
+			plan_id = EXCLUDED.plan_id,
+			status = EXCLUDED.status,
+			trial_ends_at = EXCLUDED.trial_ends_at,
+			current_period_start = EXCLUDED.current_period_start,
+			current_period_end = EXCLUDED.current_period_end,
+			metadata = organization_subscriptions.metadata || EXCLUDED.metadata,
+			updated_at = NOW()
+	`, org.ID, planID, record.SampleKey); err != nil {
+		return nil, fmt.Errorf("upsert sample tenant subscription: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE organization_module_entitlements
+		SET status = 'disabled', source = 'trial', updated_at = NOW()
+		WHERE organization_id = $1
+	`, org.ID); err != nil {
+		return nil, fmt.Errorf("disable existing sample tenant modules: %w", err)
+	}
+	for _, moduleKey := range record.EnabledModules {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO organization_module_entitlements (organization_id, module_key, status, source, metadata)
+			VALUES ($1, $2, 'enabled', 'trial', jsonb_build_object('sample_key', $3, 'full_authorized', true))
+			ON CONFLICT (organization_id, module_key) DO UPDATE SET
+			    status = 'enabled',
+			    source = 'trial',
+			    metadata = organization_module_entitlements.metadata || EXCLUDED.metadata,
+			    updated_at = NOW()
+		`, org.ID, moduleKey, record.SampleKey); err != nil {
+			return nil, fmt.Errorf("enable sample tenant module %s: %w", moduleKey, err)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE users
+		SET default_organization_id = $2,
+		    onboarding_status = 'complete',
+		    account_status = 'active',
+		    updated_at = NOW()
+		WHERE id = $1
+	`, ownerID, org.ID); err != nil {
+		return nil, fmt.Errorf("set sample owner default organization: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `SELECT platform.provision_runtime_organization($1)`, org.ID); err != nil {
+		return nil, fmt.Errorf("provision sample runtime organization schema: %w", err)
+	}
+	if err := r.upsertTenantDatabaseTarget(ctx, tx, r.tenantDatabaseDefaults.TargetForOrganization(org.ID)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit sample tenant creation: %w", err)
+	}
+	org.MembershipID = &membershipID
+	org.AuthorityTier = AuthorityOwner
+	org.IsOwner = true
+	return &CreatedSampleTenant{Organization: org, OwnerUserID: ownerID, OwnerEmail: record.OwnerEmail, Modules: record.EnabledModules}, nil
+}
+
 func (r *Repository) EnsureSingleOrgForUser(ctx context.Context, userID uuid.UUID) (*OrganizationAccount, error) {
 	orgs, err := r.ListOrganizationsForUser(ctx, userID)
 	if err != nil {
@@ -557,6 +725,56 @@ func (r *Repository) UpdateTenantDatabaseTarget(ctx context.Context, target tena
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit tenant database target update: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) RecordTenantDatabaseMigrationResult(ctx context.Context, target tenantdb.Target, result tenantdb.MigrationResult) error {
+	records := tenantMigrationRecordsFromResult(target, result)
+	if len(records) == 0 {
+		return nil
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tenant database migration record: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var targetID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM platform.tenant_database_targets
+		WHERE organization_id = $1
+	`, target.OrganizationID).Scan(&targetID); err != nil {
+		return fmt.Errorf("get tenant database target id: %w", err)
+	}
+
+	for _, record := range records {
+		metadataJSON := mustJSON(record.Metadata)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO platform.tenant_database_migrations(
+			    tenant_database_id, migration_key, migration_stage, status, checksum, error_message, applied_at, metadata
+			)
+			VALUES (
+			    $1, $2, $3, $4, $5, $6,
+			    CASE WHEN $4 IN ('applied', 'skipped') THEN NOW() ELSE NULL END,
+			    $7::jsonb
+			)
+			ON CONFLICT (tenant_database_id, migration_key) DO UPDATE SET
+			    migration_stage = EXCLUDED.migration_stage,
+			    status = EXCLUDED.status,
+			    checksum = EXCLUDED.checksum,
+			    error_message = EXCLUDED.error_message,
+			    applied_at = EXCLUDED.applied_at,
+			    metadata = platform.tenant_database_migrations.metadata || EXCLUDED.metadata,
+			    updated_at = NOW()
+		`, targetID, record.Key, record.Stage, record.Status, record.Checksum, record.ErrorMessage, metadataJSON); err != nil {
+			return fmt.Errorf("upsert tenant database migration %s: %w", record.Key, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tenant database migration record: %w", err)
 	}
 	return nil
 }
@@ -888,6 +1106,126 @@ func (r *Repository) upsertTenantDatabaseTarget(ctx context.Context, tx pgx.Tx, 
 		return fmt.Errorf("upsert tenant database target: %w", err)
 	}
 	return nil
+}
+
+type tenantMigrationRecord struct {
+	Key          string
+	Stage        string
+	Status       string
+	Checksum     string
+	ErrorMessage string
+	Metadata     map[string]any
+}
+
+func tenantMigrationRecordsFromResult(target tenantdb.Target, result tenantdb.MigrationResult) []tenantMigrationRecord {
+	stageByKey := map[string]string{}
+	for _, stage := range result.AppliedStages {
+		stageByKey[stage.Name] = stage.Scope
+	}
+	checksums := checksumMetadata(result.Metadata["migration_checksums"])
+	errorMessage, _ := target.Metadata["error"].(string)
+	records := []tenantMigrationRecord{}
+
+	for _, filename := range stringSliceMetadata(result.Metadata["migration_files_applied"]) {
+		key := migrationKeyFromFilename(filename)
+		records = append(records, tenantMigrationRecord{
+			Key:          key,
+			Stage:        firstNonEmpty(stageByKey[key], tenantdb.MigrationScopeTenantBusiness),
+			Status:       "applied",
+			Checksum:     firstNonEmpty(checksums[filename], checksums[key]),
+			ErrorMessage: errorMessage,
+			Metadata:     tenantMigrationRecordMetadata(target, result, filename),
+		})
+	}
+	for _, filename := range stringSliceMetadata(result.Metadata["migration_files_skipped"]) {
+		key := migrationKeyFromFilename(filename)
+		records = append(records, tenantMigrationRecord{
+			Key:          key,
+			Stage:        tenantdb.MigrationScopeTenantBusiness,
+			Status:       "skipped",
+			Checksum:     firstNonEmpty(checksums[filename], checksums[key]),
+			ErrorMessage: errorMessage,
+			Metadata:     tenantMigrationRecordMetadata(target, result, filename),
+		})
+	}
+	if len(records) == 0 {
+		key := firstNonEmpty(result.Version, target.MigrationVersion)
+		if key == "" {
+			return records
+		}
+		status := "applied"
+		if target.Status == tenantdb.TargetStatusFailed {
+			status = "failed"
+		}
+		records = append(records, tenantMigrationRecord{
+			Key:          key,
+			Stage:        tenantdb.MigrationScopeTenantBusiness,
+			Status:       status,
+			Checksum:     firstNonEmpty(checksums[key+".sql"], checksums[key]),
+			ErrorMessage: errorMessage,
+			Metadata:     tenantMigrationRecordMetadata(target, result, key),
+		})
+	}
+	return records
+}
+
+func tenantMigrationRecordMetadata(target tenantdb.Target, result tenantdb.MigrationResult, source string) map[string]any {
+	metadata := map[string]any{
+		"migration_version": result.Version,
+		"source":            source,
+		"target_status":     target.Status,
+	}
+	for key, value := range result.Metadata {
+		metadata[key] = value
+	}
+	return metadata
+}
+
+func stringSliceMetadata(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := []string{}
+		for _, item := range v {
+			if text, ok := item.(string); ok && text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return []string{}
+	}
+}
+
+func checksumMetadata(value any) map[string]string {
+	out := map[string]string{}
+	switch v := value.(type) {
+	case map[string]string:
+		for key, item := range v {
+			out[key] = item
+		}
+	case map[string]any:
+		for key, item := range v {
+			if text, ok := item.(string); ok {
+				out[key] = text
+			}
+		}
+	}
+	return out
+}
+
+func migrationKeyFromFilename(filename string) string {
+	return strings.TrimSuffix(filename, ".sql")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func scanTenantDatabaseTarget(scan interface{ Scan(dest ...any) error }) (*tenantdb.Target, error) {

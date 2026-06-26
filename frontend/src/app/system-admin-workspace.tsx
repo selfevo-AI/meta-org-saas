@@ -26,6 +26,7 @@ import {
   applyIndustryPackageToOrganization,
   approveSchemaChange,
   closePlatformOrganization,
+  createBusinessClosureSampleTenant,
   createERPStandardSolutionFlow,
   createDatabaseMaintenanceJob,
   createIndustryExtension,
@@ -34,6 +35,7 @@ import {
   createOrganizationInvitation,
   createPlatformFeature,
   createPlatformUser,
+  createPrivateDeploymentExport,
   disablePlatformUser,
   getPlatformPermissionProfile,
   getPlatformAssistantContextHealth,
@@ -816,6 +818,44 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }, 'systemAdmin.organizationProfileUpdated')
   }
 
+  async function createSampleTenant() {
+    if (!canPlatform('organization.manage')) return
+    setLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      const result = await createBusinessClosureSampleTenant(token)
+      const orgItems = await listPlatformOrganizations(token, 100)
+      setPlatformOrganizations(orgItems)
+      setSelectedOrganizationID(result.organization.id)
+      setEntitlements(Object.fromEntries(result.enabled_modules.map((key) => [key, true])))
+      setModuleDraft(result.enabled_modules)
+      setSubscription(null)
+      setInvitations([])
+      setNotice(t('systemAdmin.sampleTenantCreated'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function reservePrivateDeploymentExport() {
+    if (!activeOrganizationID || selectedOrganization?.status === 'closed' || !canPlatform('database.maintenance.manage')) return
+    setLoading(true)
+    setError('')
+    setNotice('')
+    try {
+      await createPrivateDeploymentExport(token, activeOrganizationID)
+      await loadDatabaseMaintenance()
+      setNotice(t('systemAdmin.privateExportReserved'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function runMonitoringScan() {
     if (!canPlatform('platform.read')) return
     setLoading(true)
@@ -1303,7 +1343,26 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.saasOrganizations')}</h2>
                 <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.saasOrganizationsSummary')}</p>
               </div>
-              <Users className="h-5 w-5 text-slate-500" />
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => void createSampleTenant()}
+                  disabled={loading || !canPlatform('organization.manage')}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Play className="h-4 w-4" />
+                  {t('systemAdmin.createSampleTenant')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void reservePrivateDeploymentExport()}
+                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('database.maintenance.manage')}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" />
+                  {t('systemAdmin.reservePrivateExport')}
+                </button>
+              </div>
             </div>
             <label className="mt-4 flex items-center gap-2 text-sm font-semibold text-slate-600">
               <input

@@ -86,6 +86,7 @@ func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.
 	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable")
 	t.Setenv("PLATFORM_DATABASE_URL", "")
 	t.Setenv("TENANT_DATABASE_ADMIN_URL", "")
+	t.Setenv("TENANT_MIGRATIONS_PATH", "")
 	t.Setenv("TENANT_DATABASE_NAME_PREFIX", "")
 	t.Setenv("TENANT_DATABASE_MODE", "")
 	t.Setenv("TENANT_DATABASE_DEFAULT_CLUSTER", "")
@@ -98,6 +99,9 @@ func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.
 	}
 	if cfg.TenantDatabaseAdminURL != cfg.PlatformDatabaseURL {
 		t.Fatalf("TenantDatabaseAdminURL = %q, want PlatformDatabaseURL fallback %q", cfg.TenantDatabaseAdminURL, cfg.PlatformDatabaseURL)
+	}
+	if cfg.TenantMigrationsPath != "migrations/tenant" {
+		t.Fatalf("TenantMigrationsPath = %q, want migrations/tenant", cfg.TenantMigrationsPath)
 	}
 	if cfg.TenantDatabaseNamePrefix != "meta_org_tenant_" {
 		t.Fatalf("TenantDatabaseNamePrefix = %q, want meta_org_tenant_", cfg.TenantDatabaseNamePrefix)
@@ -117,6 +121,7 @@ func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(
 	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/legacy?sslmode=disable")
 	t.Setenv("PLATFORM_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org_platform?sslmode=disable")
 	t.Setenv("TENANT_DATABASE_ADMIN_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
+	t.Setenv("TENANT_MIGRATIONS_PATH", "../migrations/tenant")
 	t.Setenv("TENANT_DATABASE_NAME_PREFIX", "customer_org_")
 	t.Setenv("TENANT_DATABASE_MODE", "shared_schema")
 	t.Setenv("TENANT_DATABASE_DEFAULT_CLUSTER", "cn-east-1-a")
@@ -129,6 +134,9 @@ func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(
 	}
 	if cfg.TenantDatabaseAdminURL != "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" {
 		t.Fatalf("TenantDatabaseAdminURL = %q", cfg.TenantDatabaseAdminURL)
+	}
+	if cfg.TenantMigrationsPath != "../migrations/tenant" {
+		t.Fatalf("TenantMigrationsPath = %q", cfg.TenantMigrationsPath)
 	}
 	if cfg.TenantDatabaseNamePrefix != "customer_org_" {
 		t.Fatalf("TenantDatabaseNamePrefix = %q", cfg.TenantDatabaseNamePrefix)

@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 const (
@@ -22,7 +22,7 @@ const (
 )
 
 type PostgresRepository struct {
-	db      *pgxpool.Pool
+	db      tenantdb.DB
 	tx      pgx.Tx
 	querier erpQuerier
 }
@@ -33,7 +33,7 @@ type erpQuerier interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
 
-func NewRepository(db *pgxpool.Pool) *PostgresRepository {
+func NewRepository(db tenantdb.DB) *PostgresRepository {
 	return &PostgresRepository{db: db, querier: db}
 }
 

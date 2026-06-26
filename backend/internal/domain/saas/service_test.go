@@ -39,7 +39,15 @@ func TestCompleteOnboardingProvisionsTenantDatabaseTarget(t *testing.T) {
 	provisioned := target
 	provisioned.Status = tenantdb.TargetStatusProvisioned
 	provisioned.MigrationVersion = "tenant-business-v1"
-	provisioner := &fakeTenantDatabaseProvisioner{result: tenantdb.ProvisionResult{Target: provisioned}}
+	provisioner := &fakeTenantDatabaseProvisioner{result: tenantdb.ProvisionResult{
+		Target: provisioned,
+		Migration: tenantdb.MigrationResult{
+			Version: "tenant-business-v1",
+			AppliedStages: []tenantdb.MigrationStage{
+				{Name: "001_tenant_business_baseline", Scope: tenantdb.MigrationScopeTenantBusiness},
+			},
+		},
+	}}
 	svc := NewService(repo, ModeSaaS, WithTenantDatabaseProvisioner(provisioner))
 
 	_, err := svc.CompleteOnboarding(context.Background(), userID, OnboardingOrganizationInput{OrganizationName: "Acme"})
@@ -58,6 +66,12 @@ func TestCompleteOnboardingProvisionsTenantDatabaseTarget(t *testing.T) {
 	}
 	if repo.updatedTenantTarget.MigrationVersion != "tenant-business-v1" {
 		t.Fatalf("updated migration version = %q", repo.updatedTenantTarget.MigrationVersion)
+	}
+	if repo.recordedMigration.Version != "tenant-business-v1" {
+		t.Fatalf("recorded migration version = %q, want tenant-business-v1", repo.recordedMigration.Version)
+	}
+	if repo.recordedMigrationTarget == nil || repo.recordedMigrationTarget.OrganizationID != orgID {
+		t.Fatalf("recorded migration target = %#v, want org %s", repo.recordedMigrationTarget, orgID)
 	}
 }
 
@@ -88,6 +102,61 @@ func TestCompleteOnboardingRecordsFailedTenantDatabaseProvisioning(t *testing.T)
 	}
 	if repo.updatedTenantTarget.Metadata["error"] != "createdb denied" {
 		t.Fatalf("error metadata = %#v", repo.updatedTenantTarget.Metadata["error"])
+	}
+}
+
+func TestCreateBusinessClosureSampleTenantEnablesAllModulesAndBootstrapsTenantDatabase(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	provisioned := target
+	provisioned.Status = tenantdb.TargetStatusProvisioned
+	provisioned.MigrationVersion = "001_tenant_business_baseline"
+	repo := &fakeRepository{
+		platformRole: "owner",
+		tenantTarget: &target,
+		sampleTenant: &CreatedSampleTenant{
+			Organization: OrganizationAccount{ID: orgID, Name: "Local Manufacturing Demo Tenant"},
+			OwnerUserID:  uuid.New(),
+			OwnerEmail:   "sample-tenant-owner@local.test",
+		},
+		modules: []Module{
+			{ModuleKey: "organization"},
+			{ModuleKey: "project"},
+			{ModuleKey: "workflow"},
+			{ModuleKey: "finance"},
+			{ModuleKey: "costing"},
+			{ModuleKey: "erp"},
+			{ModuleKey: "inventory"},
+			{ModuleKey: "procurement"},
+			{ModuleKey: "sales"},
+		},
+	}
+	provisioner := &fakeTenantDatabaseProvisioner{result: tenantdb.ProvisionResult{Target: provisioned}}
+	bootstrapper := &fakeTenantDatabaseBootstrapper{}
+	svc := NewService(repo, ModeSaaS, WithTenantDatabaseProvisioner(provisioner), WithTenantDatabaseBootstrapper(bootstrapper))
+
+	result, err := svc.CreateBusinessClosureSampleTenant(context.Background(), actorID)
+	if err != nil {
+		t.Fatalf("CreateBusinessClosureSampleTenant error = %v", err)
+	}
+
+	if result.Organization.ID != orgID {
+		t.Fatalf("sample org = %s, want %s", result.Organization.ID, orgID)
+	}
+	for _, key := range []string{"organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales"} {
+		if !containsString(repo.sampleRecord.EnabledModules, key) {
+			t.Fatalf("sample enabled modules missing %q: %#v", key, repo.sampleRecord.EnabledModules)
+		}
+	}
+	if bootstrapper.input.OrganizationID != orgID {
+		t.Fatalf("bootstrap org = %s, want %s", bootstrapper.input.OrganizationID, orgID)
+	}
+	if !bootstrapper.input.IncludeBusinessClosureSample {
+		t.Fatalf("bootstrap IncludeBusinessClosureSample = false, want true")
+	}
+	if bootstrapper.target.Status != tenantdb.TargetStatusProvisioned {
+		t.Fatalf("bootstrap target status = %q", bootstrapper.target.Status)
 	}
 }
 
@@ -235,18 +304,63 @@ func TestResolveTenantIncludesTenantDatabaseTarget(t *testing.T) {
 	}
 }
 
+func TestTenantMigrationRecordsFromResultIncludesAppliedAndSkippedFiles(t *testing.T) {
+	target := tenantdb.Target{Status: tenantdb.TargetStatusProvisioned}
+	result := tenantdb.MigrationResult{
+		Version: "002_finance_extension",
+		AppliedStages: []tenantdb.MigrationStage{
+			{Name: "002_finance_extension", Scope: tenantdb.MigrationScopeTenantBusiness},
+		},
+		Metadata: map[string]any{
+			"migration_files_applied": []string{"002_finance_extension.sql"},
+			"migration_files_skipped": []string{"001_tenant_business_baseline.sql"},
+			"migration_checksums": map[string]string{
+				"001_tenant_business_baseline.sql": "checksum-001",
+				"002_finance_extension.sql":        "checksum-002",
+			},
+		},
+	}
+
+	records := tenantMigrationRecordsFromResult(target, result)
+
+	if len(records) != 2 {
+		t.Fatalf("len(records) = %d, want 2", len(records))
+	}
+	byKey := map[string]tenantMigrationRecord{}
+	for _, record := range records {
+		byKey[record.Key] = record
+	}
+	if byKey["002_finance_extension"].Status != "applied" {
+		t.Fatalf("applied status = %q", byKey["002_finance_extension"].Status)
+	}
+	if byKey["002_finance_extension"].Checksum != "checksum-002" {
+		t.Fatalf("applied checksum = %q", byKey["002_finance_extension"].Checksum)
+	}
+	if byKey["001_tenant_business_baseline"].Status != "skipped" {
+		t.Fatalf("skipped status = %q", byKey["001_tenant_business_baseline"].Status)
+	}
+	if byKey["001_tenant_business_baseline"].Checksum != "checksum-001" {
+		t.Fatalf("skipped checksum = %q", byKey["001_tenant_business_baseline"].Checksum)
+	}
+}
+
 type fakeRepository struct {
-	completedOnboarding bool
-	updatedModules      bool
-	closedOrganization  bool
-	closeReason         string
-	profile             *UserProfile
-	membership          *membershipRecord
-	organization        *OrganizationAccount
-	platformRole        string
-	tenantTarget        *tenantdb.Target
-	onboardingOrgID     uuid.UUID
-	updatedTenantTarget *tenantdb.Target
+	completedOnboarding     bool
+	updatedModules          bool
+	closedOrganization      bool
+	closeReason             string
+	profile                 *UserProfile
+	membership              *membershipRecord
+	organization            *OrganizationAccount
+	platformRole            string
+	tenantTarget            *tenantdb.Target
+	onboardingOrgID         uuid.UUID
+	updatedTenantTarget     *tenantdb.Target
+	recordedMigrationTarget *tenantdb.Target
+	recordedMigration       tenantdb.MigrationResult
+	modules                 []Module
+	sampleTenant            *CreatedSampleTenant
+	sampleRecord            CreateSampleTenantRecord
 }
 
 func (f *fakeRepository) BootstrapPlatformAdmin(context.Context, string, string) error {
@@ -261,6 +375,9 @@ func (f *fakeRepository) GetUserProfile(context.Context, uuid.UUID) (*UserProfil
 }
 
 func (f *fakeRepository) ListModules(context.Context) ([]Module, error) {
+	if f.modules != nil {
+		return f.modules, nil
+	}
 	return []Module{}, nil
 }
 
@@ -353,6 +470,26 @@ func (f *fakeRepository) UpdateTenantDatabaseTarget(_ context.Context, target te
 	return nil
 }
 
+func (f *fakeRepository) RecordTenantDatabaseMigrationResult(_ context.Context, target tenantdb.Target, result tenantdb.MigrationResult) error {
+	f.recordedMigrationTarget = &target
+	f.recordedMigration = result
+	return nil
+}
+
+func (f *fakeRepository) CreateBusinessClosureSampleTenant(_ context.Context, record CreateSampleTenantRecord) (*CreatedSampleTenant, error) {
+	f.sampleRecord = record
+	if f.sampleTenant != nil {
+		f.sampleTenant.Modules = record.EnabledModules
+		return f.sampleTenant, nil
+	}
+	return &CreatedSampleTenant{
+		Organization: OrganizationAccount{ID: uuid.New(), Name: record.OrganizationName},
+		OwnerUserID:  uuid.New(),
+		OwnerEmail:   record.OwnerEmail,
+		Modules:      record.EnabledModules,
+	}, nil
+}
+
 type fakeTenantDatabaseProvisioner struct {
 	target tenantdb.Target
 	result tenantdb.ProvisionResult
@@ -362,6 +499,18 @@ type fakeTenantDatabaseProvisioner struct {
 func (f *fakeTenantDatabaseProvisioner) Provision(_ context.Context, target tenantdb.Target) (tenantdb.ProvisionResult, error) {
 	f.target = target
 	return f.result, f.err
+}
+
+type fakeTenantDatabaseBootstrapper struct {
+	target tenantdb.Target
+	input  tenantdb.TenantBootstrapInput
+	err    error
+}
+
+func (f *fakeTenantDatabaseBootstrapper) BootstrapTenant(_ context.Context, target tenantdb.Target, input tenantdb.TenantBootstrapInput) error {
+	f.target = target
+	f.input = input
+	return f.err
 }
 
 type fakeSecurityKernel struct {
@@ -383,4 +532,13 @@ type fakeIndustryPolicy struct {
 func (f *fakeIndustryPolicy) ValidateOrganizationModules(_ context.Context, _ uuid.UUID, modules []string) error {
 	f.modules = modules
 	return f.err
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

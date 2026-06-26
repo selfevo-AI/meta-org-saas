@@ -29,6 +29,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Get("/modules", h.listModules)
 	r.Post("/onboarding/organization", h.completeOnboarding)
 	r.Get("/platform/organizations", h.listPlatformOrganizations)
+	r.Post("/platform/admin/sample-tenants/business-closure", h.createBusinessClosureSampleTenant)
 	r.Post("/platform/admin/organizations/{id}/close", h.closePlatformOrganization)
 }
 
@@ -92,6 +93,15 @@ func (h *Handler) closePlatformOrganization(w http.ResponseWriter, r *http.Reque
 	}
 	result, err := h.service.CloseOrganization(r.Context(), userID, orgID, input)
 	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createBusinessClosureSampleTenant(w http.ResponseWriter, r *http.Request) {
+	userID, ok := authenticatedUserID(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.CreateBusinessClosureSampleTenant(r.Context(), userID)
+	writeResult(w, http.StatusCreated, result, err)
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {

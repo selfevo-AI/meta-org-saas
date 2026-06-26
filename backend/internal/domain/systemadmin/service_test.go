@@ -346,6 +346,39 @@ func TestCreateDatabaseMaintenanceJobSupportsTenantDatabaseScope(t *testing.T) {
 	}
 }
 
+func TestCreatePrivateDeploymentExportJobCreatesTenantBackupMetadataOnlyTask(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{
+		role: "maintenance_admin",
+		rolePermissions: map[string][]string{
+			"maintenance_admin": {
+				platformauth.PermissionPlatformRead,
+				platformauth.PermissionDatabaseMaintenanceManage,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	job, err := service.CreatePrivateDeploymentExportJob(context.Background(), actorID, orgID)
+
+	if err != nil {
+		t.Fatalf("CreatePrivateDeploymentExportJob() error = %v", err)
+	}
+	if job.JobType != "backup" {
+		t.Fatalf("JobType = %q, want backup", job.JobType)
+	}
+	if job.Scope != "tenant_database:"+orgID.String() {
+		t.Fatalf("Scope = %q, want tenant_database:<org_id>", job.Scope)
+	}
+	if repo.createdMaintenanceJob.Metadata["export_purpose"] != "private_deployment" {
+		t.Fatalf("export_purpose = %#v", repo.createdMaintenanceJob.Metadata["export_purpose"])
+	}
+	if repo.createdMaintenanceJob.Metadata["execution_mode"] != "metadata_only_reserved" {
+		t.Fatalf("execution_mode = %#v", repo.createdMaintenanceJob.Metadata["execution_mode"])
+	}
+}
+
 func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalSchemaPackage(t *testing.T) {
 	actorID := uuid.New()
 	orgID := uuid.New()

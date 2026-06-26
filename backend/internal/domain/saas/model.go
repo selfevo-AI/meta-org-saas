@@ -82,6 +82,34 @@ type OnboardingOrganizationResponse struct {
 	Organization OrganizationAccount `json:"organization"`
 }
 
+type SampleTenantResponse struct {
+	Organization            OrganizationAccount `json:"organization"`
+	OwnerUserID             uuid.UUID           `json:"owner_user_id"`
+	OwnerEmail              string              `json:"owner_email"`
+	EnabledModules          []string            `json:"enabled_modules"`
+	TenantDatabaseStatus    string              `json:"tenant_database_status"`
+	TenantDatabaseName      string              `json:"tenant_database_name,omitempty"`
+	IndustrySolutionPackage string              `json:"industry_solution_package"`
+}
+
+type CreateSampleTenantRecord struct {
+	ActorID          uuid.UUID
+	OwnerEmail       string
+	OwnerName        string
+	PasswordHash     string
+	OrganizationName string
+	Description      string
+	EnabledModules   []string
+	SampleKey        string
+}
+
+type CreatedSampleTenant struct {
+	Organization OrganizationAccount
+	OwnerUserID  uuid.UUID
+	OwnerEmail   string
+	Modules      []string
+}
+
 type UpdateOrganizationModulesInput struct {
 	EnabledModules []string `json:"enabled_modules"`
 }

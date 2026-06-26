@@ -24,11 +24,12 @@ var (
 )
 
 type Service struct {
-	repo                      repository
-	mode                      string
-	securityKernel            securitykernel.Client
-	industryPolicy            industryPolicy
-	tenantDatabaseProvisioner tenantDatabaseProvisioner
+	repo                       repository
+	mode                       string
+	securityKernel             securitykernel.Client
+	industryPolicy             industryPolicy
+	tenantDatabaseProvisioner  tenantDatabaseProvisioner
+	tenantDatabaseBootstrapper tenantDatabaseBootstrapper
 }
 
 type ServiceOption func(*Service)
@@ -66,8 +67,20 @@ type tenantDatabaseTargetUpdater interface {
 	UpdateTenantDatabaseTarget(context.Context, tenantdb.Target) error
 }
 
+type tenantDatabaseMigrationRecorder interface {
+	RecordTenantDatabaseMigrationResult(context.Context, tenantdb.Target, tenantdb.MigrationResult) error
+}
+
+type sampleTenantCreator interface {
+	CreateBusinessClosureSampleTenant(context.Context, CreateSampleTenantRecord) (*CreatedSampleTenant, error)
+}
+
 type tenantDatabaseProvisioner interface {
 	Provision(context.Context, tenantdb.Target) (tenantdb.ProvisionResult, error)
+}
+
+type tenantDatabaseBootstrapper interface {
+	BootstrapTenant(context.Context, tenantdb.Target, tenantdb.TenantBootstrapInput) error
 }
 
 func WithSecurityKernel(client securitykernel.Client) ServiceOption {
@@ -85,6 +98,12 @@ func WithIndustryPolicy(policy industryPolicy) ServiceOption {
 func WithTenantDatabaseProvisioner(provisioner tenantDatabaseProvisioner) ServiceOption {
 	return func(s *Service) {
 		s.tenantDatabaseProvisioner = provisioner
+	}
+}
+
+func WithTenantDatabaseBootstrapper(bootstrapper tenantDatabaseBootstrapper) ServiceOption {
+	return func(s *Service) {
+		s.tenantDatabaseBootstrapper = bootstrapper
 	}
 }
 
@@ -192,12 +211,73 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, inpu
 	if err != nil {
 		return nil, err
 	}
-	s.provisionTenantDatabase(ctx, org.ID)
+	ownerProfile, _ := s.repo.GetUserProfile(ctx, userID)
+	s.provisionTenantDatabase(ctx, org.ID, tenantdb.TenantBootstrapInput{
+		OrganizationID:   org.ID,
+		OrganizationName: org.Name,
+		Description:      org.Description,
+		OwnerUserID:      userID,
+		OwnerName:        ownerProfileName(ownerProfile),
+		OwnerEmail:       ownerProfileEmail(ownerProfile),
+		EnabledModules:   modules,
+	})
 	profile, err := s.GetProfile(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	return &OnboardingOrganizationResponse{Profile: *profile, Organization: *org}, nil
+}
+
+func (s *Service) CreateBusinessClosureSampleTenant(ctx context.Context, actorID uuid.UUID) (*SampleTenantResponse, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionOrganizationManage); err != nil {
+		return nil, err
+	}
+	creator, ok := s.repo.(sampleTenantCreator)
+	if !ok {
+		return nil, fmt.Errorf("%w: sample tenant creator is not configured", ErrValidation)
+	}
+	modules, err := s.allModuleKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("MetaOrgSampleTenant!2026"), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	created, err := creator.CreateBusinessClosureSampleTenant(ctx, CreateSampleTenantRecord{
+		ActorID:          actorID,
+		OwnerEmail:       "sample-tenant-owner@local.test",
+		OwnerName:        "Sample Tenant Owner",
+		PasswordHash:     string(passwordHash),
+		OrganizationName: "Local Manufacturing Demo Tenant",
+		Description:      "Sample tenant for validating physical tenant database business closure.",
+		EnabledModules:   modules,
+		SampleKey:        "business_closure_sample",
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.provisionTenantDatabase(ctx, created.Organization.ID, tenantdb.TenantBootstrapInput{
+		OrganizationID:               created.Organization.ID,
+		OrganizationName:             created.Organization.Name,
+		Description:                  created.Organization.Description,
+		OwnerUserID:                  created.OwnerUserID,
+		OwnerName:                    "Sample Tenant Owner",
+		OwnerEmail:                   created.OwnerEmail,
+		EnabledModules:               modules,
+		SampleKey:                    "business_closure_sample",
+		IncludeBusinessClosureSample: true,
+	})
+	target := s.resolveTenantDatabaseTarget(ctx, created.Organization.ID)
+	return &SampleTenantResponse{
+		Organization:            created.Organization,
+		OwnerUserID:             created.OwnerUserID,
+		OwnerEmail:              created.OwnerEmail,
+		EnabledModules:          modules,
+		TenantDatabaseStatus:    target.Status,
+		TenantDatabaseName:      target.DatabaseName,
+		IndustrySolutionPackage: "local_manufacturing_demo",
+	}, nil
 }
 
 func (s *Service) ListPlatformOrganizations(ctx context.Context, actorID uuid.UUID, limit int) ([]OrganizationAccount, error) {
@@ -456,7 +536,7 @@ func (s *Service) resolveTenantDatabaseTarget(ctx context.Context, orgID uuid.UU
 	}
 }
 
-func (s *Service) provisionTenantDatabase(ctx context.Context, orgID uuid.UUID) {
+func (s *Service) provisionTenantDatabase(ctx context.Context, orgID uuid.UUID, bootstrapInput tenantdb.TenantBootstrapInput) {
 	if s.tenantDatabaseProvisioner == nil {
 		return
 	}
@@ -482,6 +562,17 @@ func (s *Service) provisionTenantDatabase(ctx context.Context, orgID uuid.UUID) 
 		updated.Metadata = mergeTenantDatabaseMetadata(updated.Metadata, map[string]any{"error": err.Error()})
 	}
 	_ = updater.UpdateTenantDatabaseTarget(ctx, updated)
+	if s.tenantDatabaseBootstrapper != nil && updated.Status == tenantdb.TargetStatusProvisioned {
+		bootstrapInput.OrganizationID = orgID
+		if err := s.tenantDatabaseBootstrapper.BootstrapTenant(ctx, updated, bootstrapInput); err != nil {
+			updated.Status = tenantdb.TargetStatusFailed
+			updated.Metadata = mergeTenantDatabaseMetadata(updated.Metadata, map[string]any{"bootstrap_error": err.Error()})
+			_ = updater.UpdateTenantDatabaseTarget(ctx, updated)
+		}
+	}
+	if recorder, ok := s.repo.(tenantDatabaseMigrationRecorder); ok {
+		_ = recorder.RecordTenantDatabaseMigrationResult(ctx, updated, result.Migration)
+	}
 }
 
 func mergeTenantDatabaseMetadata(base map[string]any, extra map[string]any) map[string]any {
@@ -567,6 +658,33 @@ func normalizeModuleKeys(values []string) []string {
 		result = append(result, key)
 	}
 	return result
+}
+
+func (s *Service) allModuleKeys(ctx context.Context) ([]string, error) {
+	modules, err := s.repo.ListModules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(modules)+9)
+	for _, module := range modules {
+		keys = append(keys, module.ModuleKey)
+	}
+	keys = append(keys, "organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales")
+	return normalizeModuleKeys(keys), nil
+}
+
+func ownerProfileName(profile *UserProfile) string {
+	if profile == nil || strings.TrimSpace(profile.Name) == "" {
+		return "Tenant Owner"
+	}
+	return profile.Name
+}
+
+func ownerProfileEmail(profile *UserProfile) string {
+	if profile == nil {
+		return ""
+	}
+	return profile.Email
 }
 
 func validAuthorityTier(value string) bool {

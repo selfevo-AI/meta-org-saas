@@ -2906,12 +2906,18 @@ ON CONFLICT (module_key) DO UPDATE SET
     metadata = saas_modules.metadata || EXCLUDED.metadata,
     updated_at = NOW();
 
-INSERT INTO saas_plan_modules(plan_id, module_key)
-SELECT p.id, m.module_key
-FROM saas_plans p
-JOIN saas_modules m ON m.module_key IN ('procurement', 'sales', 'inventory')
-WHERE p.code = 'foundation'
-ON CONFLICT (plan_id, module_key) DO NOTHING;
+DO $$
+BEGIN
+    IF to_regclass('public.saas_plans') IS NOT NULL
+       AND to_regclass('public.saas_plan_modules') IS NOT NULL THEN
+        INSERT INTO saas_plan_modules(plan_id, module_key)
+        SELECT p.id, m.module_key
+        FROM saas_plans p
+        JOIN saas_modules m ON m.module_key IN ('procurement', 'sales', 'inventory')
+        WHERE p.code = 'foundation'
+        ON CONFLICT (plan_id, module_key) DO NOTHING;
+    END IF;
+END $$;
 
 -- -----------------------------------------------------------------------------
 -- Folded from ERP-strong historical migration: 039_supply_chain_posting_idempotency.sql

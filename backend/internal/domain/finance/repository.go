@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type secretBox interface {
@@ -20,11 +20,11 @@ type secretBox interface {
 }
 
 type PostgresRepository struct {
-	db  *pgxpool.Pool
+	db  tenantdb.DB
 	box secretBox
 }
 
-func NewRepository(db *pgxpool.Pool, box secretBox) *PostgresRepository {
+func NewRepository(db tenantdb.DB, box secretBox) *PostgresRepository {
 	return &PostgresRepository{db: db, box: box}
 }
 
