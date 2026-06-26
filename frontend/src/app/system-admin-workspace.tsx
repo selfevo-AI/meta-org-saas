@@ -20,15 +20,21 @@ import {
 import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { AIAssistant } from './ai-assistant'
 import { ApiWorkbench } from './api-workbench'
+import { DeveloperToolsWorkspace } from './developer-tools-workspace'
 import {
   applySchemaChange,
   applyIndustryPackageToOrganization,
   approveSchemaChange,
   closePlatformOrganization,
   createERPStandardSolutionFlow,
+  createDatabaseMaintenanceJob,
   createIndustryExtension,
+  createIndustrySolutionSchemaChange,
   createOrganizationSchemaChange,
   createOrganizationInvitation,
+  createPlatformFeature,
+  createPlatformUser,
+  disablePlatformUser,
   getPlatformPermissionProfile,
   getPlatformAssistantContextHealth,
   getMonitoringAgentStatus,
@@ -44,14 +50,24 @@ import {
   listMonitoringAgentRuns,
   listOrganizationInvitations,
   listOrganizationSchemaTargets,
+  listDatabaseMaintenanceJobs,
   listPlatformDetails,
+  listPlatformFeatures,
   listPlatformMasters,
   listPlatformOrganizations,
+  listPlatformPermissions,
+  listPlatformRoles,
+  listPlatformUsers,
   listSaaSModules,
+  publishPlatformFeature,
+  resetPlatformUserPassword,
+  reviewDatabaseMaintenanceJob,
   reviewIndustryPublicationRequest,
   runMonitoringAgent,
+  setPlatformRolePermissions,
   submitIndustryExtensionPublication,
   verifySchemaChange,
+  type DatabaseMaintenanceJob,
   type Industry,
   type IndustryExtension,
   type IndustryPackage,
@@ -63,8 +79,12 @@ import {
   type OrganizationSubscription,
   type OrganizationSchemaTarget,
   type PlatformDetail,
+  type PlatformFeature,
   type PlatformMaster,
+  type PlatformPermission,
   type PlatformPermissionProfile,
+  type PlatformRole,
+  type PlatformUser,
   type AssistantContextHealthSummary,
   type MonitoringAgentRun,
   type MonitoringAgentStatus,
@@ -85,17 +105,34 @@ interface SystemAdminWorkspaceProps {
   token: string
   organizations: SessionOrganization[]
   currentOrganizationID?: string | null
+  activeSection?: string
 }
 
-type TabID = 'assistant' | 'monitoring' | 'saas' | 'industry' | 'features' | 'permissions' | 'runtime' | 'catalog' | 'targets' | 'schema'
+type TabID =
+  | 'assistant'
+  | 'monitoring'
+  | 'saas'
+  | 'industry'
+  | 'features'
+  | 'permissions'
+  | 'users'
+  | 'database'
+  | 'models'
+  | 'runtime'
+  | 'catalog'
+  | 'targets'
+  | 'schema'
 
 const tabs: Array<{ id: TabID; label: string; icon: typeof Database; permission?: string }> = [
   { id: 'assistant', label: 'systemAdmin.platformAssistant', icon: Bot, permission: 'assistant.platform.run' },
   { id: 'monitoring', label: 'systemAdmin.monitoringAgent', icon: Activity, permission: 'platform.read' },
   { id: 'saas', label: 'systemAdmin.saasOrganizations', icon: Users, permission: 'platform.read' },
-  { id: 'industry', label: 'systemAdmin.industries', icon: Layers3, permission: 'platform.read' },
-  { id: 'features', label: 'systemAdmin.platformFeatures', icon: ShieldCheck, permission: 'platform.read' },
-  { id: 'permissions', label: 'systemAdmin.permissions', icon: ShieldCheck, permission: 'platform.read' },
+  { id: 'industry', label: 'systemAdmin.industries', icon: Layers3, permission: 'industry.solution.manage' },
+  { id: 'features', label: 'systemAdmin.platformFeatures', icon: ShieldCheck, permission: 'platform.feature.manage' },
+  { id: 'permissions', label: 'systemAdmin.permissions', icon: ShieldCheck, permission: 'platform.rbac.manage' },
+  { id: 'users', label: 'systemAdmin.platformUsers', icon: Users, permission: 'platform.user.manage' },
+  { id: 'database', label: 'systemAdmin.databaseMaintenance', icon: Database, permission: 'database.maintenance.manage' },
+  { id: 'models', label: 'systemAdmin.modelAndApiSettings', icon: Table2, permission: 'model.manage' },
   { id: 'runtime', label: 'systemAdmin.apiWorkbench', icon: Table2, permission: 'runtime.manage' },
   { id: 'catalog', label: 'systemAdmin.platformCatalog', icon: Layers3, permission: 'platform.read' },
   { id: 'targets', label: 'systemAdmin.schemaTargets', icon: Database, permission: 'schema.manage' },
@@ -113,6 +150,16 @@ const platformPermissionCatalog = [
   'model.manage',
   'runtime.manage',
   'assistant.platform.run',
+  'platform.feature.manage',
+  'platform.user.manage',
+  'platform.rbac.manage',
+  'database.maintenance.manage',
+  'database.maintenance.approve',
+  'api.manage',
+  'industry.solution.manage',
+  'industry.solution.import',
+  'industry.solution.export',
+  'tenant.industry_solution.apply',
 ]
 const erpSolutionModules = ['project', 'procurement', 'inventory', 'sales', 'finance']
 const erpSolutionAssets = [
@@ -190,12 +237,31 @@ function parseSchemaPackage(source: string): SchemaPackage {
   return parsed as SchemaPackage
 }
 
-export function SystemAdminWorkspace({ token, organizations, currentOrganizationID }: SystemAdminWorkspaceProps) {
+const tabIDs = new Set<TabID>(tabs.map((tab) => tab.id))
+
+function normalizeTabID(value?: string): TabID | undefined {
+  return value && tabIDs.has(value as TabID) ? (value as TabID) : undefined
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+export function SystemAdminWorkspace({ token, organizations, currentOrganizationID, activeSection }: SystemAdminWorkspaceProps) {
   const { t } = useI18n()
-  const [activeTab, setActiveTab] = useState<TabID>('assistant')
+  const activeSectionID = normalizeTabID(activeSection)
+  const [activeTab, setActiveTab] = useState<TabID>(activeSectionID ?? 'assistant')
   const [moduleKey, setModuleKey] = useState('data_catalog')
   const [platformPermissions, setPlatformPermissions] = useState<PlatformPermissionProfile | null>(null)
   const [platformOrganizations, setPlatformOrganizations] = useState<SessionOrganization[]>([])
+  const [platformFeatures, setPlatformFeatures] = useState<PlatformFeature[]>([])
+  const [platformPermissionItems, setPlatformPermissionItems] = useState<PlatformPermission[]>([])
+  const [platformRoles, setPlatformRoles] = useState<PlatformRole[]>([])
+  const [platformUsers, setPlatformUsers] = useState<PlatformUser[]>([])
+  const [databaseMaintenanceJobs, setDatabaseMaintenanceJobs] = useState<DatabaseMaintenanceJob[]>([])
   const [saasModules, setSaaSModules] = useState<SaaSModule[]>([])
   const [industries, setIndustries] = useState<Industry[]>([])
   const [industryPackages, setIndustryPackages] = useState<IndustryPackage[]>([])
@@ -206,6 +272,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [selectedPackageID, setSelectedPackageID] = useState('')
   const [industryModuleDraft, setIndustryModuleDraft] = useState<string[]>([])
   const [erpSolutionModuleDraft, setERPSolutionModuleDraft] = useState<string[]>(erpSolutionModules)
+  const [industryTableDraft, setIndustryTableDraft] = useState({
+    tableName: '',
+    displayName: '',
+    fieldName: '',
+    dataType: 'varchar(120)',
+    defaultValue: '',
+    nullable: true,
+  })
   const [extensionKey, setExtensionKey] = useState('')
   const [extensionName, setExtensionName] = useState('')
   const [extensionModuleKey, setExtensionModuleKey] = useState('')
@@ -220,6 +294,11 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [organizationProfileForm, setOrganizationProfileForm] = useState({ name: '', description: '' })
   const [showClosedOrganizations, setShowClosedOrganizations] = useState(false)
   const [closeReason, setCloseReason] = useState('')
+  const [featureDraft, setFeatureDraft] = useState({ featureKey: '', moduleKey: 'platform_admin', title: '', permissionKeys: 'platform.read' })
+  const [rolePermissionDraft, setRolePermissionDraft] = useState<Record<string, string>>({})
+  const [platformUserDraft, setPlatformUserDraft] = useState({ name: '', email: '', roles: 'operator' })
+  const [temporaryCredential, setTemporaryCredential] = useState('')
+  const [maintenanceDraft, setMaintenanceDraft] = useState({ jobType: 'backup', scope: 'platform', reason: '', backupRef: '' })
   const [masters, setMasters] = useState<PlatformMaster[]>([])
   const [details, setDetails] = useState<PlatformDetail[]>([])
   const [targets, setTargets] = useState<OrganizationSchemaTarget[]>([])
@@ -300,7 +379,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     [platformPermissions],
   )
   const visibleTabs = useMemo(() => tabs.filter((tab) => !tab.permission || canPlatform(tab.permission)), [canPlatform])
-  const effectiveActiveTab = visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : visibleTabs[0]?.id
+  const effectiveActiveTab =
+    activeSectionID && visibleTabs.some((tab) => tab.id === activeSectionID)
+      ? activeSectionID
+      : visibleTabs.some((tab) => tab.id === activeTab)
+        ? activeTab
+        : visibleTabs[0]?.id
+  const activeTabDefinition = tabs.find((tab) => tab.id === effectiveActiveTab)
+  const ActiveTabIcon = activeTabDefinition?.icon ?? Database
 
   function saasModuleLabel(item: SaaSModule): string {
     const key = `saas.module.${item.module_key}`
@@ -400,6 +486,69 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setLoading(false)
     }
   }, [canPlatform, showClosedOrganizations, t, token])
+
+  const loadFeatureCatalog = useCallback(async () => {
+    if (!canPlatform('platform.feature.manage') && !canPlatform('platform.read')) return
+    setLoading(true)
+    setError('')
+    try {
+      setPlatformFeatures(await listPlatformFeatures(token, '', 200))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }, [canPlatform, t, token])
+
+  const loadRBAC = useCallback(async () => {
+    if (!canPlatform('platform.rbac.manage') && !canPlatform('platform.read')) return
+    setLoading(true)
+    setError('')
+    try {
+      const [permissionItems, roleItems] = await Promise.all([listPlatformPermissions(token), listPlatformRoles(token)])
+      setPlatformPermissionItems(permissionItems)
+      setPlatformRoles(roleItems)
+      setRolePermissionDraft((current) => {
+        const next = { ...current }
+        for (const role of roleItems) {
+          if (next[role.role_key] === undefined) {
+            next[role.role_key] = (role.permissions ?? []).join('\n')
+          }
+        }
+        return next
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }, [canPlatform, t, token])
+
+  const loadPlatformUsers = useCallback(async () => {
+    if (!canPlatform('platform.user.manage')) return
+    setLoading(true)
+    setError('')
+    try {
+      setPlatformUsers(await listPlatformUsers(token, 100))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }, [canPlatform, t, token])
+
+  const loadDatabaseMaintenance = useCallback(async () => {
+    if (!canPlatform('database.maintenance.manage')) return
+    setLoading(true)
+    setError('')
+    try {
+      setDatabaseMaintenanceJobs(await listDatabaseMaintenanceJobs(token, 100))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }, [canPlatform, t, token])
 
   const loadOrganizationSaaSDetails = useCallback(async () => {
     if (!activeOrganizationID || selectedOrganization?.status === 'closed' || !canPlatform('organization.manage')) {
@@ -545,6 +694,38 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }, [effectiveActiveTab, loadOrganizationSaaSDetails])
 
   useEffect(() => {
+    if (effectiveActiveTab !== 'features') return
+    const timer = window.setTimeout(() => {
+      void loadFeatureCatalog()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadFeatureCatalog])
+
+  useEffect(() => {
+    if (effectiveActiveTab !== 'permissions') return
+    const timer = window.setTimeout(() => {
+      void loadRBAC()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadRBAC])
+
+  useEffect(() => {
+    if (effectiveActiveTab !== 'users') return
+    const timer = window.setTimeout(() => {
+      void loadPlatformUsers()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadPlatformUsers])
+
+  useEffect(() => {
+    if (effectiveActiveTab !== 'database') return
+    const timer = window.setTimeout(() => {
+      void loadDatabaseMaintenance()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [effectiveActiveTab, loadDatabaseMaintenance])
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       setOrganizationProfileForm({
         name: selectedOrganization?.name ?? '',
@@ -679,6 +860,114 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setSchemaJson(jsonText(request.schema_package))
       setActiveTab('schema')
     }, 'systemAdmin.erpSolutionCreated')
+  }
+
+  async function createIndustryTableFieldChange() {
+    if (!activeOrganizationID || !canPlatform('industry.solution.manage') || !canPlatform('schema.manage')) return
+    if (!industryTableDraft.tableName.trim() || !industryTableDraft.fieldName.trim() || !industryTableDraft.dataType.trim()) return
+    await run(async () => {
+      const request = await createIndustrySolutionSchemaChange(token, activeOrganizationID, {
+        industry_key: selectedIndustryKey || 'general',
+        package_key: selectedIndustryPackage?.package_key || 'custom',
+        reason,
+        table: {
+          name: industryTableDraft.tableName.trim(),
+          display_name: industryTableDraft.displayName.trim(),
+          fields: [
+            {
+              name: industryTableDraft.fieldName.trim(),
+              data_type: industryTableDraft.dataType.trim(),
+              nullable: industryTableDraft.nullable,
+              default: industryTableDraft.defaultValue.trim(),
+            },
+          ],
+        },
+      })
+      setChangeRequest(request)
+      setVerificationReport(null)
+      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id).catch(() => []))
+      setSchemaPackage(request.schema_package)
+      setSchemaJson(jsonText(request.schema_package))
+    }, 'systemAdmin.industrySchemaChangeCreated')
+  }
+
+  async function createFeature() {
+    if (!featureDraft.featureKey.trim() || !featureDraft.moduleKey.trim() || !featureDraft.title.trim()) return
+    await run(async () => {
+      await createPlatformFeature(token, {
+        feature_key: featureDraft.featureKey.trim(),
+        module_key: featureDraft.moduleKey.trim(),
+        title: featureDraft.title.trim(),
+        permission_keys: splitLines(featureDraft.permissionKeys),
+        metadata: { extension_mode: 'metadata_only' },
+      })
+      setFeatureDraft({ featureKey: '', moduleKey: 'platform_admin', title: '', permissionKeys: 'platform.read' })
+      await loadFeatureCatalog()
+    }, 'systemAdmin.featureCreated')
+  }
+
+  async function publishFeature(featureKey: string) {
+    await run(async () => {
+      await publishPlatformFeature(token, featureKey)
+      await loadFeatureCatalog()
+    }, 'systemAdmin.featurePublished')
+  }
+
+  async function saveRolePermissions(roleKey: string) {
+    await run(async () => {
+      await setPlatformRolePermissions(token, roleKey, splitLines(rolePermissionDraft[roleKey] ?? ''))
+      await loadRBAC()
+    }, 'systemAdmin.rolePermissionsSaved')
+  }
+
+  async function createUser() {
+    if (!platformUserDraft.name.trim() || !platformUserDraft.email.trim()) return
+    await run(async () => {
+      const result = await createPlatformUser(token, {
+        name: platformUserDraft.name.trim(),
+        email: platformUserDraft.email.trim(),
+        roles: splitLines(platformUserDraft.roles),
+      })
+      setTemporaryCredential(result.temporary_password)
+      setPlatformUserDraft({ name: '', email: '', roles: 'operator' })
+      await loadPlatformUsers()
+    }, 'systemAdmin.platformUserCreated')
+  }
+
+  async function resetUserPassword(userID: string) {
+    await run(async () => {
+      const result = await resetPlatformUserPassword(token, userID)
+      setTemporaryCredential(result.temporary_password)
+      await loadPlatformUsers()
+    }, 'systemAdmin.platformPasswordReset')
+  }
+
+  async function disableUser(userID: string) {
+    await run(async () => {
+      await disablePlatformUser(token, userID)
+      await loadPlatformUsers()
+    }, 'systemAdmin.platformUserDisabled')
+  }
+
+  async function createMaintenanceJob() {
+    if (!maintenanceDraft.reason.trim()) return
+    await run(async () => {
+      await createDatabaseMaintenanceJob(token, {
+        job_type: maintenanceDraft.jobType as 'backup' | 'restore',
+        scope: maintenanceDraft.scope,
+        reason: maintenanceDraft.reason.trim(),
+        backup_ref: maintenanceDraft.backupRef.trim(),
+      })
+      setMaintenanceDraft({ jobType: 'backup', scope: 'platform', reason: '', backupRef: '' })
+      await loadDatabaseMaintenance()
+    }, 'systemAdmin.databaseJobCreated')
+  }
+
+  async function reviewMaintenanceJob(jobID: string, decision: 'approve' | 'reject') {
+    await run(async () => {
+      await reviewDatabaseMaintenanceJob(token, jobID, decision, reason)
+      await loadDatabaseMaintenance()
+    }, decision === 'approve' ? 'systemAdmin.databaseJobApproved' : 'systemAdmin.databaseJobRejected')
   }
 
   async function createPrivateIndustryExtension() {
@@ -852,23 +1141,13 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
-        {visibleTabs.map((tab) => {
-          const Icon = tab.icon
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
-                effectiveActiveTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              {t(tab.label)}
-            </button>
-          )
-        })}
+      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+        {activeTabDefinition && (
+          <div className="flex min-w-0 items-center gap-2">
+            <ActiveTabIcon className="h-5 w-5 text-slate-500" />
+            <h2 className="truncate text-base font-semibold text-slate-950">{t(activeTabDefinition.label)}</h2>
+          </div>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -878,6 +1157,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             void loadIndustryManagement()
             void loadContextHealth()
             void loadMonitoringAgent()
+            void loadFeatureCatalog()
+            void loadRBAC()
+            void loadPlatformUsers()
+            void loadDatabaseMaintenance()
             void loadCatalog()
             void loadTargets()
           }}
@@ -1366,6 +1649,68 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   {t('systemAdmin.createERPSolution')}
                 </button>
               </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.solutionTableFieldChange')}</h3>
+                    <p className="mt-1 text-xs text-slate-600">{t('systemAdmin.solutionTableFieldChangeSummary')}</p>
+                  </div>
+                  <Table2 className="h-5 w-5 text-slate-500" />
+                </div>
+                <div className="mt-3 grid gap-2">
+                  <input
+                    value={industryTableDraft.tableName}
+                    onChange={(event) => setIndustryTableDraft((current) => ({ ...current, tableName: event.target.value }))}
+                    placeholder={t('systemAdmin.tableName')}
+                    className="h-9 rounded-md border border-slate-300 px-3 text-sm"
+                  />
+                  <input
+                    value={industryTableDraft.displayName}
+                    onChange={(event) => setIndustryTableDraft((current) => ({ ...current, displayName: event.target.value }))}
+                    placeholder={t('systemAdmin.displayName')}
+                    className="h-9 rounded-md border border-slate-300 px-3 text-sm"
+                  />
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <input
+                      value={industryTableDraft.fieldName}
+                      onChange={(event) => setIndustryTableDraft((current) => ({ ...current, fieldName: event.target.value }))}
+                      placeholder={t('systemAdmin.fieldName')}
+                      className="h-9 rounded-md border border-slate-300 px-3 text-sm"
+                    />
+                    <input
+                      value={industryTableDraft.dataType}
+                      onChange={(event) => setIndustryTableDraft((current) => ({ ...current, dataType: event.target.value }))}
+                      placeholder={t('systemAdmin.dataType')}
+                      className="h-9 rounded-md border border-slate-300 px-3 text-sm"
+                    />
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <input
+                      value={industryTableDraft.defaultValue}
+                      onChange={(event) => setIndustryTableDraft((current) => ({ ...current, defaultValue: event.target.value }))}
+                      placeholder={t('systemAdmin.defaultValue')}
+                      className="h-9 rounded-md border border-slate-300 px-3 text-sm"
+                    />
+                    <label className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={industryTableDraft.nullable}
+                        onChange={(event) => setIndustryTableDraft((current) => ({ ...current, nullable: event.target.checked }))}
+                      />
+                      {t('systemAdmin.nullable')}
+                    </label>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void createIndustryTableFieldChange()}
+                  disabled={!activeOrganizationID || loading || !canPlatform('industry.solution.manage') || !canPlatform('schema.manage')}
+                  className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Braces className="h-4 w-4" />
+                  {t('systemAdmin.createSchemaChange')}
+                </button>
+              </div>
             </div>
           </section>
 
@@ -1551,26 +1896,90 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             </div>
             <ShieldCheck className="h-5 w-5 text-slate-500" />
           </div>
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {platformFeatureTabs.map((feature) => {
-              const permissionAllowed = canPlatform(feature.permission)
-              const organizationEnabled = feature.moduleKey ? !!entitlements[feature.moduleKey] : false
-              return (
-                <div key={feature.id} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <h3 className="truncate text-sm font-semibold text-slate-950">{t(feature.label)}</h3>
-                      <p className="mt-1 truncate text-xs text-slate-500">{feature.moduleKey || feature.permission}</p>
-                    </div>
-                    <StatusBadge label={permissionAllowed ? 'active' : 'disabled'} />
-                  </div>
-                  <div className="mt-4 grid gap-2">
-                    <Metric label={t('systemAdmin.platformPermission')} value={t(`systemAdmin.permission.${feature.permission}`)} />
-                    <Metric label={t('systemAdmin.organizationEntitlement')} value={organizationEnabled ? t('active') : t('disabled')} />
-                  </div>
-                </div>
-              )
-            })}
+          <div className="mt-5 grid gap-3 lg:grid-cols-[1fr_320px]">
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">{t('systemAdmin.featureKey')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.module')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.permissions')}</th>
+                    <th className="px-3 py-2">{t('common.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {platformFeatures.length > 0 ? (
+                    platformFeatures.map((feature) => (
+                      <tr key={feature.feature_key}>
+                        <td className="px-3 py-3">
+                          <p className="font-medium text-slate-900">{feature.title}</p>
+                          <p className="font-mono text-xs text-slate-500">{feature.feature_key}</p>
+                        </td>
+                        <td className="px-3 py-3 text-slate-600">{feature.module_key}</td>
+                        <td className="px-3 py-3">
+                          <StatusBadge label={feature.status} />
+                        </td>
+                        <td className="px-3 py-3 text-xs text-slate-600">{feature.permission_keys.join(', ') || t('common.empty')}</td>
+                        <td className="px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={() => void publishFeature(feature.feature_key)}
+                            disabled={feature.status === 'active' || loading || !canPlatform('platform.feature.manage')}
+                            className="inline-flex h-8 items-center rounded-md border border-slate-300 px-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {t('systemAdmin.publish')}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-slate-500">
+                        {t('systemAdmin.noFeatures')}
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.createFeature')}</h3>
+              <div className="mt-3 space-y-2">
+                <input
+                  value={featureDraft.featureKey}
+                  onChange={(event) => setFeatureDraft((current) => ({ ...current, featureKey: event.target.value }))}
+                  placeholder={t('systemAdmin.featureKey')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <input
+                  value={featureDraft.title}
+                  onChange={(event) => setFeatureDraft((current) => ({ ...current, title: event.target.value }))}
+                  placeholder={t('systemAdmin.title')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <input
+                  value={featureDraft.moduleKey}
+                  onChange={(event) => setFeatureDraft((current) => ({ ...current, moduleKey: event.target.value }))}
+                  placeholder={t('systemAdmin.module')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <textarea
+                  value={featureDraft.permissionKeys}
+                  onChange={(event) => setFeatureDraft((current) => ({ ...current, permissionKeys: event.target.value }))}
+                  placeholder={t('systemAdmin.permissionKey')}
+                  className="min-h-[84px] w-full rounded-md border border-slate-300 p-3 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => void createFeature()}
+                  disabled={loading || !canPlatform('platform.feature.manage')}
+                  className="inline-flex h-9 w-full items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {t('systemAdmin.createFeature')}
+                </button>
+              </div>
+            </aside>
           </div>
         </section>
       )}
@@ -1589,31 +1998,274 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             <Metric label={t('systemAdmin.enabledPermissions')} value={String(Object.values(platformPermissions?.permissions ?? {}).filter(Boolean).length)} />
             <Metric label={t('systemAdmin.menuItems')} value={String(platformPermissions?.menu_items?.length ?? 0)} />
           </div>
-          <div className="mt-5 overflow-hidden rounded-lg border border-slate-200">
-            <table className="min-w-full divide-y divide-slate-200 text-sm">
-              <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
-                <tr>
-                  <th className="px-3 py-2">{t('systemAdmin.permissions')}</th>
-                  <th className="px-3 py-2">{t('systemAdmin.permissionKey')}</th>
-                  <th className="px-3 py-2">{t('systemAdmin.status')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {platformPermissionCatalog.map((permission) => {
-                  const enabled = !!platformPermissions?.permissions[permission]
-                  return (
-                    <tr key={permission}>
-                      <td className="px-3 py-3 font-medium text-slate-900">{t(`systemAdmin.permission.${permission}`)}</td>
-                      <td className="px-3 py-3 font-mono text-xs text-slate-600">{permission}</td>
+          <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_360px]">
+            <div className="space-y-3">
+              {platformRoles.map((role) => (
+                <article key={role.role_key} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-950">{role.name}</h3>
+                      <p className="mt-1 font-mono text-xs text-slate-500">{role.role_key}</p>
+                    </div>
+                    <StatusBadge label={role.status} />
+                  </div>
+                  <textarea
+                    value={rolePermissionDraft[role.role_key] ?? (role.permissions ?? []).join('\n')}
+                    onChange={(event) => setRolePermissionDraft((current) => ({ ...current, [role.role_key]: event.target.value }))}
+                    className="mt-3 min-h-[120px] w-full rounded-md border border-slate-300 bg-white p-3 font-mono text-xs text-slate-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveRolePermissions(role.role_key)}
+                    disabled={loading || !canPlatform('platform.rbac.manage')}
+                    className="mt-3 inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-50"
+                  >
+                    {t('systemAdmin.savePermissions')}
+                  </button>
+                </article>
+              ))}
+            </div>
+            <aside className="overflow-hidden rounded-lg border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">{t('systemAdmin.permissionKey')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(platformPermissionItems.length ? platformPermissionItems : platformPermissionCatalog.map((permission) => ({
+                    permission_key: permission,
+                    name: t(`systemAdmin.permission.${permission}`),
+                    category: 'platform',
+                    status: platformPermissions?.permissions[permission] ? 'active' : 'disabled',
+                    metadata: {},
+                    created_at: '',
+                    updated_at: '',
+                  }))).map((permission) => (
+                    <tr key={permission.permission_key}>
                       <td className="px-3 py-3">
-                        <StatusBadge label={enabled ? 'active' : 'disabled'} />
+                        <p className="font-medium text-slate-900">{permission.name}</p>
+                        <p className="font-mono text-xs text-slate-500">{permission.permission_key}</p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <StatusBadge label={permission.status} />
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  ))}
+                </tbody>
+              </table>
+            </aside>
           </div>
+        </section>
+      )}
+
+      {effectiveActiveTab === 'users' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.platformUsers')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.platformUsersSummary')}</p>
+            </div>
+            <Users className="h-5 w-5 text-slate-500" />
+          </div>
+          {temporaryCredential && (
+            <pre className="mt-4 overflow-auto rounded-lg border border-amber-200 bg-amber-50 p-3 font-mono text-xs text-amber-800">
+              {temporaryCredential}
+            </pre>
+          )}
+          <div className="mt-5 grid gap-4 xl:grid-cols-[320px_1fr]">
+            <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.createPlatformUser')}</h3>
+              <div className="mt-3 space-y-2">
+                <input
+                  value={platformUserDraft.name}
+                  onChange={(event) => setPlatformUserDraft((current) => ({ ...current, name: event.target.value }))}
+                  placeholder={t('systemAdmin.name')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <input
+                  value={platformUserDraft.email}
+                  onChange={(event) => setPlatformUserDraft((current) => ({ ...current, email: event.target.value }))}
+                  placeholder={t('systemAdmin.email')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <input
+                  value={platformUserDraft.roles}
+                  onChange={(event) => setPlatformUserDraft((current) => ({ ...current, roles: event.target.value }))}
+                  placeholder={t('systemAdmin.roles')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => void createUser()}
+                  disabled={loading || !canPlatform('platform.user.manage')}
+                  className="inline-flex h-9 w-full items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {t('systemAdmin.createPlatformUser')}
+                </button>
+              </div>
+            </aside>
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">{t('systemAdmin.user')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.roles')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                    <th className="px-3 py-2">{t('common.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {platformUsers.map((user) => (
+                    <tr key={user.user_id}>
+                      <td className="px-3 py-3">
+                        <p className="font-medium text-slate-900">{user.name}</p>
+                        <p className="text-xs text-slate-500">{user.email}</p>
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">{user.roles.join(', ')}</td>
+                      <td className="px-3 py-3">
+                        <StatusBadge label={user.account_status} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void resetUserPassword(user.user_id)}
+                            disabled={loading || !canPlatform('platform.user.manage')}
+                            className="inline-flex h-8 items-center rounded-md border border-slate-300 px-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
+                          >
+                            {t('systemAdmin.resetPassword')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void disableUser(user.user_id)}
+                            disabled={loading || user.account_status === 'disabled' || !canPlatform('platform.user.manage')}
+                            className="inline-flex h-8 items-center rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 disabled:opacity-50"
+                          >
+                            {t('systemAdmin.disableUser')}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {platformUsers.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">{t('systemAdmin.noPlatformUsers')}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {effectiveActiveTab === 'database' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.databaseMaintenance')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.databaseMaintenanceSummary')}</p>
+            </div>
+            <Database className="h-5 w-5 text-slate-500" />
+          </div>
+          <div className="mt-5 grid gap-4 xl:grid-cols-[320px_1fr]">
+            <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.createDatabaseJob')}</h3>
+              <div className="mt-3 space-y-2">
+                <select
+                  value={maintenanceDraft.jobType}
+                  onChange={(event) => setMaintenanceDraft((current) => ({ ...current, jobType: event.target.value }))}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                >
+                  <option value="backup">{t('systemAdmin.backup')}</option>
+                  <option value="restore">{t('systemAdmin.restore')}</option>
+                </select>
+                <input
+                  value={maintenanceDraft.backupRef}
+                  onChange={(event) => setMaintenanceDraft((current) => ({ ...current, backupRef: event.target.value }))}
+                  placeholder={t('systemAdmin.backupRef')}
+                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
+                />
+                <textarea
+                  value={maintenanceDraft.reason}
+                  onChange={(event) => setMaintenanceDraft((current) => ({ ...current, reason: event.target.value }))}
+                  placeholder={t('systemAdmin.reasonPlaceholder')}
+                  className="min-h-[84px] w-full rounded-md border border-slate-300 p-3 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => void createMaintenanceJob()}
+                  disabled={loading || !canPlatform('database.maintenance.manage')}
+                  className="inline-flex h-9 w-full items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {t('systemAdmin.createDatabaseJob')}
+                </button>
+              </div>
+            </aside>
+            <div className="overflow-hidden rounded-lg border border-slate-200">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                  <tr>
+                    <th className="px-3 py-2">{t('systemAdmin.jobType')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.status')}</th>
+                    <th className="px-3 py-2">{t('systemAdmin.reason')}</th>
+                    <th className="px-3 py-2">{t('common.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {databaseMaintenanceJobs.map((job) => (
+                    <tr key={job.id}>
+                      <td className="px-3 py-3 font-medium text-slate-900">{t(`systemAdmin.${job.job_type}`)}</td>
+                      <td className="px-3 py-3">
+                        <StatusBadge label={job.status} />
+                      </td>
+                      <td className="px-3 py-3 text-slate-600">{job.reason || job.backup_ref || t('common.empty')}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void reviewMaintenanceJob(job.id, 'approve')}
+                            disabled={job.status !== 'pending_approval' || loading || !canPlatform('database.maintenance.approve')}
+                            className="inline-flex h-8 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 text-xs font-semibold text-emerald-700 disabled:opacity-50"
+                          >
+                            {t('systemAdmin.approve')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void reviewMaintenanceJob(job.id, 'reject')}
+                            disabled={job.status !== 'pending_approval' || loading || !canPlatform('database.maintenance.approve')}
+                            className="inline-flex h-8 items-center rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 disabled:opacity-50"
+                          >
+                            {t('systemAdmin.reject')}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {databaseMaintenanceJobs.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">{t('systemAdmin.noDatabaseJobs')}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {effectiveActiveTab === 'models' && (
+        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.modelAndApiSettings')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.modelAndApiSettingsSummary')}</p>
+            </div>
+            <Table2 className="h-5 w-5 text-slate-500" />
+          </div>
+          <DeveloperToolsWorkspace token={token} apiScope="platform" />
         </section>
       )}
 

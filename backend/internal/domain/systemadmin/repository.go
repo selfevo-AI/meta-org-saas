@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -87,6 +89,385 @@ func (r *Repository) ListPlatformDetails(ctx context.Context, masterKey string) 
 		return nil, fmt.Errorf("list platform details iteration: %w", err)
 	}
 	return items, nil
+}
+
+func (r *Repository) ListPlatformFeatures(ctx context.Context, status string, limit int) ([]PlatformFeature, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	query := `
+		SELECT feature_key, parent_key, module_key, category, title, description, status, sort_order,
+		       permission_keys, metadata, created_at, updated_at
+		FROM platform.platform_features`
+	args := []any{}
+	if status != "" {
+		query += ` WHERE status = $1`
+		args = append(args, status)
+	}
+	query += fmt.Sprintf(` ORDER BY sort_order, feature_key LIMIT $%d`, len(args)+1)
+	args = append(args, limit)
+
+	rows, err := r.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list platform features: %w", err)
+	}
+	defer rows.Close()
+
+	items := []PlatformFeature{}
+	for rows.Next() {
+		item, err := scanPlatformFeature(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list platform features iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) CreatePlatformFeature(ctx context.Context, record CreatePlatformFeatureRecord) (*PlatformFeature, error) {
+	permissionKeysJSON, _ := json.Marshal(record.PermissionKeys)
+	metadataJSON := jsonBytes(record.Metadata)
+	return scanPlatformFeature(r.db.QueryRow(ctx, `
+		INSERT INTO platform.platform_features(
+		    feature_key, parent_key, module_key, category, title, description, status, sort_order,
+		    permission_keys, metadata, created_by, updated_by
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $11)
+		RETURNING feature_key, parent_key, module_key, category, title, description, status, sort_order,
+		          permission_keys, metadata, created_at, updated_at
+	`, record.FeatureKey, record.ParentKey, record.ModuleKey, record.Category, record.Title, record.Description,
+		record.Status, record.SortOrder, permissionKeysJSON, metadataJSON, record.ActorID))
+}
+
+func (r *Repository) UpdatePlatformFeatureStatus(ctx context.Context, featureKey string, status string, actorID uuid.UUID) (*PlatformFeature, error) {
+	return scanPlatformFeature(r.db.QueryRow(ctx, `
+		UPDATE platform.platform_features
+		SET status = $2, updated_by = $3, updated_at = NOW()
+		WHERE feature_key = $1
+		RETURNING feature_key, parent_key, module_key, category, title, description, status, sort_order,
+		          permission_keys, metadata, created_at, updated_at
+	`, featureKey, status, actorID))
+}
+
+func (r *Repository) ListPlatformMenuItems(ctx context.Context, limit int) ([]PlatformMenuItem, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT menu_key, parent_key, feature_key, label_key, icon, route, required_permissions,
+		       status, sort_order, metadata, created_at, updated_at
+		FROM platform.platform_menu_items
+		ORDER BY sort_order, menu_key
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list platform menu items: %w", err)
+	}
+	defer rows.Close()
+
+	items := []PlatformMenuItem{}
+	for rows.Next() {
+		item, err := scanPlatformMenuItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list platform menu items iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) ListPlatformPermissions(ctx context.Context) ([]PlatformPermission, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT permission_key, name, description, category, status, metadata, created_at, updated_at
+		FROM platform.platform_permissions
+		ORDER BY category, permission_key
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list platform permissions: %w", err)
+	}
+	defer rows.Close()
+
+	items := []PlatformPermission{}
+	for rows.Next() {
+		item, err := scanPlatformPermission(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list platform permissions iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) ListPlatformRoles(ctx context.Context) ([]PlatformRole, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT pr.role_key, pr.name, pr.description, pr.status, pr.is_system,
+		       COALESCE(jsonb_agg(rp.permission_key ORDER BY rp.permission_key)
+		         FILTER (WHERE rp.permission_key IS NOT NULL AND rp.status = 'active'), '[]'::jsonb) AS permissions,
+		       pr.metadata, pr.created_at, pr.updated_at
+		FROM platform.platform_roles pr
+		LEFT JOIN platform.platform_role_permissions rp ON rp.role_key = pr.role_key
+		GROUP BY pr.role_key, pr.name, pr.description, pr.status, pr.is_system, pr.metadata, pr.created_at, pr.updated_at
+		ORDER BY pr.is_system DESC, pr.role_key
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list platform roles: %w", err)
+	}
+	defer rows.Close()
+
+	items := []PlatformRole{}
+	for rows.Next() {
+		item, err := scanPlatformRole(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list platform roles iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) ListPlatformRolePermissions(ctx context.Context, roleKey string) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT permission_key
+		FROM platform.platform_role_permissions
+		WHERE role_key = $1 AND status = 'active'
+		ORDER BY permission_key
+	`, roleKey)
+	if err != nil {
+		return nil, fmt.Errorf("list platform role permissions: %w", err)
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var item string
+		if err := rows.Scan(&item); err != nil {
+			return nil, fmt.Errorf("scan platform role permission: %w", err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list platform role permissions iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) SetPlatformRolePermissions(ctx context.Context, roleKey string, permissions []string, actorID uuid.UUID) (*PlatformRole, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin set platform role permissions: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform.platform_roles(role_key, name, description, status, is_system, metadata, created_by, updated_by)
+		VALUES ($1, $1, '', 'active', false, '{}'::jsonb, $2, $2)
+		ON CONFLICT (role_key) DO UPDATE SET updated_by = EXCLUDED.updated_by, updated_at = NOW()
+	`, roleKey, actorID); err != nil {
+		return nil, fmt.Errorf("upsert platform role: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.platform_role_permissions WHERE role_key = $1`, roleKey); err != nil {
+		return nil, fmt.Errorf("clear platform role permissions: %w", err)
+	}
+	for _, permission := range permissions {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO platform.platform_role_permissions(role_key, permission_key, status, granted_by)
+			VALUES ($1, $2, 'active', $3)
+		`, roleKey, permission, actorID); err != nil {
+			return nil, fmt.Errorf("insert platform role permission: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit set platform role permissions: %w", err)
+	}
+	return r.getPlatformRoleRecord(ctx, roleKey)
+}
+
+func (r *Repository) ListPlatformUsers(ctx context.Context, limit int) ([]PlatformUser, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT u.id, u.name, u.email, COALESCE(u.account_status, 'active'),
+		       COALESCE(
+		         jsonb_agg(DISTINCT pur.role_key) FILTER (WHERE pur.role_key IS NOT NULL AND pur.status = 'active'),
+		         CASE WHEN pa.role IS NOT NULL THEN to_jsonb(ARRAY[pa.role]) ELSE '[]'::jsonb END
+		       ) AS roles,
+		       jsonb_build_object('platform_admin_role', COALESCE(pa.role, '')) AS metadata,
+		       u.created_at, u.updated_at
+		FROM public.users u
+		LEFT JOIN public.platform_admins pa ON pa.user_id = u.id
+		LEFT JOIN platform.platform_user_roles pur ON pur.user_id = u.id
+		WHERE pa.user_id IS NOT NULL OR pur.user_id IS NOT NULL
+		GROUP BY u.id, u.name, u.email, u.account_status, pa.role, u.created_at, u.updated_at
+		ORDER BY u.updated_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list platform users: %w", err)
+	}
+	defer rows.Close()
+
+	items := []PlatformUser{}
+	for rows.Next() {
+		item, err := scanPlatformUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list platform users iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) CreatePlatformUser(ctx context.Context, record CreatePlatformUserRecord) (*PlatformUser, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin create platform user: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var userID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO public.users(name, email, password_hash, account_status, onboarding_status)
+		VALUES ($1, lower($2), $3, 'active', 'complete')
+		RETURNING id
+	`, record.Name, record.Email, record.PasswordHash).Scan(&userID); err != nil {
+		return nil, fmt.Errorf("insert platform user: %w", err)
+	}
+	if err := upsertPlatformAdminRole(ctx, tx, userID, primaryPlatformRole(record.Roles)); err != nil {
+		return nil, err
+	}
+	if err := replacePlatformUserRoles(ctx, tx, userID, record.Roles, record.ActorID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit create platform user: %w", err)
+	}
+	return r.getPlatformUser(ctx, userID)
+}
+
+func (r *Repository) SetPlatformUserRoles(ctx context.Context, userID uuid.UUID, roles []string, actorID uuid.UUID) (*PlatformUser, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin set platform user roles: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if err := upsertPlatformAdminRole(ctx, tx, userID, primaryPlatformRole(roles)); err != nil {
+		return nil, err
+	}
+	if err := replacePlatformUserRoles(ctx, tx, userID, roles, actorID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit set platform user roles: %w", err)
+	}
+	return r.getPlatformUser(ctx, userID)
+}
+
+func (r *Repository) ResetPlatformUserPassword(ctx context.Context, userID uuid.UUID, passwordHash string, actorID uuid.UUID) (*PlatformUser, error) {
+	if _, err := r.db.Exec(ctx, `
+		UPDATE public.users
+		SET password_hash = $2, updated_at = NOW()
+		WHERE id = $1
+	`, userID, passwordHash); err != nil {
+		return nil, fmt.Errorf("reset platform user password: %w", err)
+	}
+	return r.getPlatformUser(ctx, userID)
+}
+
+func (r *Repository) DisablePlatformUser(ctx context.Context, userID uuid.UUID, actorID uuid.UUID) (*PlatformUser, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin disable platform user: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		UPDATE public.users
+		SET account_status = 'disabled', updated_at = NOW()
+		WHERE id = $1
+	`, userID); err != nil {
+		return nil, fmt.Errorf("disable user account: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE platform.platform_user_roles
+		SET status = 'disabled', updated_at = NOW()
+		WHERE user_id = $1
+	`, userID); err != nil {
+		return nil, fmt.Errorf("disable platform user roles: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit disable platform user: %w", err)
+	}
+	return r.getPlatformUser(ctx, userID)
+}
+
+func (r *Repository) ListDatabaseMaintenanceJobs(ctx context.Context, limit int) ([]DatabaseMaintenanceJob, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT id, job_type, scope, status, reason, backup_ref, requested_by, reviewed_by,
+		       review_reason, result, metadata, created_at, reviewed_at, completed_at, updated_at
+		FROM platform.database_maintenance_jobs
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list database maintenance jobs: %w", err)
+	}
+	defer rows.Close()
+
+	items := []DatabaseMaintenanceJob{}
+	for rows.Next() {
+		item, err := scanDatabaseMaintenanceJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list database maintenance jobs iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) CreateDatabaseMaintenanceJob(ctx context.Context, record CreateDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error) {
+	metadataJSON := jsonBytes(record.Metadata)
+	return scanDatabaseMaintenanceJob(r.db.QueryRow(ctx, `
+		INSERT INTO platform.database_maintenance_jobs(
+		    job_type, scope, status, reason, backup_ref, requested_by, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		RETURNING id, job_type, scope, status, reason, backup_ref, requested_by, reviewed_by,
+		          review_reason, result, metadata, created_at, reviewed_at, completed_at, updated_at
+	`, record.JobType, record.Scope, record.Status, record.Reason, record.BackupRef, record.RequestedBy, metadataJSON))
+}
+
+func (r *Repository) ReviewDatabaseMaintenanceJob(ctx context.Context, record ReviewDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error) {
+	return scanDatabaseMaintenanceJob(r.db.QueryRow(ctx, `
+		UPDATE platform.database_maintenance_jobs
+		SET status = $2,
+		    reviewed_by = $3,
+		    review_reason = $4,
+		    reviewed_at = NOW(),
+		    updated_at = NOW()
+		WHERE id = $1 AND status = 'pending_approval'
+		RETURNING id, job_type, scope, status, reason, backup_ref, requested_by, reviewed_by,
+		          review_reason, result, metadata, created_at, reviewed_at, completed_at, updated_at
+	`, record.JobID, record.Status, record.ReviewedBy, record.ReviewReason))
 }
 
 func (r *Repository) ListSchemaTargets(ctx context.Context, limit int) ([]OrganizationSchemaTarget, error) {
@@ -429,6 +810,141 @@ func scanSchemaApplyJob(row interface{ Scan(dest ...any) error }) (*SchemaApplyJ
 	return &item, nil
 }
 
+func scanPlatformFeature(row interface{ Scan(dest ...any) error }) (*PlatformFeature, error) {
+	var item PlatformFeature
+	var permissionKeysJSON, metadataJSON []byte
+	if err := row.Scan(
+		&item.FeatureKey,
+		&item.ParentKey,
+		&item.ModuleKey,
+		&item.Category,
+		&item.Title,
+		&item.Description,
+		&item.Status,
+		&item.SortOrder,
+		&permissionKeysJSON,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan platform feature: %w", err)
+	}
+	item.PermissionKeys = unmarshalStringSlice(permissionKeysJSON)
+	item.Metadata = unmarshalMap(metadataJSON)
+	return &item, nil
+}
+
+func scanPlatformMenuItem(row interface{ Scan(dest ...any) error }) (*PlatformMenuItem, error) {
+	var item PlatformMenuItem
+	var requiredPermissionsJSON, metadataJSON []byte
+	if err := row.Scan(
+		&item.MenuKey,
+		&item.ParentKey,
+		&item.FeatureKey,
+		&item.LabelKey,
+		&item.Icon,
+		&item.Route,
+		&requiredPermissionsJSON,
+		&item.Status,
+		&item.SortOrder,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan platform menu item: %w", err)
+	}
+	item.RequiredPermissions = unmarshalStringSlice(requiredPermissionsJSON)
+	item.Metadata = unmarshalMap(metadataJSON)
+	return &item, nil
+}
+
+func scanPlatformPermission(row interface{ Scan(dest ...any) error }) (*PlatformPermission, error) {
+	var item PlatformPermission
+	var metadataJSON []byte
+	if err := row.Scan(
+		&item.PermissionKey,
+		&item.Name,
+		&item.Description,
+		&item.Category,
+		&item.Status,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan platform permission: %w", err)
+	}
+	item.Metadata = unmarshalMap(metadataJSON)
+	return &item, nil
+}
+
+func scanPlatformRole(row interface{ Scan(dest ...any) error }) (*PlatformRole, error) {
+	var item PlatformRole
+	var permissionsJSON, metadataJSON []byte
+	if err := row.Scan(
+		&item.RoleKey,
+		&item.Name,
+		&item.Description,
+		&item.Status,
+		&item.IsSystem,
+		&permissionsJSON,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan platform role: %w", err)
+	}
+	item.Permissions = unmarshalStringSlice(permissionsJSON)
+	item.Metadata = unmarshalMap(metadataJSON)
+	return &item, nil
+}
+
+func scanPlatformUser(row interface{ Scan(dest ...any) error }) (*PlatformUser, error) {
+	var item PlatformUser
+	var rolesJSON, metadataJSON []byte
+	if err := row.Scan(
+		&item.UserID,
+		&item.Name,
+		&item.Email,
+		&item.AccountStatus,
+		&rolesJSON,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan platform user: %w", err)
+	}
+	item.Roles = normalizePlatformRoles(unmarshalStringSlice(rolesJSON))
+	item.Metadata = unmarshalMap(metadataJSON)
+	return &item, nil
+}
+
+func scanDatabaseMaintenanceJob(row interface{ Scan(dest ...any) error }) (*DatabaseMaintenanceJob, error) {
+	var item DatabaseMaintenanceJob
+	var resultJSON, metadataJSON []byte
+	if err := row.Scan(
+		&item.ID,
+		&item.JobType,
+		&item.Scope,
+		&item.Status,
+		&item.Reason,
+		&item.BackupRef,
+		&item.RequestedBy,
+		&item.ReviewedBy,
+		&item.ReviewReason,
+		&resultJSON,
+		&metadataJSON,
+		&item.CreatedAt,
+		&item.ReviewedAt,
+		&item.CompletedAt,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan database maintenance job: %w", err)
+	}
+	item.Result = unmarshalMap(resultJSON)
+	item.Metadata = unmarshalMap(metadataJSON)
+	return &item, nil
+}
+
 func unmarshalMap(data []byte) map[string]any {
 	if len(data) == 0 {
 		return map[string]any{}
@@ -436,6 +952,17 @@ func unmarshalMap(data []byte) map[string]any {
 	var out map[string]any
 	if err := json.Unmarshal(data, &out); err != nil || out == nil {
 		return map[string]any{}
+	}
+	return out
+}
+
+func unmarshalStringSlice(data []byte) []string {
+	if len(data) == 0 {
+		return []string{}
+	}
+	var out []string
+	if err := json.Unmarshal(data, &out); err != nil || out == nil {
+		return []string{}
 	}
 	return out
 }
@@ -465,6 +992,87 @@ func boolValue(value any, fallback bool) bool {
 		return fallback
 	}
 	return typed
+}
+
+func (r *Repository) getPlatformRoleRecord(ctx context.Context, roleKey string) (*PlatformRole, error) {
+	return scanPlatformRole(r.db.QueryRow(ctx, `
+		SELECT pr.role_key, pr.name, pr.description, pr.status, pr.is_system,
+		       COALESCE(jsonb_agg(rp.permission_key ORDER BY rp.permission_key)
+		         FILTER (WHERE rp.permission_key IS NOT NULL AND rp.status = 'active'), '[]'::jsonb) AS permissions,
+		       pr.metadata, pr.created_at, pr.updated_at
+		FROM platform.platform_roles pr
+		LEFT JOIN platform.platform_role_permissions rp ON rp.role_key = pr.role_key
+		WHERE pr.role_key = $1
+		GROUP BY pr.role_key, pr.name, pr.description, pr.status, pr.is_system, pr.metadata, pr.created_at, pr.updated_at
+	`, roleKey))
+}
+
+func (r *Repository) getPlatformUser(ctx context.Context, userID uuid.UUID) (*PlatformUser, error) {
+	return scanPlatformUser(r.db.QueryRow(ctx, `
+		SELECT u.id, u.name, u.email, COALESCE(u.account_status, 'active'),
+		       COALESCE(
+		         jsonb_agg(DISTINCT pur.role_key) FILTER (WHERE pur.role_key IS NOT NULL AND pur.status = 'active'),
+		         CASE WHEN pa.role IS NOT NULL THEN to_jsonb(ARRAY[pa.role]) ELSE '[]'::jsonb END
+		       ) AS roles,
+		       jsonb_build_object('platform_admin_role', COALESCE(pa.role, '')) AS metadata,
+		       u.created_at, u.updated_at
+		FROM public.users u
+		LEFT JOIN public.platform_admins pa ON pa.user_id = u.id
+		LEFT JOIN platform.platform_user_roles pur ON pur.user_id = u.id
+		WHERE u.id = $1
+		GROUP BY u.id, u.name, u.email, u.account_status, pa.role, u.created_at, u.updated_at
+	`, userID))
+}
+
+func replacePlatformUserRoles(ctx context.Context, tx pgx.Tx, userID uuid.UUID, roles []string, actorID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.platform_user_roles WHERE user_id = $1`, userID); err != nil {
+		return fmt.Errorf("clear platform user roles: %w", err)
+	}
+	for _, role := range roles {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO platform.platform_user_roles(user_id, role_key, status, granted_by)
+			VALUES ($1, $2, 'active', $3)
+		`, userID, role, actorID); err != nil {
+			return fmt.Errorf("insert platform user role: %w", err)
+		}
+	}
+	return nil
+}
+
+func upsertPlatformAdminRole(ctx context.Context, tx pgx.Tx, userID uuid.UUID, role string) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO public.platform_admins(user_id, role)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE SET role = EXCLUDED.role, updated_at = NOW()
+	`, userID, legacyPlatformAdminRole(role)); err != nil {
+		return fmt.Errorf("upsert platform admin compatibility role: %w", err)
+	}
+	return nil
+}
+
+func primaryPlatformRole(roles []string) string {
+	if len(roles) == 0 {
+		return "auditor"
+	}
+	for _, preferred := range []string{"owner", "admin", "operator", "auditor"} {
+		for _, role := range roles {
+			if role == preferred {
+				return role
+			}
+		}
+	}
+	return roles[0]
+}
+
+func legacyPlatformAdminRole(role string) string {
+	switch platformauth.NormalizeRole(strings.TrimSpace(role)) {
+	case platformauth.RoleOwner:
+		return "system_owner"
+	case platformauth.RoleAdmin:
+		return "system_admin"
+	default:
+		return "support"
+	}
 }
 
 var _ repository = (*Repository)(nil)

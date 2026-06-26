@@ -293,6 +293,88 @@ export async function getPlatformPermissionProfile(token: string): Promise<Platf
   return apiRequest<PlatformPermissionProfile>('/platform/admin/me/permissions', { token })
 }
 
+export async function listPlatformFeatures(token: string, status = '', limit = 200): Promise<PlatformFeature[]> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  if (limit > 0) params.set('limit', String(limit))
+  const query = params.toString() ? `?${params.toString()}` : ''
+  return apiRequest<PlatformFeature[]>(`/platform/admin/features${query}`, { token })
+}
+
+export async function createPlatformFeature(token: string, input: CreatePlatformFeatureInput): Promise<PlatformFeature> {
+  return apiRequest<PlatformFeature>('/platform/admin/features', { method: 'POST', token, body: input })
+}
+
+export async function publishPlatformFeature(token: string, featureKey: string): Promise<PlatformFeature> {
+  return apiRequest<PlatformFeature>(`/platform/admin/features/${encodeURIComponent(featureKey)}/publish`, { method: 'POST', token })
+}
+
+export async function listPlatformPermissions(token: string): Promise<PlatformPermission[]> {
+  return apiRequest<PlatformPermission[]>('/platform/admin/permissions', { token })
+}
+
+export async function listPlatformRoles(token: string): Promise<PlatformRole[]> {
+  return apiRequest<PlatformRole[]>('/platform/admin/roles', { token })
+}
+
+export async function setPlatformRolePermissions(token: string, roleKey: string, permissionKeys: string[]): Promise<PlatformRole> {
+  return apiRequest<PlatformRole>(`/platform/admin/roles/${encodeURIComponent(roleKey)}/permissions`, {
+    method: 'PUT',
+    token,
+    body: { permission_keys: permissionKeys },
+  })
+}
+
+export async function listPlatformUsers(token: string, limit = 100): Promise<PlatformUser[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<PlatformUser[]>(`/platform/admin/users${query}`, { token })
+}
+
+export async function createPlatformUser(token: string, input: CreatePlatformUserInput): Promise<CreatePlatformUserResponse> {
+  return apiRequest<CreatePlatformUserResponse>('/platform/admin/users', { method: 'POST', token, body: input })
+}
+
+export async function setPlatformUserRoles(token: string, userID: string, roles: string[]): Promise<PlatformUser> {
+  return apiRequest<PlatformUser>(`/platform/admin/users/${encodeURIComponent(userID)}/roles`, {
+    method: 'PUT',
+    token,
+    body: { roles },
+  })
+}
+
+export async function resetPlatformUserPassword(token: string, userID: string): Promise<ResetPlatformUserPasswordResponse> {
+  return apiRequest<ResetPlatformUserPasswordResponse>(`/platform/admin/users/${encodeURIComponent(userID)}/reset-password`, {
+    method: 'POST',
+    token,
+  })
+}
+
+export async function disablePlatformUser(token: string, userID: string): Promise<PlatformUser> {
+  return apiRequest<PlatformUser>(`/platform/admin/users/${encodeURIComponent(userID)}/disable`, { method: 'POST', token })
+}
+
+export async function listDatabaseMaintenanceJobs(token: string, limit = 100): Promise<DatabaseMaintenanceJob[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<DatabaseMaintenanceJob[]>(`/platform/admin/database-maintenance/jobs${query}`, { token })
+}
+
+export async function createDatabaseMaintenanceJob(token: string, input: CreateDatabaseMaintenanceJobInput): Promise<DatabaseMaintenanceJob> {
+  return apiRequest<DatabaseMaintenanceJob>('/platform/admin/database-maintenance/jobs', { method: 'POST', token, body: input })
+}
+
+export async function reviewDatabaseMaintenanceJob(
+  token: string,
+  jobID: string,
+  decision: 'approve' | 'reject',
+  reason = '',
+): Promise<DatabaseMaintenanceJob> {
+  return apiRequest<DatabaseMaintenanceJob>(`/platform/admin/database-maintenance/jobs/${encodeURIComponent(jobID)}/${decision}`, {
+    method: 'POST',
+    token,
+    body: { reason },
+  })
+}
+
 export async function closePlatformOrganization(token: string, organizationID: string, reason = ''): Promise<SessionOrganization> {
   return apiRequest<SessionOrganization>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/close`, {
     method: 'POST',
@@ -415,6 +497,21 @@ export async function createERPStandardSolutionFlow(
 ): Promise<SchemaChangeRequest> {
   return apiRequest<SchemaChangeRequest>(
     `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-flows/erp-standard`,
+    {
+      method: 'POST',
+      token,
+      body: input,
+    },
+  )
+}
+
+export async function createIndustrySolutionSchemaChange(
+  token: string,
+  organizationID: string,
+  input: CreateIndustrySolutionSchemaChangeInput,
+): Promise<SchemaChangeRequest> {
+  return apiRequest<SchemaChangeRequest>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-schema/change-requests`,
     {
       method: 'POST',
       token,
@@ -1323,6 +1420,110 @@ export interface PlatformPermissionProfile {
   menu_items: string[]
 }
 
+export interface PlatformFeature {
+  feature_key: string
+  parent_key?: string
+  module_key: string
+  category: string
+  title: string
+  description?: string
+  status: string
+  sort_order: number
+  permission_keys: string[]
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePlatformFeatureInput {
+  feature_key: string
+  parent_key?: string
+  module_key: string
+  category?: string
+  title: string
+  description?: string
+  sort_order?: number
+  permission_keys?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface PlatformPermission {
+  permission_key: string
+  name: string
+  description?: string
+  category: string
+  status: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformRole {
+  role_key: string
+  name: string
+  description?: string
+  status: string
+  is_system: boolean
+  permissions?: string[]
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface PlatformUser {
+  user_id: string
+  name: string
+  email: string
+  account_status: string
+  roles: string[]
+  metadata?: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatePlatformUserInput {
+  name: string
+  email: string
+  roles?: string[]
+  metadata?: Record<string, unknown>
+}
+
+export interface CreatePlatformUserResponse {
+  user: PlatformUser
+  temporary_password: string
+}
+
+export interface ResetPlatformUserPasswordResponse {
+  user_id: string
+  temporary_password: string
+}
+
+export interface DatabaseMaintenanceJob {
+  id: string
+  job_type: 'backup' | 'restore' | string
+  scope: string
+  status: string
+  reason?: string
+  backup_ref?: string
+  requested_by?: string
+  reviewed_by?: string
+  review_reason?: string
+  result?: Record<string, unknown>
+  metadata: Record<string, unknown>
+  created_at: string
+  reviewed_at?: string
+  completed_at?: string
+  updated_at: string
+}
+
+export interface CreateDatabaseMaintenanceJobInput {
+  job_type: 'backup' | 'restore'
+  scope?: string
+  reason?: string
+  backup_ref?: string
+  metadata?: Record<string, unknown>
+}
+
 export interface UserProfile {
   id: string
   name: string
@@ -1629,6 +1830,31 @@ export interface SchemaIndexDefinition {
   unique?: boolean
   where?: string
   comment?: string
+}
+
+export interface IndustrySolutionFieldInput {
+  name: string
+  previous_name?: string
+  data_type: string
+  nullable: boolean
+  default?: string
+}
+
+export interface IndustrySolutionTableInput {
+  name: string
+  previous_name?: string
+  display_name?: string
+  fields: IndustrySolutionFieldInput[]
+  metadata?: Record<string, unknown>
+}
+
+export interface CreateIndustrySolutionSchemaChangeInput {
+  organization_id?: string
+  industry_key: string
+  package_key: string
+  table: IndustrySolutionTableInput
+  current_schema_package?: SchemaPackage
+  reason?: string
 }
 
 export interface SchemaChangeRequest {

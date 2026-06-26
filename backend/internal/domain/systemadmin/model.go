@@ -47,6 +47,196 @@ type PlatformPermissionProfile struct {
 	MenuItems   []string        `json:"menu_items"`
 }
 
+type PlatformFeature struct {
+	FeatureKey     string         `json:"feature_key"`
+	ParentKey      string         `json:"parent_key,omitempty"`
+	ModuleKey      string         `json:"module_key"`
+	Category       string         `json:"category"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description,omitempty"`
+	Status         string         `json:"status"`
+	SortOrder      int            `json:"sort_order"`
+	PermissionKeys []string       `json:"permission_keys"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type PlatformMenuItem struct {
+	MenuKey             string         `json:"menu_key"`
+	ParentKey           string         `json:"parent_key,omitempty"`
+	FeatureKey          string         `json:"feature_key,omitempty"`
+	LabelKey            string         `json:"label_key"`
+	Icon                string         `json:"icon,omitempty"`
+	Route               string         `json:"route,omitempty"`
+	RequiredPermissions []string       `json:"required_permissions"`
+	Status              string         `json:"status"`
+	SortOrder           int            `json:"sort_order"`
+	Metadata            map[string]any `json:"metadata"`
+	CreatedAt           time.Time      `json:"created_at"`
+	UpdatedAt           time.Time      `json:"updated_at"`
+}
+
+type PlatformPermission struct {
+	PermissionKey string         `json:"permission_key"`
+	Name          string         `json:"name"`
+	Description   string         `json:"description,omitempty"`
+	Category      string         `json:"category"`
+	Status        string         `json:"status"`
+	Metadata      map[string]any `json:"metadata"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+type PlatformRole struct {
+	RoleKey     string         `json:"role_key"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status"`
+	IsSystem    bool           `json:"is_system"`
+	Permissions []string       `json:"permissions,omitempty"`
+	Metadata    map[string]any `json:"metadata"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+}
+
+type PlatformUser struct {
+	UserID        uuid.UUID      `json:"user_id"`
+	Name          string         `json:"name"`
+	Email         string         `json:"email"`
+	AccountStatus string         `json:"account_status"`
+	Roles         []string       `json:"roles"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+type CreatePlatformFeatureInput struct {
+	FeatureKey     string         `json:"feature_key"`
+	ParentKey      string         `json:"parent_key,omitempty"`
+	ModuleKey      string         `json:"module_key"`
+	Category       string         `json:"category,omitempty"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description,omitempty"`
+	SortOrder      int            `json:"sort_order,omitempty"`
+	PermissionKeys []string       `json:"permission_keys,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+}
+
+type CreatePlatformFeatureRecord struct {
+	CreatePlatformFeatureInput
+	Status  string
+	ActorID uuid.UUID
+}
+
+type SetPlatformRolePermissionsInput struct {
+	PermissionKeys []string `json:"permission_keys"`
+}
+
+type CreatePlatformUserInput struct {
+	Name     string         `json:"name"`
+	Email    string         `json:"email"`
+	Roles    []string       `json:"roles,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+type CreatePlatformUserResponse struct {
+	User              PlatformUser `json:"user"`
+	TemporaryPassword string       `json:"temporary_password"`
+}
+
+type CreatePlatformUserRecord struct {
+	Name         string
+	Email        string
+	PasswordHash string
+	Roles        []string
+	Metadata     map[string]any
+	ActorID      uuid.UUID
+}
+
+type ResetPlatformUserPasswordResponse struct {
+	UserID            uuid.UUID `json:"user_id"`
+	TemporaryPassword string    `json:"temporary_password"`
+}
+
+const (
+	DatabaseMaintenancePendingApproval = "pending_approval"
+	DatabaseMaintenanceApproved        = "approved"
+	DatabaseMaintenanceRejected        = "rejected"
+	DatabaseMaintenanceCancelled       = "cancelled"
+	DatabaseMaintenanceCompleted       = "completed"
+	DatabaseMaintenanceFailed          = "failed"
+)
+
+type DatabaseMaintenanceJob struct {
+	ID           uuid.UUID      `json:"id"`
+	JobType      string         `json:"job_type"`
+	Scope        string         `json:"scope"`
+	Status       string         `json:"status"`
+	Reason       string         `json:"reason,omitempty"`
+	BackupRef    string         `json:"backup_ref,omitempty"`
+	RequestedBy  *uuid.UUID     `json:"requested_by,omitempty"`
+	ReviewedBy   *uuid.UUID     `json:"reviewed_by,omitempty"`
+	ReviewReason string         `json:"review_reason,omitempty"`
+	Result       map[string]any `json:"result,omitempty"`
+	Metadata     map[string]any `json:"metadata"`
+	CreatedAt    time.Time      `json:"created_at"`
+	ReviewedAt   *time.Time     `json:"reviewed_at,omitempty"`
+	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+type CreateDatabaseMaintenanceJobInput struct {
+	JobType   string         `json:"job_type"`
+	Scope     string         `json:"scope,omitempty"`
+	Reason    string         `json:"reason,omitempty"`
+	BackupRef string         `json:"backup_ref,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateDatabaseMaintenanceJobRecord struct {
+	CreateDatabaseMaintenanceJobInput
+	Status      string
+	RequestedBy uuid.UUID
+}
+
+type ReviewDatabaseMaintenanceJobInput struct {
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
+
+type ReviewDatabaseMaintenanceJobRecord struct {
+	JobID        uuid.UUID
+	Status       string
+	ReviewedBy   uuid.UUID
+	ReviewReason string
+}
+
+type IndustrySolutionTableInput struct {
+	Name         string                       `json:"name"`
+	PreviousName string                       `json:"previous_name,omitempty"`
+	DisplayName  string                       `json:"display_name,omitempty"`
+	Fields       []IndustrySolutionFieldInput `json:"fields"`
+	Metadata     map[string]any               `json:"metadata,omitempty"`
+}
+
+type IndustrySolutionFieldInput struct {
+	Name         string `json:"name"`
+	PreviousName string `json:"previous_name,omitempty"`
+	DataType     string `json:"data_type"`
+	Nullable     bool   `json:"nullable"`
+	Default      string `json:"default,omitempty"`
+}
+
+type CreateIndustrySolutionSchemaChangeInput struct {
+	OrganizationID       uuid.UUID                  `json:"organization_id"`
+	IndustryKey          string                     `json:"industry_key"`
+	PackageKey           string                     `json:"package_key"`
+	Table                IndustrySolutionTableInput `json:"table"`
+	CurrentSchemaPackage *SchemaPackage             `json:"current_schema_package,omitempty"`
+	Reason               string                     `json:"reason,omitempty"`
+}
+
 type OrganizationSchemaTarget struct {
 	OrganizationID      uuid.UUID      `json:"organization_id"`
 	SchemaName          string         `json:"schema_name"`

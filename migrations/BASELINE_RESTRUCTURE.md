@@ -16,6 +16,13 @@ tenant/module entitlement, permission governance, security-kernel policy
 foundation, schema-change governance, package metadata, and platform
 master/detail infrastructure.
 
+It also owns the platform control foundation used by the SaaS management
+console: platform feature registration, platform menu metadata, platform RBAC
+permissions and roles, platform user role assignment, and database maintenance
+job governance for backup/restore requests. These structures are metadata and
+approval records only; they do not grant arbitrary code, SQL, or plugin
+execution from the UI.
+
 ### Phase 2 Industry Solution Factory Storage
 
 The industry solution factory remains a platform management capability and
@@ -43,6 +50,12 @@ Phase 3 keeps the same tables and extends the runtime metadata contract:
 industry package `runtime_operation` assets preserve their full payload in
 `platform.runtime_operations.metadata`, including `metadata.workspace` for
 tenant ERP business workbench document/action configuration.
+
+Phase 4 adds structured `solution_table` and `solution_field` package asset
+types. Tenant-specific table and field edits are converted into
+`platform.schema_change_requests` so every selected tenant still follows the
+preview, approve, verify, and apply lifecycle before physical schema changes
+are applied.
 
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
 tenant departments, project lifecycle, workflow, finance, costing,

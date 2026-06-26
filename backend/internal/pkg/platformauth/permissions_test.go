@@ -15,6 +15,10 @@ func TestRolePermissionMatrix(t *testing.T) {
 		{name: "auditor can read platform", role: RoleAuditor, permission: PermissionPlatformRead, want: true},
 		{name: "auditor cannot apply schema", role: RoleAuditor, permission: PermissionSchemaApply, want: false},
 		{name: "legacy system owner maps to owner", role: "system_owner", permission: PermissionOrganizationClose, want: true},
+		{name: "owner can manage platform users", role: RoleOwner, permission: PermissionPlatformUserManage, want: true},
+		{name: "admin can approve database maintenance", role: RoleAdmin, permission: PermissionDatabaseMaintenanceApprove, want: true},
+		{name: "operator cannot approve database maintenance", role: RoleOperator, permission: PermissionDatabaseMaintenanceApprove, want: false},
+		{name: "auditor cannot manage feature catalog", role: RoleAuditor, permission: PermissionPlatformFeatureManage, want: false},
 	}
 
 	for _, tt := range tests {

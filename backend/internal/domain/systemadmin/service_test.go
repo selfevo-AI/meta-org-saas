@@ -3,9 +3,12 @@ package systemadmin
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestDefaultOrganizationSchemaPackageIsValid(t *testing.T) {
@@ -146,6 +149,213 @@ func TestVerifySchemaChangeReportsIndustryFactoryCoverage(t *testing.T) {
 	}
 	if repo.applied {
 		t.Fatal("VerifySchemaChange() applied schema change")
+	}
+}
+
+func TestGetPermissionProfileUsesMetadataCatalog(t *testing.T) {
+	repo := &fakeRepository{
+		role: "platform_architect",
+		rolePermissions: map[string][]string{
+			"platform_architect": {
+				platformauth.PermissionPlatformRead,
+				platformauth.PermissionPlatformFeatureManage,
+				platformauth.PermissionPlatformUserManage,
+			},
+		},
+		menuItems: []PlatformMenuItem{
+			{MenuKey: "platform.features", FeatureKey: "platform.feature.catalog", LabelKey: "systemAdmin.platformFeatures", RequiredPermissions: []string{platformauth.PermissionPlatformFeatureManage}, SortOrder: 20},
+			{MenuKey: "platform.users", FeatureKey: "platform.user.management", LabelKey: "systemAdmin.platformUsers", RequiredPermissions: []string{platformauth.PermissionPlatformUserManage}, SortOrder: 30},
+			{MenuKey: "platform.database", FeatureKey: "platform.database.maintenance", LabelKey: "systemAdmin.databaseMaintenance", RequiredPermissions: []string{platformauth.PermissionDatabaseMaintenanceManage}, SortOrder: 40},
+		},
+	}
+	service := NewService(repo)
+
+	profile, err := service.GetPermissionProfile(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("GetPermissionProfile() error = %v", err)
+	}
+	if profile.Role != "platform_architect" {
+		t.Fatalf("Role = %q, want platform_architect", profile.Role)
+	}
+	if !profile.Permissions[platformauth.PermissionPlatformFeatureManage] || !profile.Permissions[platformauth.PermissionPlatformUserManage] {
+		t.Fatalf("permissions = %#v, want DB-backed feature and user permissions", profile.Permissions)
+	}
+	if strings.Join(profile.MenuItems, ",") != "platform.features,platform.users" {
+		t.Fatalf("MenuItems = %#v, want permitted metadata menu items only", profile.MenuItems)
+	}
+}
+
+func TestCreatePlatformFeatureRequiresMetadataOnlyFeaturePermission(t *testing.T) {
+	actorID := uuid.New()
+	repo := &fakeRepository{
+		role: "feature_admin",
+		rolePermissions: map[string][]string{
+			"feature_admin": {platformauth.PermissionPlatformRead, platformauth.PermissionPlatformFeatureManage},
+		},
+	}
+	service := NewService(repo)
+
+	feature, err := service.CreatePlatformFeature(context.Background(), actorID, CreatePlatformFeatureInput{
+		FeatureKey:  "platform.future.audit",
+		ModuleKey:   "platform_admin",
+		Title:       "Future audit center",
+		Description: "Metadata registered future platform capability",
+		PermissionKeys: []string{
+			platformauth.PermissionPlatformRead,
+		},
+		Metadata: map[string]any{"extension_mode": "metadata_only"},
+	})
+	if err != nil {
+		t.Fatalf("CreatePlatformFeature() error = %v", err)
+	}
+	if feature.FeatureKey != "platform.future.audit" || feature.Status != "draft" {
+		t.Fatalf("feature = %#v, want draft platform.future.audit", feature)
+	}
+	if repo.createdFeature == nil || repo.createdFeature.ActorID != actorID {
+		t.Fatalf("createdFeature = %#v, want actor recorded", repo.createdFeature)
+	}
+
+	_, err = service.CreatePlatformFeature(context.Background(), actorID, CreatePlatformFeatureInput{
+		FeatureKey: "platform.invalid",
+		ModuleKey:  "platform_admin",
+		Title:      "Invalid",
+		Metadata:   map[string]any{"script": "drop all"},
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("CreatePlatformFeature() script metadata error = %v, want ErrValidation", err)
+	}
+}
+
+func TestCreatePlatformUserReturnsTemporaryPasswordAndHashesIt(t *testing.T) {
+	actorID := uuid.New()
+	repo := &fakeRepository{
+		role: "user_admin",
+		rolePermissions: map[string][]string{
+			"user_admin": {platformauth.PermissionPlatformRead, platformauth.PermissionPlatformUserManage},
+		},
+	}
+	service := NewService(repo)
+
+	result, err := service.CreatePlatformUser(context.Background(), actorID, CreatePlatformUserInput{
+		Name:  "Platform Operator",
+		Email: " Operator@Example.COM ",
+		Roles: []string{"operator"},
+	})
+	if err != nil {
+		t.Fatalf("CreatePlatformUser() error = %v", err)
+	}
+	if result.TemporaryPassword == "" {
+		t.Fatal("TemporaryPassword is empty")
+	}
+	if result.User.Email != "operator@example.com" {
+		t.Fatalf("Email = %q, want normalized operator@example.com", result.User.Email)
+	}
+	if repo.createdPlatformUser == nil {
+		t.Fatal("CreatePlatformUser() did not call repository")
+	}
+	if repo.createdPlatformUser.PasswordHash == result.TemporaryPassword {
+		t.Fatal("repository received plaintext temporary password")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(repo.createdPlatformUser.PasswordHash), []byte(result.TemporaryPassword)); err != nil {
+		t.Fatalf("PasswordHash does not match temporary password: %v", err)
+	}
+	if strings.Join(repo.createdPlatformUser.Roles, ",") != "operator" {
+		t.Fatalf("Roles = %#v, want operator", repo.createdPlatformUser.Roles)
+	}
+}
+
+func TestDatabaseMaintenanceJobLifecycleRequiresSeparateApproval(t *testing.T) {
+	actorID := uuid.New()
+	reviewerID := uuid.New()
+	repo := &fakeRepository{
+		role: "maintenance_admin",
+		rolePermissions: map[string][]string{
+			"maintenance_admin": {
+				platformauth.PermissionPlatformRead,
+				platformauth.PermissionDatabaseMaintenanceManage,
+				platformauth.PermissionDatabaseMaintenanceApprove,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	job, err := service.CreateDatabaseMaintenanceJob(context.Background(), actorID, CreateDatabaseMaintenanceJobInput{
+		JobType: "backup",
+		Scope:   "platform",
+		Reason:  "nightly baseline backup",
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabaseMaintenanceJob() error = %v", err)
+	}
+	if job.Status != DatabaseMaintenancePendingApproval {
+		t.Fatalf("Status = %q, want %q", job.Status, DatabaseMaintenancePendingApproval)
+	}
+	if repo.createdMaintenanceJob == nil || repo.createdMaintenanceJob.RequestedBy != actorID {
+		t.Fatalf("createdMaintenanceJob = %#v, want requested_by actor", repo.createdMaintenanceJob)
+	}
+
+	approved, err := service.ReviewDatabaseMaintenanceJob(context.Background(), reviewerID, job.ID, ReviewDatabaseMaintenanceJobInput{
+		Decision: "approve",
+		Reason:   "maintenance window approved",
+	})
+	if err != nil {
+		t.Fatalf("ReviewDatabaseMaintenanceJob() error = %v", err)
+	}
+	if approved.Status != DatabaseMaintenanceApproved {
+		t.Fatalf("Status = %q, want %q", approved.Status, DatabaseMaintenanceApproved)
+	}
+	if repo.reviewedMaintenanceJob == nil || repo.reviewedMaintenanceJob.ReviewedBy != reviewerID {
+		t.Fatalf("reviewedMaintenanceJob = %#v, want reviewer recorded", repo.reviewedMaintenanceJob)
+	}
+}
+
+func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalSchemaPackage(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	repo := &fakeRepository{
+		role: "solution_admin",
+		rolePermissions: map[string][]string{
+			"solution_admin": {
+				platformauth.PermissionPlatformRead,
+				platformauth.PermissionIndustrySolutionManage,
+				platformauth.PermissionSchemaManage,
+			},
+		},
+	}
+	service := NewService(repo)
+
+	request, err := service.CreateIndustrySolutionSchemaChange(context.Background(), actorID, CreateIndustrySolutionSchemaChangeInput{
+		OrganizationID: orgID,
+		IndustryKey:    "manufacturing",
+		PackageKey:     "manufacturing-supply-chain",
+		Table: IndustrySolutionTableInput{
+			Name:        "tenant_quality_inspections",
+			DisplayName: "Quality inspections",
+			Fields: []IndustrySolutionFieldInput{
+				{Name: "inspection_no", DataType: "varchar(64)", Nullable: false},
+				{Name: "result_status", DataType: "varchar(40)", Nullable: false, Default: "'pending'"},
+			},
+		},
+		Reason: "add quality inspection table for selected tenant",
+	})
+	if err != nil {
+		t.Fatalf("CreateIndustrySolutionSchemaChange() error = %v", err)
+	}
+	if request.RequestType != "industry_solution_table_field_change" {
+		t.Fatalf("RequestType = %q, want industry_solution_table_field_change", request.RequestType)
+	}
+	if repo.createdRecord == nil {
+		t.Fatal("schema change record was not created")
+	}
+	if len(repo.createdRecord.SchemaPackage.Tables) != 1 {
+		t.Fatalf("tables = %#v, want one table", repo.createdRecord.SchemaPackage.Tables)
+	}
+	table := repo.createdRecord.SchemaPackage.Tables[0]
+	if table.Name != "tenant_quality_inspections" || len(table.Fields) != 3 {
+		t.Fatalf("table = %#v, want physical table with id plus two fields", table)
+	}
+	if repo.createdRecord.SchemaPackage.Metadata["industry_key"] != "manufacturing" {
+		t.Fatalf("metadata = %#v, want industry_key", repo.createdRecord.SchemaPackage.Metadata)
 	}
 }
 
@@ -315,10 +525,16 @@ func verificationCheckByKey(report *SchemaVerificationReport, key string) *Schem
 }
 
 type fakeRepository struct {
-	role          string
-	request       *SchemaChangeRequest
-	createdRecord *CreateSchemaChangeRequestRecord
-	applied       bool
+	role                   string
+	rolePermissions        map[string][]string
+	menuItems              []PlatformMenuItem
+	request                *SchemaChangeRequest
+	createdRecord          *CreateSchemaChangeRequestRecord
+	createdFeature         *CreatePlatformFeatureRecord
+	createdPlatformUser    *CreatePlatformUserRecord
+	createdMaintenanceJob  *CreateDatabaseMaintenanceJobRecord
+	reviewedMaintenanceJob *ReviewDatabaseMaintenanceJobRecord
+	applied                bool
 }
 
 func (f *fakeRepository) GetPlatformRole(context.Context, uuid.UUID) (string, error) {
@@ -331,6 +547,109 @@ func (f *fakeRepository) ListPlatformMasters(context.Context, string, int) ([]Pl
 
 func (f *fakeRepository) ListPlatformDetails(context.Context, string) ([]PlatformDetail, error) {
 	return nil, nil
+}
+
+func (f *fakeRepository) ListPlatformFeatures(context.Context, string, int) ([]PlatformFeature, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) CreatePlatformFeature(_ context.Context, record CreatePlatformFeatureRecord) (*PlatformFeature, error) {
+	f.createdFeature = &record
+	return &PlatformFeature{
+		FeatureKey:     record.FeatureKey,
+		ParentKey:      record.ParentKey,
+		ModuleKey:      record.ModuleKey,
+		Category:       record.Category,
+		Title:          record.Title,
+		Description:    record.Description,
+		Status:         record.Status,
+		SortOrder:      record.SortOrder,
+		PermissionKeys: record.PermissionKeys,
+		Metadata:       record.Metadata,
+	}, nil
+}
+
+func (f *fakeRepository) UpdatePlatformFeatureStatus(context.Context, string, string, uuid.UUID) (*PlatformFeature, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ListPlatformMenuItems(context.Context, int) ([]PlatformMenuItem, error) {
+	return f.menuItems, nil
+}
+
+func (f *fakeRepository) ListPlatformPermissions(context.Context) ([]PlatformPermission, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ListPlatformRoles(context.Context) ([]PlatformRole, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ListPlatformRolePermissions(_ context.Context, roleKey string) ([]string, error) {
+	if f.rolePermissions == nil {
+		return nil, nil
+	}
+	return f.rolePermissions[roleKey], nil
+}
+
+func (f *fakeRepository) SetPlatformRolePermissions(context.Context, string, []string, uuid.UUID) (*PlatformRole, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ListPlatformUsers(context.Context, int) ([]PlatformUser, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) CreatePlatformUser(_ context.Context, record CreatePlatformUserRecord) (*PlatformUser, error) {
+	f.createdPlatformUser = &record
+	return &PlatformUser{
+		UserID:        uuid.New(),
+		Name:          record.Name,
+		Email:         record.Email,
+		AccountStatus: "active",
+		Roles:         record.Roles,
+		Metadata:      record.Metadata,
+	}, nil
+}
+
+func (f *fakeRepository) SetPlatformUserRoles(context.Context, uuid.UUID, []string, uuid.UUID) (*PlatformUser, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ResetPlatformUserPassword(context.Context, uuid.UUID, string, uuid.UUID) (*PlatformUser, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) DisablePlatformUser(context.Context, uuid.UUID, uuid.UUID) (*PlatformUser, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) ListDatabaseMaintenanceJobs(context.Context, int) ([]DatabaseMaintenanceJob, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) CreateDatabaseMaintenanceJob(_ context.Context, record CreateDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error) {
+	f.createdMaintenanceJob = &record
+	return &DatabaseMaintenanceJob{
+		ID:          uuid.New(),
+		JobType:     record.JobType,
+		Scope:       record.Scope,
+		Status:      record.Status,
+		Reason:      record.Reason,
+		BackupRef:   record.BackupRef,
+		RequestedBy: &record.RequestedBy,
+		Metadata:    record.Metadata,
+	}, nil
+}
+
+func (f *fakeRepository) ReviewDatabaseMaintenanceJob(_ context.Context, record ReviewDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error) {
+	f.reviewedMaintenanceJob = &record
+	return &DatabaseMaintenanceJob{
+		ID:           record.JobID,
+		Status:       record.Status,
+		ReviewedBy:   &record.ReviewedBy,
+		ReviewReason: record.ReviewReason,
+	}, nil
 }
 
 func (f *fakeRepository) ListSchemaTargets(context.Context, int) ([]OrganizationSchemaTarget, error) {

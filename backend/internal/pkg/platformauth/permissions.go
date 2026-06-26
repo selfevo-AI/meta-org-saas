@@ -17,6 +17,17 @@ const (
 	PermissionModelManage        = "model.manage"
 	PermissionRuntimeManage      = "runtime.manage"
 	PermissionAssistantRun       = "assistant.platform.run"
+
+	PermissionPlatformFeatureManage       = "platform.feature.manage"
+	PermissionPlatformUserManage          = "platform.user.manage"
+	PermissionPlatformRBACManage          = "platform.rbac.manage"
+	PermissionDatabaseMaintenanceManage   = "database.maintenance.manage"
+	PermissionDatabaseMaintenanceApprove  = "database.maintenance.approve"
+	PermissionAPIManage                   = "api.manage"
+	PermissionIndustrySolutionManage      = "industry.solution.manage"
+	PermissionIndustrySolutionImport      = "industry.solution.import"
+	PermissionIndustrySolutionExport      = "industry.solution.export"
+	PermissionTenantIndustrySolutionApply = "tenant.industry_solution.apply"
 )
 
 var rolePermissions = map[string][]string{
@@ -30,6 +41,16 @@ var rolePermissions = map[string][]string{
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
+		PermissionPlatformFeatureManage,
+		PermissionPlatformUserManage,
+		PermissionPlatformRBACManage,
+		PermissionDatabaseMaintenanceManage,
+		PermissionDatabaseMaintenanceApprove,
+		PermissionAPIManage,
+		PermissionIndustrySolutionManage,
+		PermissionIndustrySolutionImport,
+		PermissionIndustrySolutionExport,
+		PermissionTenantIndustrySolutionApply,
 	},
 	RoleAdmin: {
 		PermissionPlatformRead,
@@ -40,6 +61,16 @@ var rolePermissions = map[string][]string{
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
+		PermissionPlatformFeatureManage,
+		PermissionPlatformUserManage,
+		PermissionPlatformRBACManage,
+		PermissionDatabaseMaintenanceManage,
+		PermissionDatabaseMaintenanceApprove,
+		PermissionAPIManage,
+		PermissionIndustrySolutionManage,
+		PermissionIndustrySolutionImport,
+		PermissionIndustrySolutionExport,
+		PermissionTenantIndustrySolutionApply,
 	},
 	RoleOperator: {
 		PermissionPlatformRead,
@@ -48,6 +79,11 @@ var rolePermissions = map[string][]string{
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
+		PermissionDatabaseMaintenanceManage,
+		PermissionIndustrySolutionManage,
+		PermissionIndustrySolutionImport,
+		PermissionIndustrySolutionExport,
+		PermissionTenantIndustrySolutionApply,
 	},
 	RoleAuditor: {
 		PermissionPlatformRead,
@@ -60,7 +96,7 @@ func NormalizeRole(role string) string {
 		return RoleOwner
 	case "system_admin", "platform_admin", "admin":
 		return RoleAdmin
-	case "operator", "ops":
+	case "operator", "ops", "support", "system_support":
 		return RoleOperator
 	case "auditor", "viewer", "readonly", "read_only":
 		return RoleAuditor

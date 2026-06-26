@@ -13,6 +13,10 @@ type PlatformRoleResolver interface {
 	GetPlatformRole(context.Context, uuid.UUID) (string, error)
 }
 
+type platformPermissionResolver interface {
+	ListPlatformRolePermissions(context.Context, string) ([]string, error)
+}
+
 func PlatformPermissionMiddleware(resolver PlatformRoleResolver, permission string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -31,13 +35,28 @@ func PlatformPermissionMiddleware(resolver PlatformRoleResolver, permission stri
 				return
 			}
 			role, err := resolver.GetPlatformRole(r.Context(), userID)
-			if err != nil || !platformauth.HasPermission(role, permission) {
+			if err != nil || !resolverHasPermission(r.Context(), resolver, role, permission) {
 				writePlatformError(w, http.StatusForbidden, "platform_forbidden")
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func resolverHasPermission(ctx context.Context, resolver PlatformRoleResolver, role string, permission string) bool {
+	normalized := platformauth.NormalizeRole(role)
+	if permissionResolver, ok := resolver.(platformPermissionResolver); ok {
+		if permissions, err := permissionResolver.ListPlatformRolePermissions(ctx, normalized); err == nil && len(permissions) > 0 {
+			for _, item := range permissions {
+				if item == permission {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return platformauth.HasPermission(normalized, permission)
 }
 
 func writePlatformError(w http.ResponseWriter, status int, message string) {

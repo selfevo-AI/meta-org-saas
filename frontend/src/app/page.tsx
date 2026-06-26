@@ -129,8 +129,21 @@ const domainLabels: Record<string, string> = {
   Delivery: '交付',
   Cost: '成本',
   Feedback: '反馈评估',
-  DeveloperTools: '模型设置',
+  DeveloperTools: 'AI模型及API接入',
   SystemAdmin: 'SystemAdmin',
+  'PlatformAdmin:assistant': 'systemAdmin.platformAssistant',
+  'PlatformAdmin:monitoring': 'systemAdmin.monitoringAgent',
+  'PlatformAdmin:saas': 'systemAdmin.saasOrganizations',
+  'PlatformAdmin:industry': 'systemAdmin.industries',
+  'PlatformAdmin:features': 'systemAdmin.platformFeatures',
+  'PlatformAdmin:permissions': 'systemAdmin.permissions',
+  'PlatformAdmin:users': 'systemAdmin.platformUsers',
+  'PlatformAdmin:database': 'systemAdmin.databaseMaintenance',
+  'PlatformAdmin:models': 'systemAdmin.modelAndApiSettings',
+  'PlatformAdmin:runtime': 'systemAdmin.apiWorkbench',
+  'PlatformAdmin:catalog': 'systemAdmin.platformCatalog',
+  'PlatformAdmin:targets': 'systemAdmin.schemaTargets',
+  'PlatformAdmin:schema': 'systemAdmin.schemaPackage',
   Finance: '财务核算',
   Costing: '成本核算',
   FinanceAccounting: '财务核算',
@@ -162,6 +175,19 @@ const domainIcons: Record<string, typeof Gauge> = {
   Feedback: Activity,
   DeveloperTools: Code2,
   SystemAdmin: SlidersHorizontal,
+  'PlatformAdmin:assistant': Bot,
+  'PlatformAdmin:monitoring': Activity,
+  'PlatformAdmin:saas': Users,
+  'PlatformAdmin:industry': PackageCheck,
+  'PlatformAdmin:features': ShieldCheck,
+  'PlatformAdmin:permissions': KeyRound,
+  'PlatformAdmin:users': Users,
+  'PlatformAdmin:database': Boxes,
+  'PlatformAdmin:models': SlidersHorizontal,
+  'PlatformAdmin:runtime': Code2,
+  'PlatformAdmin:catalog': Boxes,
+  'PlatformAdmin:targets': GitBranch,
+  'PlatformAdmin:schema': Code2,
   Finance: WalletCards,
   Costing: CircleDollarSign,
   FinanceAccounting: WalletCards,
@@ -409,9 +435,23 @@ const defaultMenuGroups: MenuGroup[] = [
 
 const platformMenuGroups: MenuGroup[] = [
   {
-    id: 'system',
-    label: 'SystemAdmin',
-    domains: ['SystemAdmin'],
+    id: 'platformAdmin',
+    label: 'nav.group.platformAdmin',
+    domains: [
+      'PlatformAdmin:assistant',
+      'PlatformAdmin:monitoring',
+      'PlatformAdmin:saas',
+      'PlatformAdmin:industry',
+      'PlatformAdmin:features',
+      'PlatformAdmin:permissions',
+      'PlatformAdmin:users',
+      'PlatformAdmin:database',
+      'PlatformAdmin:models',
+      'PlatformAdmin:runtime',
+      'PlatformAdmin:catalog',
+      'PlatformAdmin:targets',
+      'PlatformAdmin:schema',
+    ],
   },
 ]
 
@@ -1583,6 +1623,7 @@ export default function Home() {
 
   const effectiveWorkspaceView: WorkspaceView = workspaceView
   const activeDomain = effectiveWorkspaceView === 'overview' ? 'MetaOrg' : effectiveWorkspaceView.replace('domain:', '')
+  const platformAdminSection = activeDomain.startsWith('PlatformAdmin:') ? activeDomain.replace('PlatformAdmin:', '') : undefined
   const activeSupplyChainFunction =
     currentSupplyChainFunctionID && supplyChainFunctionByID.get(currentSupplyChainFunctionID)?.domain === activeDomain
       ? supplyChainFunctionByID.get(currentSupplyChainFunctionID) ?? null
@@ -2341,7 +2382,7 @@ export default function Home() {
           <div className="workspace-topbar min-w-0">
             <Topbar
               activeTitle={isOverview ? t('nav.overview') : t(domainLabels[activeDomain] ?? activeDomain)}
-              activeDomain={isOverview ? 'SuperClaw' : activeDomain}
+              activeDomain={isOverview ? 'SuperClaw' : t(domainLabels[activeDomain] ?? activeDomain)}
               locale={locale}
               setLocale={setLocale}
               themeMode={themeMode}
@@ -2394,9 +2435,9 @@ export default function Home() {
             <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
               {!isOverview && (
                 <WorkspaceHeader
-                  title={activeBusinessSelection?.label ?? (domainLabels[activeDomain] ?? activeDomain)}
-                  domain={activeBusinessSelection ? t(`businessTree.type.${activeBusinessSelection.targetType}`) : activeDomain}
-                  groupLabel={activeGroup?.label ?? '功能台'}
+                  title={activeBusinessSelection?.label ?? t(domainLabels[activeDomain] ?? activeDomain)}
+                  domain={activeBusinessSelection ? t(`businessTree.type.${activeBusinessSelection.targetType}`) : t(domainLabels[activeDomain] ?? activeDomain)}
+                  groupLabel={activeGroup ? t(activeGroup.label) : t('nav.group.platformAdmin')}
                   selection={activeBusinessSelection}
                   operationCount={activeOperationCount}
                   operations={activeOperations}
@@ -2480,8 +2521,13 @@ export default function Home() {
 						<DeveloperToolsWorkspace token={token} />
 						<ERPCodeWorkspace token={token} module="platform" />
 					</div>
-				) : effectiveWorkspaceView === 'domain:SystemAdmin' ? (
-					<SystemAdminWorkspace token={token} organizations={organizations} currentOrganizationID={currentOrganizationID} />
+				) : effectiveWorkspaceView === 'domain:SystemAdmin' || activeDomain.startsWith('PlatformAdmin:') ? (
+					<SystemAdminWorkspace
+						token={token}
+						organizations={organizations}
+						currentOrganizationID={currentOrganizationID}
+						activeSection={platformAdminSection}
+					/>
 				) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
 					<CostingWorkspace token={token} />
 				) : effectiveWorkspaceView === 'domain:Inventory' ? (

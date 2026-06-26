@@ -1953,6 +1953,273 @@ CREATE INDEX IF NOT EXISTS idx_platform_details_master
 CREATE UNIQUE INDEX IF NOT EXISTS uq_platform_details_natural
     ON platform.platform_details(master_key, detail_type, field_key, line_no);
 
+CREATE TABLE IF NOT EXISTS platform.platform_permissions (
+    permission_key TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    category       TEXT NOT NULL DEFAULT 'platform',
+    status         TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'disabled', 'archived')),
+    metadata       JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_permissions_category
+    ON platform.platform_permissions(category, status, permission_key);
+
+CREATE TABLE IF NOT EXISTS platform.platform_roles (
+    role_key    TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'disabled', 'archived')),
+    is_system   BOOLEAN NOT NULL DEFAULT false,
+    metadata    JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_by  UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    updated_by  UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS platform.platform_role_permissions (
+    role_key       TEXT NOT NULL REFERENCES platform.platform_roles(role_key) ON DELETE CASCADE,
+    permission_key TEXT NOT NULL REFERENCES platform.platform_permissions(permission_key) ON DELETE CASCADE,
+    status         TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'disabled')),
+    granted_by     UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (role_key, permission_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_role_permissions_permission
+    ON platform.platform_role_permissions(permission_key, status);
+
+CREATE TABLE IF NOT EXISTS platform.platform_features (
+    feature_key     TEXT PRIMARY KEY,
+    parent_key      TEXT NOT NULL DEFAULT '',
+    module_key      TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'platform_admin',
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'active', 'disabled', 'archived')),
+    sort_order      INT NOT NULL DEFAULT 0,
+    permission_keys JSONB NOT NULL DEFAULT '[]'
+        CHECK (jsonb_typeof(permission_keys) = 'array'),
+    metadata        JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_by      UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    updated_by      UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_features_module
+    ON platform.platform_features(module_key, category, status, sort_order);
+
+CREATE TABLE IF NOT EXISTS platform.platform_menu_items (
+    menu_key             TEXT PRIMARY KEY,
+    parent_key           TEXT NOT NULL DEFAULT '',
+    feature_key          TEXT NOT NULL DEFAULT '',
+    label_key            TEXT NOT NULL,
+    icon                 TEXT NOT NULL DEFAULT '',
+    route                TEXT NOT NULL DEFAULT '',
+    required_permissions JSONB NOT NULL DEFAULT '[]'
+        CHECK (jsonb_typeof(required_permissions) = 'array'),
+    status               TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'disabled', 'archived')),
+    sort_order           INT NOT NULL DEFAULT 0,
+    metadata             JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_menu_items_parent
+    ON platform.platform_menu_items(parent_key, status, sort_order);
+
+CREATE TABLE IF NOT EXISTS platform.platform_user_roles (
+    user_id    UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    role_key   TEXT NOT NULL REFERENCES platform.platform_roles(role_key) ON DELETE RESTRICT,
+    status     TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'disabled')),
+    granted_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, role_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_user_roles_role
+    ON platform.platform_user_roles(role_key, status);
+
+CREATE TABLE IF NOT EXISTS platform.database_maintenance_jobs (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_type      TEXT NOT NULL
+        CHECK (job_type IN ('backup', 'restore')),
+    scope         TEXT NOT NULL DEFAULT 'platform'
+        CHECK (scope IN ('platform', 'tenant', 'all')),
+    status        TEXT NOT NULL DEFAULT 'pending_approval'
+        CHECK (status IN ('pending_approval', 'approved', 'rejected', 'cancelled', 'completed', 'failed')),
+    reason        TEXT NOT NULL DEFAULT '',
+    backup_ref    TEXT NOT NULL DEFAULT '',
+    requested_by  UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    reviewed_by   UUID REFERENCES public.users(id) ON DELETE SET NULL,
+    review_reason TEXT NOT NULL DEFAULT '',
+    result        JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(result) = 'object'),
+    metadata      JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reviewed_at   TIMESTAMPTZ,
+    completed_at  TIMESTAMPTZ,
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_database_maintenance_jobs_status
+    ON platform.database_maintenance_jobs(status, created_at DESC);
+
+INSERT INTO platform.platform_permissions(permission_key, name, description, category, status, metadata)
+VALUES
+    ('platform.read', 'Read platform administration', 'Read SaaS platform management metadata and workbench views', 'platform', 'active', '{"seed":true}'::jsonb),
+    ('organization.manage', 'Manage organizations', 'Manage tenant organization profile, subscriptions, modules, and invitations', 'organization', 'active', '{"seed":true}'::jsonb),
+    ('organization.close', 'Close organizations', 'Close tenant organization accounts', 'organization', 'active', '{"seed":true}'::jsonb),
+    ('schema.manage', 'Manage schema packages', 'Create and verify tenant schema change requests', 'schema', 'active', '{"seed":true}'::jsonb),
+    ('schema.approve', 'Approve schema changes', 'Approve tenant schema change requests', 'schema', 'active', '{"seed":true}'::jsonb),
+    ('schema.apply', 'Apply schema changes', 'Apply approved tenant schema change requests', 'schema', 'active', '{"seed":true}'::jsonb),
+    ('model.manage', 'Manage model settings', 'Manage model providers, channels, and routing policy', 'model', 'active', '{"seed":true}'::jsonb),
+    ('runtime.manage', 'Manage runtime operations', 'Manage runtime entities, views, APIs, and operations', 'runtime', 'active', '{"seed":true}'::jsonb),
+    ('assistant.platform.run', 'Run platform assistant', 'Run platform-scoped assistant and tool workbench flows', 'assistant', 'active', '{"seed":true}'::jsonb),
+    ('platform.feature.manage', 'Manage platform features', 'Register and publish metadata-only platform features, menus, and future capabilities', 'platform', 'active', '{"seed":true}'::jsonb),
+    ('platform.user.manage', 'Manage platform users', 'Create, disable, reset, and assign roles for platform users', 'identity', 'active', '{"seed":true}'::jsonb),
+    ('platform.rbac.manage', 'Manage platform RBAC', 'Manage platform roles and permission assignments', 'identity', 'active', '{"seed":true}'::jsonb),
+    ('database.maintenance.manage', 'Manage database maintenance jobs', 'Create database backup and restore maintenance job requests', 'database', 'active', '{"seed":true}'::jsonb),
+    ('database.maintenance.approve', 'Approve database maintenance jobs', 'Approve or reject database backup and restore maintenance jobs', 'database', 'active', '{"seed":true}'::jsonb),
+    ('api.manage', 'Manage platform APIs', 'Manage API access catalog and platform API operations', 'api', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.manage', 'Manage industry solutions', 'Manage industry solution packages, tables, fields, modules, and tenant adaptation changes', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.import', 'Import industry solutions', 'Import structured industry solution package JSON', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.export', 'Export industry solutions', 'Export structured industry solution package JSON', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('tenant.industry_solution.apply', 'Apply tenant industry solutions', 'Create and apply tenant-scoped industry solution adaptation requests', 'industry_solution', 'active', '{"seed":true}'::jsonb)
+ON CONFLICT (permission_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    category = EXCLUDED.category,
+    status = EXCLUDED.status,
+    metadata = platform.platform_permissions.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
+INSERT INTO platform.platform_roles(role_key, name, description, status, is_system, metadata)
+VALUES
+    ('owner', 'Owner', 'Full SaaS platform owner', 'active', true, '{"seed":true}'::jsonb),
+    ('admin', 'Admin', 'SaaS platform administrator', 'active', true, '{"seed":true}'::jsonb),
+    ('operator', 'Operator', 'Platform operator for daily organization, runtime, schema, and industry operations', 'active', true, '{"seed":true}'::jsonb),
+    ('auditor', 'Auditor', 'Read-only platform auditor', 'active', true, '{"seed":true}'::jsonb)
+ON CONFLICT (role_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    status = EXCLUDED.status,
+    is_system = EXCLUDED.is_system,
+    metadata = platform.platform_roles.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
+WITH role_permission_matrix(role_key, permission_key) AS (
+    SELECT 'owner', permission_key FROM platform.platform_permissions
+    UNION ALL
+    SELECT 'admin', permission_key FROM platform.platform_permissions
+    WHERE permission_key <> 'organization.close'
+    UNION ALL
+    SELECT 'operator', permission_key FROM platform.platform_permissions
+    WHERE permission_key IN (
+        'platform.read', 'organization.manage', 'schema.manage', 'model.manage',
+        'runtime.manage', 'assistant.platform.run', 'database.maintenance.manage',
+        'industry.solution.manage', 'industry.solution.import', 'industry.solution.export',
+        'tenant.industry_solution.apply'
+    )
+    UNION ALL
+    SELECT 'auditor', 'platform.read'
+)
+INSERT INTO platform.platform_role_permissions(role_key, permission_key, status)
+SELECT role_key, permission_key, 'active'
+FROM role_permission_matrix
+ON CONFLICT (role_key, permission_key) DO UPDATE SET
+    status = EXCLUDED.status,
+    updated_at = NOW();
+
+INSERT INTO platform.platform_user_roles(user_id, role_key, status)
+SELECT
+    user_id,
+    CASE role
+        WHEN 'system_owner' THEN 'owner'
+        WHEN 'system_admin' THEN 'admin'
+        ELSE 'operator'
+    END AS role_key,
+    'active'
+FROM public.platform_admins
+ON CONFLICT (user_id, role_key) DO UPDATE SET
+    status = EXCLUDED.status,
+    updated_at = NOW();
+
+INSERT INTO platform.platform_features(
+    feature_key, parent_key, module_key, category, title, description, status, sort_order, permission_keys, metadata
+)
+VALUES
+    ('platform.assistant', '', 'platform_admin', 'assistant', 'Platform assistant', 'Platform-scoped assistant operations and health checks', 'active', 10, '["assistant.platform.run"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.monitoring', '', 'platform_admin', 'observability', 'Monitoring agent', 'Platform monitoring agent status and runs', 'active', 20, '["platform.read"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.saas.organizations', '', 'platform_admin', 'organization', 'SaaS organizations', 'Tenant organization, subscription, module, and invitation management', 'active', 30, '["platform.read","organization.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.industry.solutions', '', 'platform_admin', 'industry_solution', 'Industry solutions', 'Industry solution packages, table and field changes, import, export, and tenant adaptation', 'active', 40, '["industry.solution.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.feature.catalog', '', 'platform_admin', 'platform', 'Platform features', 'Metadata-only feature catalog and future function registration', 'active', 50, '["platform.feature.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.rbac', '', 'platform_admin', 'identity', 'Platform RBAC', 'Platform role and permission management', 'active', 60, '["platform.rbac.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.user.management', '', 'platform_admin', 'identity', 'Platform users', 'Platform user create, disable, reset, and role assignment', 'active', 70, '["platform.user.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.database.maintenance', '', 'platform_admin', 'database', 'Database maintenance', 'Database backup and restore maintenance job governance', 'active', 80, '["database.maintenance.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.model.settings', '', 'platform_admin', 'model', 'AI models and API access', 'Platform AI model catalog, provider access, and API integration entry', 'active', 90, '["model.manage","api.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.runtime.operations', '', 'platform_admin', 'runtime', 'Runtime operations', 'Runtime APIs, entities, views, and operation catalog', 'active', 100, '["runtime.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.catalog', '', 'platform_admin', 'catalog', 'Platform catalog', 'Platform master/detail catalog', 'active', 110, '["platform.read"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.schema.targets', '', 'platform_admin', 'schema', 'Schema targets', 'Tenant schema targets and provisioning state', 'active', 120, '["schema.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.schema.package', '', 'platform_admin', 'schema', 'Schema package', 'Tenant schema import, export, verify, approve, and apply workflow', 'active', 130, '["schema.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb)
+ON CONFLICT (feature_key) DO UPDATE SET
+    parent_key = EXCLUDED.parent_key,
+    module_key = EXCLUDED.module_key,
+    category = EXCLUDED.category,
+    title = EXCLUDED.title,
+    description = EXCLUDED.description,
+    status = EXCLUDED.status,
+    sort_order = EXCLUDED.sort_order,
+    permission_keys = EXCLUDED.permission_keys,
+    metadata = platform.platform_features.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
+INSERT INTO platform.platform_menu_items(
+    menu_key, parent_key, feature_key, label_key, icon, route, required_permissions, status, sort_order, metadata
+)
+VALUES
+    ('assistant', '', 'platform.assistant', 'systemAdmin.platformAssistant', 'bot', 'platform:assistant', '["assistant.platform.run"]'::jsonb, 'active', 10, '{"seed":true}'::jsonb),
+    ('monitoring', '', 'platform.monitoring', 'systemAdmin.monitoringAgent', 'activity', 'platform:monitoring', '["platform.read"]'::jsonb, 'active', 20, '{"seed":true}'::jsonb),
+    ('saas', '', 'platform.saas.organizations', 'systemAdmin.saasOrganizations', 'users', 'platform:saas', '["platform.read"]'::jsonb, 'active', 30, '{"seed":true}'::jsonb),
+    ('industry', '', 'platform.industry.solutions', 'systemAdmin.industries', 'layers', 'platform:industry', '["industry.solution.manage"]'::jsonb, 'active', 40, '{"seed":true}'::jsonb),
+    ('features', '', 'platform.feature.catalog', 'systemAdmin.platformFeatures', 'shield', 'platform:features', '["platform.feature.manage"]'::jsonb, 'active', 50, '{"seed":true}'::jsonb),
+    ('permissions', '', 'platform.rbac', 'systemAdmin.permissions', 'shield', 'platform:permissions', '["platform.rbac.manage"]'::jsonb, 'active', 60, '{"seed":true}'::jsonb),
+    ('users', '', 'platform.user.management', 'systemAdmin.platformUsers', 'users', 'platform:users', '["platform.user.manage"]'::jsonb, 'active', 70, '{"seed":true}'::jsonb),
+    ('database', '', 'platform.database.maintenance', 'systemAdmin.databaseMaintenance', 'database', 'platform:database', '["database.maintenance.manage"]'::jsonb, 'active', 80, '{"seed":true}'::jsonb),
+    ('models', '', 'platform.model.settings', 'systemAdmin.feature.modelSettings', 'sliders', 'platform:models', '["model.manage","api.manage"]'::jsonb, 'active', 90, '{"seed":true}'::jsonb),
+    ('runtime', '', 'platform.runtime.operations', 'systemAdmin.apiWorkbench', 'table', 'platform:runtime', '["runtime.manage"]'::jsonb, 'active', 100, '{"seed":true}'::jsonb),
+    ('catalog', '', 'platform.catalog', 'systemAdmin.platformCatalog', 'layers', 'platform:catalog', '["platform.read"]'::jsonb, 'active', 110, '{"seed":true}'::jsonb),
+    ('targets', '', 'platform.schema.targets', 'systemAdmin.schemaTargets', 'database', 'platform:targets', '["schema.manage"]'::jsonb, 'active', 120, '{"seed":true}'::jsonb),
+    ('schema', '', 'platform.schema.package', 'systemAdmin.schemaPackage', 'file-json', 'platform:schema', '["schema.manage"]'::jsonb, 'active', 130, '{"seed":true}'::jsonb)
+ON CONFLICT (menu_key) DO UPDATE SET
+    parent_key = EXCLUDED.parent_key,
+    feature_key = EXCLUDED.feature_key,
+    label_key = EXCLUDED.label_key,
+    icon = EXCLUDED.icon,
+    route = EXCLUDED.route,
+    required_permissions = EXCLUDED.required_permissions,
+    status = EXCLUDED.status,
+    sort_order = EXCLUDED.sort_order,
+    metadata = platform.platform_menu_items.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
 CREATE TABLE IF NOT EXISTS platform.schema_template_masters (
     master_key     TEXT PRIMARY KEY DEFAULT ('STM-' || UPPER(SUBSTR(REPLACE(gen_random_uuid()::TEXT, '-', ''), 1, 24))),
     template_key   TEXT NOT NULL,
@@ -2563,7 +2830,7 @@ CREATE TABLE IF NOT EXISTS platform.custom_package_assets (
     asset_key  TEXT NOT NULL,
     asset_type TEXT NOT NULL
         CHECK (asset_type IN (
-            'schema_package', 'module', 'runtime_entity', 'runtime_operation',
+            'schema_package', 'solution_table', 'solution_field', 'module', 'runtime_entity', 'runtime_operation',
             'skill_structure', 'skill', 'knowledge_source', 'model_policy', 'i18n'
         )),
     payload    JSONB NOT NULL DEFAULT '{}',

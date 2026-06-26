@@ -15,6 +15,8 @@ import {
   listInvocations,
   listModelProviders,
   listModels,
+  listPlatformModelProviders,
+  listPlatformModels,
   listProviderChannels,
   listRoutingRules,
   listToolExecutions,
@@ -39,6 +41,7 @@ import { useI18n } from '@/lib/i18n'
 
 interface DeveloperToolsWorkspaceProps {
   token: string
+  apiScope?: 'tenant' | 'platform'
 }
 
 type TabID = 'providers' | 'channels' | 'models' | 'routing' | 'invocations' | 'analysis' | 'tools' | 'interfaces'
@@ -66,8 +69,9 @@ function money(value: number | undefined, currency = 'CNY'): string {
   return `${currency} ${Number(value ?? 0).toFixed(4)}`
 }
 
-export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps) {
+export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: DeveloperToolsWorkspaceProps) {
   const { t } = useI18n()
+  const isPlatformScope = apiScope === 'platform'
   const [activeTab, setActiveTab] = useState<TabID>('providers')
   const [providers, setProviders] = useState<ModelProvider[]>([])
   const [channels, setChannels] = useState<ProviderChannel[]>([])
@@ -146,6 +150,11 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
 
   const providerLabels = useMemo(() => Object.fromEntries(providers.map((provider) => [provider.id, provider.name])), [providers])
   const channelLabels = useMemo(() => Object.fromEntries(channels.map((channel) => [channel.id, channel.name])), [channels])
+  const visibleTabs = useMemo(
+    () => (isPlatformScope ? tabs.filter((tab) => tab.id === 'providers' || tab.id === 'models') : tabs),
+    [isPlatformScope],
+  )
+  const effectiveActiveTab = visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : visibleTabs[0]?.id ?? 'providers'
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedProviderID) ?? providers[0],
     [providers, selectedProviderID],
@@ -158,17 +167,19 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
     setLoading(true)
     setError('')
     try {
+      const loadProviders = isPlatformScope ? listPlatformModelProviders : listModelProviders
+      const loadModels = isPlatformScope ? listPlatformModels : listModels
       const [providerData, channelData, modelData, ruleData, toolData, interfaceFileData, executionData, invocationData, costData, analysisData] = await Promise.all([
-        listModelProviders(token),
-        listProviderChannels(token),
-        listModels(token),
-        listRoutingRules(token),
-        listTools(token),
-        listInterfaceFiles(token),
-        listToolExecutions(token),
-        listInvocations(token),
-        getAICostSummary(token),
-        getAIUsageAnalysis(token),
+        loadProviders(token),
+        isPlatformScope ? Promise.resolve<ProviderChannel[]>([]) : listProviderChannels(token),
+        loadModels(token),
+        isPlatformScope ? Promise.resolve<AIRoutingRule[]>([]) : listRoutingRules(token),
+        isPlatformScope ? Promise.resolve<ToolDefinition[]>([]) : listTools(token),
+        isPlatformScope ? Promise.resolve<InterfaceFile[]>([]) : listInterfaceFiles(token),
+        isPlatformScope ? Promise.resolve<ToolExecution[]>([]) : listToolExecutions(token),
+        isPlatformScope ? Promise.resolve<AIInvocation[]>([]) : listInvocations(token),
+        isPlatformScope ? Promise.resolve<AICostSummary | null>(null) : getAICostSummary(token),
+        isPlatformScope ? Promise.resolve<AIUsageAnalysis | null>(null) : getAIUsageAnalysis(token),
       ])
       setProviders(providerData)
       setChannels(channelData)
@@ -190,7 +201,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
     } finally {
       setLoading(false)
     }
-  }, [t, token])
+  }, [isPlatformScope, t, token])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -388,7 +399,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
-        {tabs.map((tab) => {
+        {visibleTabs.map((tab) => {
           const Icon = tab.icon
           return (
             <button
@@ -396,7 +407,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
               type="button"
               onClick={() => setActiveTab(tab.id)}
               className={`inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-semibold transition ${
-                activeTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100'
+                effectiveActiveTab === tab.id ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -425,8 +436,8 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
         </div>
       )}
 
-      {activeTab === 'providers' && (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+      {effectiveActiveTab === 'providers' && (
+        <div className={`grid gap-5 ${isPlatformScope ? '' : 'xl:grid-cols-[minmax(0,1fr)_380px]'}`}>
           <Panel title="developer.modelProviders">
             <div className="divide-y divide-slate-100">
               {providers.map((provider) => (
@@ -451,6 +462,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
             </div>
           </Panel>
 
+          {!isPlatformScope && (
           <Panel title="developer.providerSettings">
             <form className="space-y-3" onSubmit={submitProvider}>
               <TextInput label="common.name" value={providerForm.name} onChange={(value) => setProviderForm({ ...providerForm, name: value })} />
@@ -493,10 +505,11 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
               </button>
             </div>
           </Panel>
+          )}
         </div>
       )}
 
-      {activeTab === 'channels' && (
+      {effectiveActiveTab === 'channels' && (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
           <Panel title="developer.channelPool">
             <Table
@@ -557,8 +570,8 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
         </div>
       )}
 
-      {activeTab === 'models' && (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+      {effectiveActiveTab === 'models' && (
+        <div className={`grid gap-5 ${isPlatformScope ? '' : 'xl:grid-cols-[minmax(0,1fr)_420px]'}`}>
           <Panel title="developer.modelCatalog">
             <Table
               headers={['developer.model', 'developer.provider', 'developer.status', 'developer.context']}
@@ -570,6 +583,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
               ])}
             />
           </Panel>
+          {!isPlatformScope && (
           <Panel title="developer.createModel">
             <form className="space-y-3" onSubmit={submitModel}>
               <SelectInput label="developer.provider" value={modelForm.provider_id} onChange={(value) => setModelForm({ ...modelForm, provider_id: value })} options={providers.map((provider) => provider.id)} labels={providerLabels} />
@@ -591,10 +605,11 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
               <SubmitButton loading={loading} label="developer.createModel" />
             </form>
           </Panel>
+          )}
         </div>
       )}
 
-      {activeTab === 'routing' && (
+      {effectiveActiveTab === 'routing' && (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
           <Panel title="developer.routingRules">
             <Table
@@ -625,7 +640,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
         </div>
       )}
 
-      {activeTab === 'invocations' && (
+      {effectiveActiveTab === 'invocations' && (
         <Panel title="developer.invocationLogs">
           <Table
             headers={['developer.invocation', 'developer.modelRoute', 'developer.channel', 'developer.tokens', 'developer.serviceTier', 'developer.cost']}
@@ -641,7 +656,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
         </Panel>
       )}
 
-      {activeTab === 'analysis' && (
+      {effectiveActiveTab === 'analysis' && (
         <Panel title="developer.usageAnalysis">
           <div className="grid gap-3 sm:grid-cols-3">
             <Metric label="developer.totalCost" value={money(usageAnalysis?.total_cost ?? cost?.total, usageAnalysis?.currency ?? cost?.currency)} />
@@ -657,7 +672,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
         </Panel>
       )}
 
-      {activeTab === 'tools' && (
+      {effectiveActiveTab === 'tools' && (
         <Panel title="developer.toolRuntime">
           <Table
             headers={['developer.tool', 'developer.category', 'developer.approvalTier', 'developer.policy', 'developer.risk']}
@@ -684,7 +699,7 @@ export function DeveloperToolsWorkspace({ token }: DeveloperToolsWorkspaceProps)
         </Panel>
       )}
 
-      {activeTab === 'interfaces' && (
+      {effectiveActiveTab === 'interfaces' && (
         <div className="space-y-5">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_460px]">
             <Panel title="developer.interfaceFiles">

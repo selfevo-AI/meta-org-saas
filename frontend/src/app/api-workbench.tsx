@@ -20,8 +20,8 @@ const platformOperationDomains = new Set([
   'Evolution',
   'Verification',
   'Observability',
-  'DeveloperTools',
 ])
+const dedicatedWorkspaceDomains = new Set(['DeveloperTools'])
 const platformIdentityPaths = new Set(['/agents/register', '/agents'])
 const deprecatedTenantPathPrefixes = [
   '/finance/',
@@ -45,11 +45,13 @@ const deprecatedTenantPathPrefixes = [
 ]
 
 function platformOperationAvailable(operation: ApiOperation): boolean {
+  if (dedicatedWorkspaceDomains.has(operation.domain)) return false
   if (operation.domain === 'Identity') return platformIdentityPaths.has(operation.path)
   return platformOperationDomains.has(operation.domain)
 }
 
 function tenantOperationAvailable(operation: ApiOperation): boolean {
+  if (dedicatedWorkspaceDomains.has(operation.domain)) return false
   if (operation.path.startsWith('/finance/gl/')) return true
   return !deprecatedTenantPathPrefixes.some((prefix) => operation.path.startsWith(prefix))
 }

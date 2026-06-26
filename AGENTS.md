@@ -16,6 +16,14 @@ The Next.js frontend lives in `frontend/`, with App Router files in `frontend/sr
 - `cd frontend && npm run build`: create a production frontend build.
 - `cd frontend && npm run lint`: run Next.js linting.
 
+## Local Development SaaS Login
+
+This is a local development and verification rule only, not a system deployment rule or production credential policy.
+
+For local non-Docker SaaS management testing, use the platform administrator account `platform-admin@local.test` with password `MetaOrgSaasDev!2026`.
+
+When logging in through `http://127.0.0.1:3000`, first select the SaaS management login entry on the login page. Do not use the organization console login entry for platform management verification.
+
 ## Coding Style & Naming Conventions
 
 Format Go code with `gofmt`; keep package names short and lowercase. Preserve the existing layering: handlers parse HTTP, services hold business rules, repositories handle persistence, and models define API/database shapes.

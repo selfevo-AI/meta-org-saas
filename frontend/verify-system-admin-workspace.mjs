@@ -6,6 +6,7 @@ const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
 const authSource = readFileSync(`${frontendRoot}src/lib/auth.ts`, 'utf8')
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
 const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 'utf8')
+const apiWorkbenchSource = readFileSync(`${frontendRoot}src/app/api-workbench.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
 const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
 const workspacePath = `${frontendRoot}src/app/system-admin-workspace.tsx`
@@ -249,7 +250,13 @@ requiredWorkspaceSnippets.push(
   "t('systemAdmin.packageAssets')",
   "t('systemAdmin.assetResults')",
   "t('systemAdmin.publicationGates')",
+  '<DeveloperToolsWorkspace token={token} apiScope="platform" />',
 )
+
+const requiredI18nValueSnippets = [
+  "'systemAdmin.modelAndApiSettings': 'AI models and API access'",
+  "'systemAdmin.modelAndApiSettings': 'AI模型及API接入'",
+]
 
 const movedPlatformDomains = [
   'Capability',
@@ -348,6 +355,18 @@ if (missingAssistantSnippets.length > 0) {
 const missingOperationSnippets = requiredOperationSnippets.filter((snippet) => !operationsSource.includes(snippet))
 if (missingOperationSnippets.length > 0) {
   failures.push(`Missing schema verification operation snippets:\n${missingOperationSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+}
+
+const platformDomainsMatch = apiWorkbenchSource.match(/const platformOperationDomains = new Set\(\[([\s\S]*?)\]\)/)
+if (!platformDomainsMatch) {
+  failures.push('Could not locate ApiWorkbench platformOperationDomains')
+} else if (platformDomainsMatch[1].includes("'DeveloperTools'")) {
+  failures.push('API Workbench platform domain menu must not include DeveloperTools; AI model/API access belongs in the dedicated platform settings workspace.')
+}
+
+const missingI18nValueSnippets = requiredI18nValueSnippets.filter((snippet) => !i18nSource.includes(snippet))
+if (missingI18nValueSnippets.length > 0) {
+  failures.push(`Missing exact AI model/API access labels:\n${missingI18nValueSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
 const missingEnKeys = requiredI18nKeys.filter((key) => !hasDictionaryKey(enDictionary, key))

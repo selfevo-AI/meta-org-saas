@@ -2,12 +2,15 @@ package systemadmin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/passwordhash"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
@@ -26,6 +29,22 @@ type repository interface {
 	GetPlatformRole(context.Context, uuid.UUID) (string, error)
 	ListPlatformMasters(context.Context, string, int) ([]PlatformMaster, error)
 	ListPlatformDetails(context.Context, string) ([]PlatformDetail, error)
+	ListPlatformFeatures(context.Context, string, int) ([]PlatformFeature, error)
+	CreatePlatformFeature(context.Context, CreatePlatformFeatureRecord) (*PlatformFeature, error)
+	UpdatePlatformFeatureStatus(context.Context, string, string, uuid.UUID) (*PlatformFeature, error)
+	ListPlatformMenuItems(context.Context, int) ([]PlatformMenuItem, error)
+	ListPlatformPermissions(context.Context) ([]PlatformPermission, error)
+	ListPlatformRoles(context.Context) ([]PlatformRole, error)
+	ListPlatformRolePermissions(context.Context, string) ([]string, error)
+	SetPlatformRolePermissions(context.Context, string, []string, uuid.UUID) (*PlatformRole, error)
+	ListPlatformUsers(context.Context, int) ([]PlatformUser, error)
+	CreatePlatformUser(context.Context, CreatePlatformUserRecord) (*PlatformUser, error)
+	SetPlatformUserRoles(context.Context, uuid.UUID, []string, uuid.UUID) (*PlatformUser, error)
+	ResetPlatformUserPassword(context.Context, uuid.UUID, string, uuid.UUID) (*PlatformUser, error)
+	DisablePlatformUser(context.Context, uuid.UUID, uuid.UUID) (*PlatformUser, error)
+	ListDatabaseMaintenanceJobs(context.Context, int) ([]DatabaseMaintenanceJob, error)
+	CreateDatabaseMaintenanceJob(context.Context, CreateDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error)
+	ReviewDatabaseMaintenanceJob(context.Context, ReviewDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error)
 	ListSchemaTargets(context.Context, int) ([]OrganizationSchemaTarget, error)
 	GetSchemaTarget(context.Context, uuid.UUID) (*OrganizationSchemaTarget, error)
 	CreateSchemaChangeRequest(context.Context, CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error)
@@ -39,22 +58,18 @@ func NewService(repo repository) *Service {
 }
 
 func (s *Service) GetPermissionProfile(ctx context.Context, actorID uuid.UUID) (*PlatformPermissionProfile, error) {
-	if actorID == uuid.Nil {
-		return nil, ErrForbidden
-	}
-	role, err := s.repo.GetPlatformRole(ctx, actorID)
+	normalized, permissions, err := s.permissionsForActor(ctx, actorID)
 	if err != nil {
-		return nil, ErrForbidden
+		return nil, err
 	}
-	normalized := platformauth.NormalizeRole(role)
-	permissions := platformauth.PermissionsForRole(normalized)
 	if len(permissions) == 0 {
 		return nil, ErrForbidden
 	}
+	menuItems, _ := s.repo.ListPlatformMenuItems(ctx, 500)
 	return &PlatformPermissionProfile{
 		Role:        normalized,
 		Permissions: permissions,
-		MenuItems:   menuItemsForPermissions(permissions),
+		MenuItems:   menuItemsForPermissions(permissions, menuItems),
 	}, nil
 }
 
@@ -65,10 +80,34 @@ func (s *Service) ListPlatformMasters(ctx context.Context, actorID uuid.UUID, mo
 	return s.repo.ListPlatformMasters(ctx, moduleKey, limit)
 }
 
-func menuItemsForPermissions(permissions map[string]bool) []string {
+func menuItemsForPermissions(permissions map[string]bool, catalog []PlatformMenuItem) []string {
+	if len(catalog) > 0 {
+		items := make([]string, 0, len(catalog))
+		for _, item := range catalog {
+			if item.Status != "" && item.Status != "active" {
+				continue
+			}
+			if platformMenuItemAllowed(item, permissions) {
+				items = append(items, item.MenuKey)
+			}
+		}
+		return items
+	}
 	items := []string{}
 	if permissions[platformauth.PermissionPlatformRead] {
 		items = append(items, "saas", "catalog", "targets", "assistant")
+	}
+	if permissions[platformauth.PermissionPlatformFeatureManage] {
+		items = append(items, "platform.features")
+	}
+	if permissions[platformauth.PermissionPlatformUserManage] {
+		items = append(items, "platform.users")
+	}
+	if permissions[platformauth.PermissionPlatformRBACManage] {
+		items = append(items, "platform.rbac")
+	}
+	if permissions[platformauth.PermissionDatabaseMaintenanceManage] {
+		items = append(items, "platform.database")
 	}
 	if permissions[platformauth.PermissionOrganizationManage] || permissions[platformauth.PermissionOrganizationClose] {
 		items = append(items, "organizations")
@@ -85,6 +124,18 @@ func menuItemsForPermissions(permissions map[string]bool) []string {
 	return items
 }
 
+func platformMenuItemAllowed(item PlatformMenuItem, permissions map[string]bool) bool {
+	if len(item.RequiredPermissions) == 0 {
+		return true
+	}
+	for _, permission := range item.RequiredPermissions {
+		if permissions[permission] {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) ListPlatformDetails(ctx context.Context, actorID uuid.UUID, masterKey string) ([]PlatformDetail, error) {
 	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
 		return nil, err
@@ -93,6 +144,231 @@ func (s *Service) ListPlatformDetails(ctx context.Context, actorID uuid.UUID, ma
 		return nil, fmt.Errorf("%w: master_key is required", ErrValidation)
 	}
 	return s.repo.ListPlatformDetails(ctx, masterKey)
+}
+
+func (s *Service) ListPlatformFeatures(ctx context.Context, actorID uuid.UUID, status string, limit int) ([]PlatformFeature, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
+		return nil, err
+	}
+	return s.repo.ListPlatformFeatures(ctx, strings.TrimSpace(status), limit)
+}
+
+func (s *Service) CreatePlatformFeature(ctx context.Context, actorID uuid.UUID, input CreatePlatformFeatureInput) (*PlatformFeature, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformFeatureManage); err != nil {
+		return nil, err
+	}
+	input.FeatureKey = strings.TrimSpace(input.FeatureKey)
+	input.ParentKey = strings.TrimSpace(input.ParentKey)
+	input.ModuleKey = strings.TrimSpace(input.ModuleKey)
+	input.Category = strings.TrimSpace(input.Category)
+	input.Title = strings.TrimSpace(input.Title)
+	input.Description = strings.TrimSpace(input.Description)
+	if input.FeatureKey == "" || input.ModuleKey == "" || input.Title == "" {
+		return nil, fmt.Errorf("%w: feature_key, module_key, and title are required", ErrValidation)
+	}
+	if input.Category == "" {
+		input.Category = "platform_admin"
+	}
+	if input.Metadata == nil {
+		input.Metadata = map[string]any{}
+	}
+	if err := validateMetadataOnlyExtension(input.Metadata); err != nil {
+		return nil, err
+	}
+	if _, ok := input.Metadata["extension_mode"]; !ok {
+		input.Metadata["extension_mode"] = "metadata_only"
+	}
+	return s.repo.CreatePlatformFeature(ctx, CreatePlatformFeatureRecord{
+		CreatePlatformFeatureInput: input,
+		Status:                     "draft",
+		ActorID:                    actorID,
+	})
+}
+
+func (s *Service) PublishPlatformFeature(ctx context.Context, actorID uuid.UUID, featureKey string) (*PlatformFeature, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformFeatureManage); err != nil {
+		return nil, err
+	}
+	featureKey = strings.TrimSpace(featureKey)
+	if featureKey == "" {
+		return nil, fmt.Errorf("%w: feature_key is required", ErrValidation)
+	}
+	return s.repo.UpdatePlatformFeatureStatus(ctx, featureKey, "active", actorID)
+}
+
+func (s *Service) ListPlatformPermissions(ctx context.Context, actorID uuid.UUID) ([]PlatformPermission, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
+		return nil, err
+	}
+	return s.repo.ListPlatformPermissions(ctx)
+}
+
+func (s *Service) ListPlatformRoles(ctx context.Context, actorID uuid.UUID) ([]PlatformRole, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
+		return nil, err
+	}
+	return s.repo.ListPlatformRoles(ctx)
+}
+
+func (s *Service) SetPlatformRolePermissions(ctx context.Context, actorID uuid.UUID, roleKey string, input SetPlatformRolePermissionsInput) (*PlatformRole, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRBACManage); err != nil {
+		return nil, err
+	}
+	roleKey = platformauth.NormalizeRole(roleKey)
+	if roleKey == "" {
+		return nil, fmt.Errorf("%w: role_key is required", ErrValidation)
+	}
+	permissions := normalizeStringList(input.PermissionKeys)
+	if len(permissions) == 0 {
+		return nil, fmt.Errorf("%w: permission_keys are required", ErrValidation)
+	}
+	return s.repo.SetPlatformRolePermissions(ctx, roleKey, permissions, actorID)
+}
+
+func (s *Service) ListPlatformUsers(ctx context.Context, actorID uuid.UUID, limit int) ([]PlatformUser, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformUserManage); err != nil {
+		return nil, err
+	}
+	return s.repo.ListPlatformUsers(ctx, limit)
+}
+
+func (s *Service) CreatePlatformUser(ctx context.Context, actorID uuid.UUID, input CreatePlatformUserInput) (*CreatePlatformUserResponse, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformUserManage); err != nil {
+		return nil, err
+	}
+	name := strings.TrimSpace(input.Name)
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	if name == "" || email == "" {
+		return nil, fmt.Errorf("%w: name and email are required", ErrValidation)
+	}
+	roles := normalizePlatformRoles(input.Roles)
+	if len(roles) == 0 {
+		roles = []string{platformauth.RoleAuditor}
+	}
+	temporaryPassword, err := generateTemporaryPassword()
+	if err != nil {
+		return nil, err
+	}
+	hash, err := passwordhash.GenerateBcryptHash(temporaryPassword, 0)
+	if err != nil {
+		return nil, err
+	}
+	user, err := s.repo.CreatePlatformUser(ctx, CreatePlatformUserRecord{
+		Name:         name,
+		Email:        email,
+		PasswordHash: hash,
+		Roles:        roles,
+		Metadata:     input.Metadata,
+		ActorID:      actorID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &CreatePlatformUserResponse{User: *user, TemporaryPassword: temporaryPassword}, nil
+}
+
+func (s *Service) SetPlatformUserRoles(ctx context.Context, actorID uuid.UUID, userID uuid.UUID, roles []string) (*PlatformUser, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformUserManage); err != nil {
+		return nil, err
+	}
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("%w: user_id is required", ErrValidation)
+	}
+	normalizedRoles := normalizePlatformRoles(roles)
+	if len(normalizedRoles) == 0 {
+		return nil, fmt.Errorf("%w: roles are required", ErrValidation)
+	}
+	return s.repo.SetPlatformUserRoles(ctx, userID, normalizedRoles, actorID)
+}
+
+func (s *Service) ResetPlatformUserPassword(ctx context.Context, actorID uuid.UUID, userID uuid.UUID) (*ResetPlatformUserPasswordResponse, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformUserManage); err != nil {
+		return nil, err
+	}
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("%w: user_id is required", ErrValidation)
+	}
+	temporaryPassword, err := generateTemporaryPassword()
+	if err != nil {
+		return nil, err
+	}
+	hash, err := passwordhash.GenerateBcryptHash(temporaryPassword, 0)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.ResetPlatformUserPassword(ctx, userID, hash, actorID); err != nil {
+		return nil, err
+	}
+	return &ResetPlatformUserPasswordResponse{UserID: userID, TemporaryPassword: temporaryPassword}, nil
+}
+
+func (s *Service) DisablePlatformUser(ctx context.Context, actorID uuid.UUID, userID uuid.UUID) (*PlatformUser, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformUserManage); err != nil {
+		return nil, err
+	}
+	if userID == uuid.Nil {
+		return nil, fmt.Errorf("%w: user_id is required", ErrValidation)
+	}
+	return s.repo.DisablePlatformUser(ctx, userID, actorID)
+}
+
+func (s *Service) ListDatabaseMaintenanceJobs(ctx context.Context, actorID uuid.UUID, limit int) ([]DatabaseMaintenanceJob, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionDatabaseMaintenanceManage); err != nil {
+		return nil, err
+	}
+	return s.repo.ListDatabaseMaintenanceJobs(ctx, limit)
+}
+
+func (s *Service) CreateDatabaseMaintenanceJob(ctx context.Context, actorID uuid.UUID, input CreateDatabaseMaintenanceJobInput) (*DatabaseMaintenanceJob, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionDatabaseMaintenanceManage); err != nil {
+		return nil, err
+	}
+	input.JobType = strings.ToLower(strings.TrimSpace(input.JobType))
+	input.Scope = strings.ToLower(strings.TrimSpace(input.Scope))
+	input.Reason = strings.TrimSpace(input.Reason)
+	input.BackupRef = strings.TrimSpace(input.BackupRef)
+	if input.Scope == "" {
+		input.Scope = "platform"
+	}
+	if input.JobType != "backup" && input.JobType != "restore" {
+		return nil, fmt.Errorf("%w: job_type must be backup or restore", ErrValidation)
+	}
+	if input.JobType == "restore" && input.BackupRef == "" {
+		return nil, fmt.Errorf("%w: backup_ref is required for restore", ErrValidation)
+	}
+	if input.Reason == "" {
+		return nil, fmt.Errorf("%w: reason is required", ErrValidation)
+	}
+	return s.repo.CreateDatabaseMaintenanceJob(ctx, CreateDatabaseMaintenanceJobRecord{
+		CreateDatabaseMaintenanceJobInput: input,
+		Status:                            DatabaseMaintenancePendingApproval,
+		RequestedBy:                       actorID,
+	})
+}
+
+func (s *Service) ReviewDatabaseMaintenanceJob(ctx context.Context, actorID uuid.UUID, jobID uuid.UUID, input ReviewDatabaseMaintenanceJobInput) (*DatabaseMaintenanceJob, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionDatabaseMaintenanceApprove); err != nil {
+		return nil, err
+	}
+	if jobID == uuid.Nil {
+		return nil, fmt.Errorf("%w: job_id is required", ErrValidation)
+	}
+	decision := strings.ToLower(strings.TrimSpace(input.Decision))
+	status := ""
+	switch decision {
+	case "approve", "approved":
+		status = DatabaseMaintenanceApproved
+	case "reject", "rejected":
+		status = DatabaseMaintenanceRejected
+	default:
+		return nil, fmt.Errorf("%w: decision must be approve or reject", ErrValidation)
+	}
+	return s.repo.ReviewDatabaseMaintenanceJob(ctx, ReviewDatabaseMaintenanceJobRecord{
+		JobID:        jobID,
+		Status:       status,
+		ReviewedBy:   actorID,
+		ReviewReason: strings.TrimSpace(input.Reason),
+	})
 }
 
 func (s *Service) ListSchemaTargets(ctx context.Context, actorID uuid.UUID, limit int) ([]OrganizationSchemaTarget, error) {
@@ -156,6 +432,95 @@ func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UU
 		Diff:           diff,
 		RequestedBy:    actorID,
 	})
+}
+
+func (s *Service) CreateIndustrySolutionSchemaChange(ctx context.Context, actorID uuid.UUID, input CreateIndustrySolutionSchemaChangeInput) (*SchemaChangeRequest, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionManage); err != nil {
+		return nil, err
+	}
+	if input.OrganizationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	input.IndustryKey = strings.TrimSpace(input.IndustryKey)
+	input.PackageKey = strings.TrimSpace(input.PackageKey)
+	if input.IndustryKey == "" || input.PackageKey == "" {
+		return nil, fmt.Errorf("%w: industry_key and package_key are required", ErrValidation)
+	}
+	pkg, err := BuildIndustrySolutionTableFieldSchemaPackage(input)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		reason = "Update industry solution table and field definition"
+	}
+	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
+		OrganizationID:       input.OrganizationID,
+		RequestType:          "industry_solution_table_field_change",
+		Reason:               reason,
+		SchemaPackage:        pkg,
+		CurrentSchemaPackage: input.CurrentSchemaPackage,
+	})
+}
+
+func BuildIndustrySolutionTableFieldSchemaPackage(input CreateIndustrySolutionSchemaChangeInput) (SchemaPackage, error) {
+	table := input.Table
+	table.Name = strings.TrimSpace(table.Name)
+	table.PreviousName = strings.TrimSpace(table.PreviousName)
+	table.DisplayName = strings.TrimSpace(table.DisplayName)
+	if table.Name == "" {
+		return SchemaPackage{}, fmt.Errorf("table.name is required")
+	}
+	fields := []SchemaFieldDefinition{
+		{Name: "id", DataType: "uuid", PrimaryKey: true, Default: "gen_random_uuid()"},
+	}
+	for _, fieldInput := range table.Fields {
+		fieldInput.Name = strings.TrimSpace(fieldInput.Name)
+		fieldInput.PreviousName = strings.TrimSpace(fieldInput.PreviousName)
+		fieldInput.DataType = strings.TrimSpace(fieldInput.DataType)
+		fieldInput.Default = strings.TrimSpace(fieldInput.Default)
+		if fieldInput.Name == "" || fieldInput.DataType == "" {
+			return SchemaPackage{}, fmt.Errorf("field name and data_type are required")
+		}
+		if fieldInput.Name == "id" {
+			continue
+		}
+		fields = append(fields, SchemaFieldDefinition{
+			Name:         fieldInput.Name,
+			PreviousName: fieldInput.PreviousName,
+			DataType:     fieldInput.DataType,
+			Nullable:     fieldInput.Nullable,
+			Default:      fieldInput.Default,
+		})
+	}
+	if len(fields) == 1 {
+		return SchemaPackage{}, fmt.Errorf("at least one non-id field is required")
+	}
+	metadata := copyMap(table.Metadata)
+	if table.DisplayName != "" {
+		metadata["display_name"] = table.DisplayName
+	}
+	pkg := SchemaPackage{
+		FormatVersion: SchemaPackageFormatVersion,
+		ModuleKey:     "industry_solution",
+		Tables: []SchemaTableDefinition{
+			{
+				Name:         table.Name,
+				PreviousName: table.PreviousName,
+				Fields:       fields,
+				Metadata:     metadata,
+			},
+		},
+		Metadata: map[string]any{
+			"industry_key": input.IndustryKey,
+			"package_key":  input.PackageKey,
+			"source":       "platform_industry_solution_table_field_editor",
+		},
+	}
+	if err := ValidateSchemaPackage(pkg); err != nil {
+		return SchemaPackage{}, err
+	}
+	return pkg, nil
 }
 
 func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*SchemaChangeRequest, error) {
@@ -881,12 +1246,85 @@ func (s *Service) ApplySchemaChange(ctx context.Context, actorID uuid.UUID, requ
 }
 
 func (s *Service) requirePlatformPermission(ctx context.Context, actorID uuid.UUID, permission string) error {
-	if actorID == uuid.Nil {
+	_, permissions, err := s.permissionsForActor(ctx, actorID)
+	if err != nil || !permissions[permission] {
 		return ErrForbidden
 	}
+	return nil
+}
+
+func (s *Service) permissionsForActor(ctx context.Context, actorID uuid.UUID) (string, map[string]bool, error) {
+	if actorID == uuid.Nil {
+		return "", nil, ErrForbidden
+	}
 	role, err := s.repo.GetPlatformRole(ctx, actorID)
-	if err != nil || !platformauth.HasPermission(role, permission) {
-		return ErrForbidden
+	if err != nil {
+		return "", nil, ErrForbidden
+	}
+	normalized := platformauth.NormalizeRole(role)
+	permissions := platformauth.PermissionsForRole(normalized)
+	if dbPermissions, err := s.repo.ListPlatformRolePermissions(ctx, normalized); err == nil && len(dbPermissions) > 0 {
+		permissions = permissionsMap(dbPermissions)
+	}
+	if len(permissions) == 0 {
+		return normalized, nil, ErrForbidden
+	}
+	return normalized, permissions, nil
+}
+
+func permissionsMap(values []string) map[string]bool {
+	result := map[string]bool{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" {
+			result[trimmed] = true
+		}
+	}
+	return result
+}
+
+func normalizeStringList(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		result = append(result, trimmed)
+	}
+	return result
+}
+
+func normalizePlatformRoles(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		normalized := platformauth.NormalizeRole(value)
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		result = append(result, normalized)
+	}
+	return result
+}
+
+func generateTemporaryPassword() (string, error) {
+	buffer := make([]byte, 18)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", fmt.Errorf("generate temporary password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buffer), nil
+}
+
+func validateMetadataOnlyExtension(metadata map[string]any) error {
+	for key := range metadata {
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "script", "scripts", "sql", "command", "commands", "code", "handler", "plugin", "plugin_url", "webhook":
+			return fmt.Errorf("%w: platform feature metadata cannot contain executable key %q", ErrValidation, key)
+		}
 	}
 	return nil
 }
