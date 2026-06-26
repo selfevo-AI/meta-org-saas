@@ -7,14 +7,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type Repository struct {
-	db *pgxpool.Pool
+	db tenantdb.DB
 }
 
-func NewRepository(db *pgxpool.Pool) *Repository {
+func NewRepository(db tenantdb.DB) *Repository {
 	return &Repository{db: db}
 }
 

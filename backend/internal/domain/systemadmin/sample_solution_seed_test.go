@@ -30,6 +30,10 @@ func TestBaselineSeedsLocalManufacturingSampleIndustrySolution(t *testing.T) {
 		"database_name_prefix",
 		"sample_work_order",
 		"sample_work_order_create",
+		"('erp', 'ERP'",
+		"('inventory', 'Inventory'",
+		"('procurement', 'Procurement'",
+		"('sales', 'Sales'",
 	}
 	for _, text := range required {
 		if !strings.Contains(sql, text) {

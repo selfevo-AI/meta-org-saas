@@ -7,18 +7,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type Repository struct {
-	db *pgxpool.Pool
+	db tenantdb.DB
 }
 
 type scanner interface {
 	Scan(dest ...any) error
 }
 
-func NewRepository(db *pgxpool.Pool) *Repository {
+func NewRepository(db tenantdb.DB) *Repository {
 	return &Repository{db: db}
 }
 

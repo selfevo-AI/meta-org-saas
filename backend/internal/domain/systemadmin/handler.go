@@ -40,6 +40,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Get("/platform/admin/modules/{moduleKey}/masters", h.listPlatformMasters)
 	r.Get("/platform/admin/masters/{masterKey}/details", h.listPlatformDetails)
 	r.Get("/platform/admin/schema-targets", h.listSchemaTargets)
+	r.Post("/platform/admin/organizations/{id}/private-deployment-exports", h.createPrivateDeploymentExport)
 	r.Get("/platform/admin/organizations/{id}/schema/export", h.exportOrganizationSchema)
 	r.Post("/platform/admin/organizations/{id}/schema/import", h.createOrganizationSchemaChange)
 	r.Post("/platform/admin/organizations/{id}/schema/change-requests", h.createOrganizationSchemaChange)
@@ -255,6 +256,15 @@ func (h *Handler) exportOrganizationSchema(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := h.service.ExportOrganizationSchema(r.Context(), actorID, orgID)
 	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createPrivateDeploymentExport(w http.ResponseWriter, r *http.Request) {
+	actorID, orgID, ok := h.actorAndOrganization(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.CreatePrivateDeploymentExportJob(r.Context(), actorID, orgID)
+	writeResult(w, http.StatusCreated, result, err)
 }
 
 func (h *Handler) createOrganizationSchemaChange(w http.ResponseWriter, r *http.Request) {

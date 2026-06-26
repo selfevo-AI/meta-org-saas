@@ -8,14 +8,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type PostgresRepository struct {
-	db *pgxpool.Pool
+	db tenantdb.DB
 }
 
-func NewRepository(db *pgxpool.Pool) *PostgresRepository {
+func NewRepository(db tenantdb.DB) *PostgresRepository {
 	return &PostgresRepository{db: db}
 }
 

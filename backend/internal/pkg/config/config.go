@@ -11,6 +11,7 @@ type Config struct {
 	DatabaseURL                     string
 	PlatformDatabaseURL             string
 	TenantDatabaseAdminURL          string
+	TenantMigrationsPath            string
 	TenantDatabaseNamePrefix        string
 	TenantDatabaseMode              string
 	TenantDatabaseDefaultCluster    string
@@ -45,6 +46,7 @@ func Load() *Config {
 		DatabaseURL:                     databaseURL,
 		PlatformDatabaseURL:             platformDatabaseURL,
 		TenantDatabaseAdminURL:          getEnv("TENANT_DATABASE_ADMIN_URL", platformDatabaseURL),
+		TenantMigrationsPath:            getEnv("TENANT_MIGRATIONS_PATH", "migrations/tenant"),
 		TenantDatabaseNamePrefix:        normalizedTenantDatabasePrefix(getEnv("TENANT_DATABASE_NAME_PREFIX", "meta_org_tenant_")),
 		TenantDatabaseMode:              normalizedTenantDatabaseMode(getEnv("TENANT_DATABASE_MODE", "dedicated_database")),
 		TenantDatabaseDefaultCluster:    strings.TrimSpace(getEnv("TENANT_DATABASE_DEFAULT_CLUSTER", "local-primary")),

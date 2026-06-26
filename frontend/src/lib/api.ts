@@ -289,6 +289,13 @@ export async function listPlatformOrganizations(token: string, limit = 100): Pro
   return apiRequest<SessionOrganization[]>(`/platform/organizations${query}`, { token })
 }
 
+export async function createBusinessClosureSampleTenant(token: string): Promise<SampleTenantResponse> {
+  return apiRequest<SampleTenantResponse>('/platform/admin/sample-tenants/business-closure', {
+    method: 'POST',
+    token,
+  })
+}
+
 export async function getPlatformPermissionProfile(token: string): Promise<PlatformPermissionProfile> {
   return apiRequest<PlatformPermissionProfile>('/platform/admin/me/permissions', { token })
 }
@@ -360,6 +367,13 @@ export async function listDatabaseMaintenanceJobs(token: string, limit = 100): P
 
 export async function createDatabaseMaintenanceJob(token: string, input: CreateDatabaseMaintenanceJobInput): Promise<DatabaseMaintenanceJob> {
   return apiRequest<DatabaseMaintenanceJob>('/platform/admin/database-maintenance/jobs', { method: 'POST', token, body: input })
+}
+
+export async function createPrivateDeploymentExport(token: string, organizationID: string): Promise<DatabaseMaintenanceJob> {
+  return apiRequest<DatabaseMaintenanceJob>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/private-deployment-exports`,
+    { method: 'POST', token },
+  )
 }
 
 export async function reviewDatabaseMaintenanceJob(
@@ -1412,6 +1426,16 @@ export interface SessionOrganization {
   closed_at?: string
   closed_by?: string
   closed_reason?: string
+}
+
+export interface SampleTenantResponse {
+  organization: SessionOrganization
+  owner_user_id: string
+  owner_email: string
+  enabled_modules: string[]
+  tenant_database_status: string
+  tenant_database_name?: string
+  industry_solution_package: string
 }
 
 export interface PlatformPermissionProfile {
