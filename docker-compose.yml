@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: meta_org
+      POSTGRES_DB: meta_org_saas
     ports:
       - "5432:5432"
     volumes:
@@ -39,7 +39,10 @@ services:
       - "8080:8080"
     environment:
       SERVER_PORT: "8080"
-      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/meta_org?sslmode=disable"
+      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable"
+      PLATFORM_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable"
+      TENANT_DATABASE_ADMIN_URL: "postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable"
+      TENANT_DATABASE_NAME_PREFIX: "meta_org_"
       JWT_SECRET: "dev-secret-change-in-production"
       MODEL_SECRET_KEY: "0123456789abcdef0123456789abcdef"
       CORS_ORIGINS: "http://localhost:3000"

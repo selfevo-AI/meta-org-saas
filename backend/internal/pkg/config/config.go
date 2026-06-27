@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -39,15 +40,15 @@ func Load() *Config {
 	if mode != "saas" {
 		mode = "single_org"
 	}
-	databaseURL := getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable")
+	databaseURL := getEnv("DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable")
 	platformDatabaseURL := getEnv("PLATFORM_DATABASE_URL", databaseURL)
 	return &Config{
 		ServerPort:                      getEnvInt("SERVER_PORT", 8080),
 		DatabaseURL:                     databaseURL,
 		PlatformDatabaseURL:             platformDatabaseURL,
-		TenantDatabaseAdminURL:          getEnv("TENANT_DATABASE_ADMIN_URL", platformDatabaseURL),
+		TenantDatabaseAdminURL:          getEnv("TENANT_DATABASE_ADMIN_URL", defaultTenantDatabaseAdminURL(platformDatabaseURL)),
 		TenantMigrationsPath:            getEnv("TENANT_MIGRATIONS_PATH", "migrations/tenant"),
-		TenantDatabaseNamePrefix:        normalizedTenantDatabasePrefix(getEnv("TENANT_DATABASE_NAME_PREFIX", "meta_org_tenant_")),
+		TenantDatabaseNamePrefix:        normalizedTenantDatabasePrefix(getEnv("TENANT_DATABASE_NAME_PREFIX", "meta_org_")),
 		TenantDatabaseMode:              normalizedTenantDatabaseMode(getEnv("TENANT_DATABASE_MODE", "dedicated_database")),
 		TenantDatabaseDefaultCluster:    strings.TrimSpace(getEnv("TENANT_DATABASE_DEFAULT_CLUSTER", "local-primary")),
 		TenantDatabaseDefaultRegion:     strings.TrimSpace(getEnv("TENANT_DATABASE_DEFAULT_REGION", "local")),
@@ -79,10 +80,19 @@ func normalizedTenantDatabaseMode(value string) string {
 	}
 }
 
+func defaultTenantDatabaseAdminURL(platformDatabaseURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(platformDatabaseURL))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return platformDatabaseURL
+	}
+	parsed.Path = "/postgres"
+	return parsed.String()
+}
+
 func normalizedTenantDatabasePrefix(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
-		return "meta_org_tenant_"
+		return "meta_org_"
 	}
 	var b strings.Builder
 	lastUnderscore := false
@@ -100,7 +110,7 @@ func normalizedTenantDatabasePrefix(value string) string {
 	}
 	out := strings.Trim(b.String(), "_")
 	if out == "" {
-		return "meta_org_tenant_"
+		return "meta_org_"
 	}
 	return out + "_"
 }

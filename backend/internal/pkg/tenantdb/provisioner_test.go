@@ -12,14 +12,14 @@ import (
 func TestCreateDatabaseSQLQuotesDedicatedDatabaseName(t *testing.T) {
 	target := Target{
 		DeploymentMode: DeploymentModeDedicatedDatabase,
-		DatabaseName:   "meta_org_tenant_123",
+		DatabaseName:   "meta_org_123e",
 	}
 
 	got, err := CreateDatabaseSQL(target)
 	if err != nil {
 		t.Fatalf("CreateDatabaseSQL() error = %v", err)
 	}
-	want := `CREATE DATABASE "meta_org_tenant_123"`
+	want := `CREATE DATABASE "meta_org_123e"`
 	if got != want {
 		t.Fatalf("CreateDatabaseSQL() = %q, want %q", got, want)
 	}
@@ -56,7 +56,7 @@ func TestCreateDatabaseSQLRejectsUnsafeDatabaseName(t *testing.T) {
 func TestCreateDatabaseWithCatalogSkipsExistingDatabase(t *testing.T) {
 	catalog := &fakeDatabaseCatalog{exists: true}
 
-	creation, err := CreateDatabaseWithCatalog(context.Background(), catalog, "meta_org_tenant_123")
+	creation, err := CreateDatabaseWithCatalog(context.Background(), catalog, "meta_org_123e")
 	if err != nil {
 		t.Fatalf("CreateDatabaseWithCatalog() error = %v", err)
 	}
@@ -72,7 +72,7 @@ func TestCreateDatabaseWithCatalogSkipsExistingDatabase(t *testing.T) {
 func TestCreateDatabaseWithCatalogExecutesCreateDatabaseStatement(t *testing.T) {
 	catalog := &fakeDatabaseCatalog{}
 
-	creation, err := CreateDatabaseWithCatalog(context.Background(), catalog, "meta_org_tenant_123")
+	creation, err := CreateDatabaseWithCatalog(context.Background(), catalog, "meta_org_123e")
 	if err != nil {
 		t.Fatalf("CreateDatabaseWithCatalog() error = %v", err)
 	}
@@ -80,7 +80,7 @@ func TestCreateDatabaseWithCatalogExecutesCreateDatabaseStatement(t *testing.T) 
 	if !creation.Created {
 		t.Fatalf("Created = false, want true")
 	}
-	if creation.SQL != `CREATE DATABASE "meta_org_tenant_123"` {
+	if creation.SQL != `CREATE DATABASE "meta_org_123e"` {
 		t.Fatalf("SQL = %q", creation.SQL)
 	}
 	if len(catalog.execSQL) != 1 || catalog.execSQL[0] != creation.SQL {
@@ -90,7 +90,7 @@ func TestCreateDatabaseWithCatalogExecutesCreateDatabaseStatement(t *testing.T) 
 
 func TestProvisionerCreatesDedicatedDatabaseAndReportsProvisionedStatus(t *testing.T) {
 	orgID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
-	target := NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	target := NewDedicatedDatabaseTarget(orgID, "meta_org_", "local-primary", "local")
 	creator := &fakeDatabaseCreator{}
 	migrator := &fakeTenantMigrator{
 		result: MigrationResult{
@@ -115,7 +115,7 @@ func TestProvisionerCreatesDedicatedDatabaseAndReportsProvisionedStatus(t *testi
 	if len(creator.names) != 1 || creator.names[0] != target.DatabaseName {
 		t.Fatalf("created databases = %#v, want %q", creator.names, target.DatabaseName)
 	}
-	if migrator.url != "postgres://user:pass@localhost:5432/meta_org_tenant_123e4567e89b12d3a456426614174000?sslmode=disable" {
+	if migrator.url != "postgres://user:pass@localhost:5432/meta_org_123e?sslmode=disable" {
 		t.Fatalf("migrator URL = %q", migrator.url)
 	}
 	if result.Target.Status != TargetStatusProvisioned {
@@ -140,7 +140,7 @@ func TestProvisionerDoesNotCreateDatabaseForSharedSchemaTarget(t *testing.T) {
 		result: MigrationResult{Version: "shared-schema-compatibility"},
 	}
 	provisioner := NewProvisioner(ProvisionerConfig{
-		AdminURL: "postgres://user:pass@localhost:5432/meta_org?sslmode=disable",
+		AdminURL: "postgres://user:pass@localhost:5432/meta_org_saas?sslmode=disable",
 		Creator:  creator,
 		Migrator: migrator,
 	})
@@ -153,7 +153,7 @@ func TestProvisionerDoesNotCreateDatabaseForSharedSchemaTarget(t *testing.T) {
 	if len(creator.names) != 0 {
 		t.Fatalf("created databases = %#v, want none", creator.names)
 	}
-	if migrator.url != "postgres://user:pass@localhost:5432/meta_org?sslmode=disable" {
+	if migrator.url != "postgres://user:pass@localhost:5432/meta_org_saas?sslmode=disable" {
 		t.Fatalf("migrator URL = %q", migrator.url)
 	}
 	if result.Target.Status != TargetStatusProvisioned {
@@ -163,7 +163,7 @@ func TestProvisionerDoesNotCreateDatabaseForSharedSchemaTarget(t *testing.T) {
 
 func TestProvisionerReturnsFailedResultWhenMigrationFails(t *testing.T) {
 	orgID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
-	target := NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	target := NewDedicatedDatabaseTarget(orgID, "meta_org_", "local-primary", "local")
 	migrationErr := errors.New("migration failed")
 	provisioner := NewProvisioner(ProvisionerConfig{
 		AdminURL: "postgres://user:pass@localhost:5432/postgres?sslmode=disable",

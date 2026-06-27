@@ -14,7 +14,7 @@ func TestTenantDatabaseURLFromContextUsesProvisionedDedicatedTenant(t *testing.T
 		OrganizationID:               &orgID,
 		TenantDatabaseDeploymentMode: DeploymentModeDedicatedDatabase,
 		TenantDatabaseStatus:         TargetStatusProvisioned,
-		TenantDatabaseName:           "meta_org_tenant_123",
+		TenantDatabaseName:           "meta_org_123e",
 		TenantDatabaseClusterKey:     "local-primary",
 		TenantDatabaseRegion:         "local",
 	})
@@ -26,7 +26,7 @@ func TestTenantDatabaseURLFromContextUsesProvisionedDedicatedTenant(t *testing.T
 	if !ok {
 		t.Fatalf("TenantDatabaseURLFromContext() ok = false, want true")
 	}
-	want := "postgres://user:pass@localhost:5432/meta_org_tenant_123?sslmode=disable"
+	want := "postgres://user:pass@localhost:5432/meta_org_123e?sslmode=disable"
 	if url != want {
 		t.Fatalf("tenant URL = %q, want %q", url, want)
 	}

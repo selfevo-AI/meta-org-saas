@@ -19,6 +19,44 @@ dedicated tenant database owns its ERP, project, workflow, costing, finance,
 inventory, procurement, and sales runtime tables without cross-database foreign
 keys.
 
+## Database Naming And Provisioning Rules
+
+The SaaS split-database contract is:
+
+- The platform management database is `meta_org_saas`.
+- Physical tenant business databases are named `meta_org_xxxx`.
+- `xxxx` is the first four lowercase hexadecimal characters of the tenant
+  organization UUID after removing hyphens.
+- `TENANT_DATABASE_NAME_PREFIX` defaults to `meta_org_`.
+- `TENANT_DATABASE_ADMIN_URL` points at an administrative database such as
+  `postgres` on the target PostgreSQL instance. It must not rely on connecting
+  to the platform database before creating a tenant database.
+
+Tenant database names must be generated through the backend tenant database
+helper (`tenantdb.DatabaseNameForOrganization`) or through SQL that exactly
+matches the baseline expression:
+
+```sql
+'meta_org_' || LEFT(REPLACE(organization_id::TEXT, '-', ''), 4)
+```
+
+Fresh setup and tenant onboarding must create `meta_org_saas` first, run the
+root staged migrations there, insert the `platform.tenant_database_targets`
+catalog row, then create and migrate the physical tenant database. Do not use
+the historical single database `meta_org` as an active runtime database after
+the split; it may only be used as an explicitly named backup or migration
+source.
+
+Tenant migrations must be executed by the backend tenant migrator or another
+tool that understands `-- tenantdb:include`. Running
+`migrations/tenant/001_tenant_business_baseline.sql` directly with `psql -f`
+does not expand the include of `../001_erp_code_baseline.sql`; that creates an
+incomplete tenant database where ERP/finance tables such as
+`gl_journal_entries`, `gl_journal_entry_lines`, and `gl_accounts` are missing.
+If manual recovery is unavoidable, run the included ERP baseline explicitly and
+record the checksum that the tenant migrator calculates for the expanded tenant
+file.
+
 ## Stage Ownership
 
 `000_saas_platform_management_baseline.sql` owns the SaaS management platform:

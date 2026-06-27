@@ -7,7 +7,9 @@ without Docker.
 
 - Repository: `D:\project\meta-org-saas`
 - PostgreSQL: local service on `localhost:5432`
-- Database: `meta_org`
+- Platform database: `meta_org_saas`
+- Tenant databases: `meta_org_xxxx`, where `xxxx` is the first four lowercase
+  hexadecimal characters of the tenant organization UUID without hyphens
 - Backend: `http://127.0.0.1:8080`
 - Frontend: `http://127.0.0.1:3000`
 - Security kernel: `http://127.0.0.1:8090`
@@ -40,13 +42,32 @@ Future database changes must update the owning stage SQL and
 
 ## Reset Local Database
 
-This resets the local development database. Do not use against production.
+This resets the local development platform database. Do not use against
+production. Keep any explicitly named backup database, for example
+`meta_org_backup_20260626074450`, unless the operator deliberately chooses a
+different restore point.
 
 ```powershell
 $env:PGPASSWORD = 'postgres'
-& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "DROP DATABASE IF EXISTS meta_org WITH (FORCE);"
-& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "CREATE DATABASE meta_org;"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "DROP DATABASE IF EXISTS meta_org_saas WITH (FORCE);"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "CREATE DATABASE meta_org_saas;"
 ```
+
+Tenant databases must be created through SaaS onboarding or the backend tenant
+database provisioner so tenant migration includes are expanded. If a local reset
+requires removing old tenant databases, list them first and drop each
+`meta_org_xxxx` database explicitly:
+
+```powershell
+$env:PGPASSWORD = 'postgres'
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -tAc "SELECT datname FROM pg_database WHERE datname ~ '^meta_org_[0-9a-f]{4}$' ORDER BY datname;"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "DROP DATABASE IF EXISTS meta_org_4b28 WITH (FORCE);"
+```
+
+Do not run `migrations/tenant/001_tenant_business_baseline.sql` directly with
+`psql -f` for a fresh tenant. That file contains `-- tenantdb:include`; direct
+`psql` execution skips the included `001_erp_code_baseline.sql` and leaves
+ERP/finance tables such as `gl_journal_entries` missing.
 
 ## Start Services
 
@@ -73,7 +94,11 @@ Start-Process -FilePath 'go' `
   -RedirectStandardOutput 'D:\project\meta-org-saas\backend\backend-dev.out.log' `
   -RedirectStandardError 'D:\project\meta-org-saas\backend\backend-dev.err.log' `
   -Environment @{
-    'DATABASE_URL'='postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable'
+    'DATABASE_URL'='postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable'
+    'PLATFORM_DATABASE_URL'='postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable'
+    'TENANT_DATABASE_ADMIN_URL'='postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable'
+    'TENANT_DATABASE_NAME_PREFIX'='meta_org_'
+    'TENANT_MIGRATIONS_PATH'='../migrations/tenant'
     'MIGRATIONS_PATH'='../migrations'
     'JWT_SECRET'='dev-secret-change-in-production'
     'MODEL_SECRET_KEY'='0123456789abcdef0123456789abcdef'
@@ -81,13 +106,24 @@ Start-Process -FilePath 'go' `
     'META_ORG_DISTRIBUTION_MODE'='saas'
     'META_ORG_LICENSE_MODE'='commercial'
     'META_ORG_PLATFORM_ADMIN_EMAIL'='platform-admin@local.test'
-    'META_ORG_PLATFORM_ADMIN_PASSWORD_HASH'='$2a$10$0Opm7t.xbz9Q8watzOLv6eKsV8.boNDPDd4gdli5vi6EN224ZcO2G'
+    'META_ORG_PLATFORM_ADMIN_PASSWORD_HASH'='$2a$10$/Dou0gOhCVFNGMitu8IUu.92HzEaG6iYWGxTTVUrSA1pkFvogvj22'
     'SECURITY_KERNEL_URL'='http://127.0.0.1:8090'
-    'SECURITY_KERNEL_SHARED_SECRET'='local-dev-shared-secret'
-    'SECURITY_KERNEL_ENFORCEMENT_MODE'='audit'
-    'CORS_ORIGINS'='http://localhost:3000,http://127.0.0.1:3000'
+    'SECURITY_KERNEL_SHARED_SECRET'='dev-security-kernel-shared-secret'
+    'SECURITY_KERNEL_ENFORCEMENT_MODE'='blocking'
+    'CORS_ORIGINS'='http://localhost:3000,http://127.0.0.1:3000,http://172.16.0.2:3000'
   }
 ```
+
+When using `Start-Process -ArgumentList` instead of `-Environment`, quote the
+comma-separated CORS value inside the child command:
+
+```powershell
+Set-Item Env:CORS_ORIGINS 'http://localhost:3000,http://127.0.0.1:3000,http://172.16.0.2:3000'
+```
+
+If the value is not quoted, browser requests can fail with `Failed to fetch`
+because the backend starts without a matching `Access-Control-Allow-Origin`
+response header.
 
 Start the frontend:
 
@@ -133,9 +169,10 @@ Database checks:
 
 ```powershell
 $env:PGPASSWORD = 'postgres'
-& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org -c "SELECT filename FROM schema_migrations ORDER BY filename;"
-& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org -c "SELECT COUNT(*) AS not_valid_constraints FROM pg_constraint WHERE NOT convalidated;"
-& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org -c "SELECT u.email, u.account_status, pa.role FROM users u JOIN platform_admins pa ON pa.user_id = u.id WHERE u.email = 'platform-admin@local.test';"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT filename FROM schema_migrations ORDER BY filename;"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT COUNT(*) AS not_valid_constraints FROM pg_constraint WHERE NOT convalidated;"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT u.email, u.account_status, pa.role FROM users u JOIN platform_admins pa ON pa.user_id = u.id WHERE u.email = 'platform-admin@local.test';"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "SELECT datname FROM pg_database WHERE datname='meta_org_saas' OR datname ~ '^meta_org_[0-9a-f]{4}$' ORDER BY datname;"
 ```
 
 Expected results:
@@ -148,20 +185,64 @@ Expected results:
   `role=system_owner`.
 - Health endpoints return `{"status":"ok"}`.
 
+## 2026-06-28 Split-Database Rebuild Notes
+
+Local rebuild target:
+
+- Platform database: `meta_org_saas`
+- Tenant database rule: `meta_org_xxxx`, where `xxxx` is the first four
+  lowercase hex characters of the tenant organization UUID
+- Trusted source backup: `meta_org_backup_20260626074450`
+- Historical active database `meta_org` was removed after verification
+
+Issues found and fixes applied:
+
+- `relation platform.database_maintenance_jobs does not exist` and
+  `relation platform.tenant_database_targets does not exist`: caused by using
+  the old `meta_org` database whose migration history skipped new baseline
+  structures. Rebuilt `meta_org_saas` from current staged migrations.
+- `security_kernel_unavailable`: security kernel process/config mismatch during
+  onboarding verification. Rebuilt and restarted the kernel with shared secret
+  `dev-security-kernel-shared-secret`.
+- `distribution_mode=saas` deserialization: the security kernel must accept the
+  literal JSON value `saas`. If an older binary rejects it, rebuild the Rust
+  `security-kernel` package before retrying onboarding.
+- `owner_attestation verify: module_disabled`: owner attestation is a security
+  feature gate, not a tenant business module. The backend now sends
+  `module_key=general` with `enabled_features=["owner_attestation"]`.
+- `Failed to fetch`: backend CORS startup value was not quoted when passed
+  through PowerShell, so no `Access-Control-Allow-Origin` header was emitted.
+  Restart with a quoted `CORS_ORIGINS` value.
+- `relation gl_journal_entries does not exist`: manually created tenant
+  databases had run the tenant SQL without expanding `tenantdb:include`.
+  Recovered those tenants by applying `001_erp_code_baseline.sql` and aligning
+  `tenant_schema_migrations` to the tenant migrator checksum.
+
+Verification after the rebuild:
+
+- `go test ./...`
+- `go build ./cmd/server`
+- `cargo test -p security-kernel`
+- `npm run build`
+- `GET /api/v1/health`
+- `GET /healthz` on security kernel
+- SaaS platform admin login and `/auth/me`
+- database maintenance job list
+- new user registration plus `/onboarding/organization`, producing a physical
+  tenant database named with the `meta_org_xxxx` rule
+- `GET /finance/gl/trial-balance` against a finance-enabled tenant
+
 ## Current Verification Result
 
-Verified on 2026-06-23:
+Verified on 2026-06-28:
 
 - `go test ./...`: passed
 - `go build ./cmd/server`: passed
 - `npm run build`: passed
-- `npm run lint`: passed
-- `npm run test:erp-operations`: passed
-- `npm run test:operations`: passed
-- `npm run test:system-admin`: passed
-- `npm run test:runtime-workbench`: passed
-- `npm run test:supply-chain`: passed
+- `cargo test -p security-kernel`: passed
 - Local ports listening: `3000`, `8080`, `8090`
 - `schema_migrations`: four staged baseline files only
+- Platform database: `meta_org_saas`
+- Tenant databases verified with `meta_org_xxxx` naming
 - Cross-stage AI/ERP foreign keys rebuilt in `004`
 - Unvalidated constraints: `0`

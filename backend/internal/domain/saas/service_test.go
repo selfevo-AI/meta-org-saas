@@ -29,12 +29,18 @@ func TestCompleteOnboardingRequiresSecurityKernelAuthorization(t *testing.T) {
 	if kernel.lastRequest.Resource.ResourceType != "owner_attestation" || kernel.lastRequest.Resource.Action != "verify" {
 		t.Fatalf("security resource = %#v, want owner attestation verify", kernel.lastRequest.Resource)
 	}
+	if kernel.lastRequest.Resource.ModuleKey != "general" {
+		t.Fatalf("security module key = %q, want general for owner attestation feature gate", kernel.lastRequest.Resource.ModuleKey)
+	}
+	if !containsString(kernel.lastRequest.EnabledFeatures, "owner_attestation") {
+		t.Fatalf("enabled features = %#v, want owner_attestation", kernel.lastRequest.EnabledFeatures)
+	}
 }
 
 func TestCompleteOnboardingProvisionsTenantDatabaseTarget(t *testing.T) {
 	userID := uuid.New()
 	orgID := uuid.New()
-	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_", "local-primary", "local")
 	repo := &fakeRepository{onboardingOrgID: orgID, tenantTarget: &target}
 	provisioned := target
 	provisioned.Status = tenantdb.TargetStatusProvisioned
@@ -78,7 +84,7 @@ func TestCompleteOnboardingProvisionsTenantDatabaseTarget(t *testing.T) {
 func TestCompleteOnboardingRecordsFailedTenantDatabaseProvisioning(t *testing.T) {
 	userID := uuid.New()
 	orgID := uuid.New()
-	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_", "local-primary", "local")
 	repo := &fakeRepository{onboardingOrgID: orgID, tenantTarget: &target}
 	failed := target
 	failed.Status = tenantdb.TargetStatusFailed
@@ -108,7 +114,7 @@ func TestCompleteOnboardingRecordsFailedTenantDatabaseProvisioning(t *testing.T)
 func TestCreateBusinessClosureSampleTenantEnablesAllModulesAndBootstrapsTenantDatabase(t *testing.T) {
 	actorID := uuid.New()
 	orgID := uuid.New()
-	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	target := tenantdb.NewDedicatedDatabaseTarget(orgID, "meta_org_", "local-primary", "local")
 	provisioned := target
 	provisioned.Status = tenantdb.TargetStatusProvisioned
 	provisioned.MigrationVersion = "001_tenant_business_baseline"
@@ -278,7 +284,7 @@ func TestResolveTenantIncludesTenantDatabaseTarget(t *testing.T) {
 			DeploymentMode: tenantdb.DeploymentModeDedicatedDatabase,
 			ClusterKey:     "local-primary",
 			Region:         "local",
-			DatabaseName:   "meta_org_tenant_" + strings.ReplaceAll(orgID.String(), "-", ""),
+			DatabaseName:   "meta_org_" + strings.ReplaceAll(orgID.String(), "-", "")[:4],
 			SchemaName:     "public",
 			Status:         tenantdb.TargetStatusProvisioned,
 		},

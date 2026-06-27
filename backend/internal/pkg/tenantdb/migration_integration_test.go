@@ -25,7 +25,7 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	if adminURL == "" {
 		adminURL = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 	}
-	dbName := fmt.Sprintf("meta_org_tenant_migration_check_%d", time.Now().UnixNano())
+	dbName := fmt.Sprintf("meta_org_migration_check_%d", time.Now().UnixNano())
 
 	adminPool, err := pgxpool.New(ctx, adminURL)
 	if err != nil {
@@ -52,7 +52,7 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	}
 
 	orgID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
-	target := NewDedicatedDatabaseTarget(orgID, "meta_org_tenant_", "local-primary", "local")
+	target := NewDedicatedDatabaseTarget(orgID, "meta_org_", "local-primary", "local")
 	target.DatabaseName = dbName
 	result, err := FileTenantMigrator{MigrationsDir: repoTenantMigrationsDirForIntegration(t)}.Migrate(ctx, target, targetURL)
 	if err != nil {

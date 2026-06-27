@@ -48,8 +48,8 @@ func TestSearchPathSQLIncludesOrganizationThenPlatformAndPublic(t *testing.T) {
 func TestDatabaseNameForOrganizationUsesStablePhysicalTenantName(t *testing.T) {
 	id := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
 
-	got := DatabaseNameForOrganization("meta_org_tenant_", id)
-	want := "meta_org_tenant_123e4567e89b12d3a456426614174000"
+	got := DatabaseNameForOrganization("meta_org_", id)
+	want := "meta_org_123e"
 
 	if got != want {
 		t.Fatalf("DatabaseNameForOrganization() = %q, want %q", got, want)
@@ -60,7 +60,7 @@ func TestDatabaseNameForOrganizationNormalizesUnsafePrefix(t *testing.T) {
 	id := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
 
 	got := DatabaseNameForOrganization("Tenant DB-", id)
-	want := "tenant_db_123e4567e89b12d3a456426614174000"
+	want := "tenant_db_123e"
 
 	if got != want {
 		t.Fatalf("DatabaseNameForOrganization() = %q, want %q", got, want)
@@ -68,11 +68,11 @@ func TestDatabaseNameForOrganizationNormalizesUnsafePrefix(t *testing.T) {
 }
 
 func TestDatabaseURLForNameReplacesDatabasePath(t *testing.T) {
-	got, err := DatabaseURLForName("postgres://user:pass@localhost:5432/postgres?sslmode=disable", "meta_org_tenant_123")
+	got, err := DatabaseURLForName("postgres://user:pass@localhost:5432/postgres?sslmode=disable", "meta_org_123e")
 	if err != nil {
 		t.Fatalf("DatabaseURLForName() error = %v", err)
 	}
-	want := "postgres://user:pass@localhost:5432/meta_org_tenant_123?sslmode=disable"
+	want := "postgres://user:pass@localhost:5432/meta_org_123e?sslmode=disable"
 	if got != want {
 		t.Fatalf("DatabaseURLForName() = %q, want %q", got, want)
 	}
@@ -81,7 +81,7 @@ func TestDatabaseURLForNameReplacesDatabasePath(t *testing.T) {
 func TestNewDedicatedDatabaseTargetUsesPublicTenantSchemaAndProvisioningStatus(t *testing.T) {
 	id := uuid.MustParse("123e4567-e89b-12d3-a456-426614174000")
 
-	target := NewDedicatedDatabaseTarget(id, "meta_org_tenant_", "local-primary", "local")
+	target := NewDedicatedDatabaseTarget(id, "meta_org_", "local-primary", "local")
 
 	if target.OrganizationID != id {
 		t.Fatalf("OrganizationID = %s, want %s", target.OrganizationID, id)
@@ -89,7 +89,7 @@ func TestNewDedicatedDatabaseTargetUsesPublicTenantSchemaAndProvisioningStatus(t
 	if target.DeploymentMode != DeploymentModeDedicatedDatabase {
 		t.Fatalf("DeploymentMode = %q, want %q", target.DeploymentMode, DeploymentModeDedicatedDatabase)
 	}
-	if target.DatabaseName != "meta_org_tenant_123e4567e89b12d3a456426614174000" {
+	if target.DatabaseName != "meta_org_123e" {
 		t.Fatalf("DatabaseName = %q", target.DatabaseName)
 	}
 	if target.SchemaName != "public" {
@@ -105,7 +105,7 @@ func TestDefaultsBuildDedicatedDatabaseTarget(t *testing.T) {
 
 	target := Defaults{
 		DeploymentMode:     DeploymentModeDedicatedDatabase,
-		DatabaseNamePrefix: "meta_org_tenant_",
+		DatabaseNamePrefix: "meta_org_",
 		ClusterKey:         "cluster-a",
 		Region:             "cn-east-1",
 	}.TargetForOrganization(id)
@@ -113,7 +113,7 @@ func TestDefaultsBuildDedicatedDatabaseTarget(t *testing.T) {
 	if target.DeploymentMode != DeploymentModeDedicatedDatabase {
 		t.Fatalf("DeploymentMode = %q", target.DeploymentMode)
 	}
-	if target.DatabaseName != "meta_org_tenant_123e4567e89b12d3a456426614174000" {
+	if target.DatabaseName != "meta_org_123e" {
 		t.Fatalf("DatabaseName = %q", target.DatabaseName)
 	}
 	if target.SchemaName != "public" {
@@ -147,21 +147,21 @@ func TestDataSourceResolverBuildsDedicatedTenantDatabaseURL(t *testing.T) {
 	resolver := NewDataSourceResolver("postgres://user:pass@localhost:5432/postgres?sslmode=disable")
 	target := Target{
 		DeploymentMode: DeploymentModeDedicatedDatabase,
-		DatabaseName:   "meta_org_tenant_123",
+		DatabaseName:   "meta_org_123e",
 	}
 
 	got, err := resolver.URLForTarget(target)
 	if err != nil {
 		t.Fatalf("URLForTarget() error = %v", err)
 	}
-	want := "postgres://user:pass@localhost:5432/meta_org_tenant_123?sslmode=disable"
+	want := "postgres://user:pass@localhost:5432/meta_org_123e?sslmode=disable"
 	if got != want {
 		t.Fatalf("URLForTarget() = %q, want %q", got, want)
 	}
 }
 
 func TestDataSourceResolverUsesAdminURLForSharedSchemaCompatibilityTarget(t *testing.T) {
-	adminURL := "postgres://user:pass@localhost:5432/meta_org?sslmode=disable"
+	adminURL := "postgres://user:pass@localhost:5432/meta_org_saas?sslmode=disable"
 	resolver := NewDataSourceResolver(adminURL)
 	target := Target{DeploymentMode: DeploymentModeSharedSchema, SchemaName: "org_123"}
 

@@ -196,7 +196,7 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, inpu
 		EnabledModules:  modules,
 		EnabledFeatures: []string{"owner_attestation"},
 		Resource: securitykernel.Resource{
-			ModuleKey:             "organization",
+			ModuleKey:             "general",
 			ResourceType:          "owner_attestation",
 			Action:                "verify",
 			ScopeLevel:            "organization",

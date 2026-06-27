@@ -8,7 +8,11 @@ Backend:
 
 | Variable | Required | Notes |
 |---|---:|---|
-| `DATABASE_URL` | yes | PostgreSQL URL, for example `postgres://user:pass@host:5432/meta_org?sslmode=require`. |
+| `DATABASE_URL` | yes | PostgreSQL URL for the SaaS platform database, for example `postgres://user:pass@host:5432/meta_org_saas?sslmode=require`. |
+| `PLATFORM_DATABASE_URL` | SaaS deployments | Explicit SaaS platform control database URL. If unset, follows `DATABASE_URL`. |
+| `TENANT_DATABASE_ADMIN_URL` | dedicated tenant DB deployments | Administrative PostgreSQL URL for creating and migrating tenant databases. Point it at an admin database such as `postgres`, not at `meta_org_saas`. |
+| `TENANT_DATABASE_NAME_PREFIX` | no | Defaults to `meta_org_`; tenant databases are named `meta_org_xxxx` from the tenant organization UUID. |
+| `TENANT_MIGRATIONS_PATH` | dedicated tenant DB deployments | Usually `migrations/tenant` in containers and `../migrations/tenant` when running from `backend/`. |
 | `JWT_SECRET` | yes | Use a non-default high-entropy secret. |
 | `MODEL_SECRET_KEY` | yes | Exactly 32 characters. Used for provider and finance adapter secret encryption. |
 | `SERVER_PORT` | no | Defaults to `8080`. |
@@ -51,27 +55,54 @@ Keep both values in the deployment secret manager. Do not commit them.
 
 ## Fresh Setup
 
-1. Create an empty PostgreSQL database named `meta_org`.
-2. Set backend environment variables, including `DATABASE_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, and `MIGRATIONS_PATH`.
+1. Create an empty PostgreSQL database named `meta_org_saas`.
+2. Set backend environment variables, including `DATABASE_URL`, `PLATFORM_DATABASE_URL`, `TENANT_DATABASE_ADMIN_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, `MIGRATIONS_PATH`, and `TENANT_MIGRATIONS_PATH`.
 3. If using an external security kernel, set `SECURITY_KERNEL_URL`, `SECURITY_KERNEL_SHARED_SECRET`, and choose `SECURITY_KERNEL_ENFORCEMENT_MODE`.
 4. Start the backend. It applies the staged SQL baselines automatically in filename order: `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`.
-5. Start the frontend with `NEXT_PUBLIC_API_URL` pointing at `/api/v1`.
-6. Create the first human user through the frontend registration flow.
-7. Open Meta-Org Home and confirm overview and inbox data load.
-8. Open Meta Resource and run Sync Existing Resources once so humans, agents, external members, model channels, tools, and capabilities are indexed into the meta resource layer.
-9. Open Inventory, Procurement, and Sales if those SaaS modules are enabled for the organization, then confirm list endpoints load before running posting actions.
+5. For SaaS mode, bootstrap the platform administrator with `META_ORG_PLATFORM_ADMIN_EMAIL` and `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH`.
+6. Start the frontend with `NEXT_PUBLIC_API_URL` pointing at `/api/v1`.
+7. Create or onboard tenant organizations through SaaS onboarding. Each tenant physical database must be created by the backend tenant database provisioner and named `meta_org_xxxx`, where `xxxx` is the first four lowercase hex characters of the tenant organization UUID.
+8. Open Meta-Org Home and confirm overview and inbox data load.
+9. Open Meta Resource and run Sync Existing Resources once so humans, agents, external members, model channels, tools, and capabilities are indexed into the meta resource layer.
+10. Open Inventory, Procurement, Sales, and Finance if those SaaS modules are enabled for the organization, then confirm list endpoints load before running posting actions.
 
-## Migrating From `harness_org`
+## Database Naming Rules
+
+SaaS deployments use split databases:
+
+- Platform control database: `meta_org_saas`
+- Tenant business database: `meta_org_xxxx`
+- `xxxx`: first four lowercase hexadecimal characters of the tenant
+  organization UUID after removing hyphens
+- Backup databases must be explicitly named, for example
+  `meta_org_backup_YYYYMMDDHHMMSS`
+
+Do not restore the historical single database `meta_org` as the active runtime
+database after the split. Restore it only as an explicitly named backup or
+migration source, then migrate compatible data into a freshly migrated
+`meta_org_saas`.
+
+Tenant databases must be migrated with the backend tenant migrator. The tenant
+baseline contains `-- tenantdb:include`; direct `psql -f` execution skips the
+included ERP baseline and can leave Finance/ERP tables missing.
+
+## Migrating From `harness_org` Or `meta_org`
 
 The application does not delete or overwrite the old database. Back up first.
 
 ```bash
 pg_dump "$OLD_DATABASE_URL" > harness_org_backup.sql
-createdb meta_org
-psql "$NEW_DATABASE_URL" < harness_org_backup.sql
+createdb meta_org_saas
 ```
 
-After restore, start the new backend with `DATABASE_URL` pointing to `meta_org`. Run a smoke test before allowing users back in:
+Create `meta_org_saas` from current migrations first. Then copy only compatible
+data from the backup source into the new platform database, preserving the new
+baseline seed IDs where they intentionally changed. Create tenant databases
+through SaaS provisioning or a controlled maintenance worker.
+
+After migration, start the new backend with `DATABASE_URL` and
+`PLATFORM_DATABASE_URL` pointing to `meta_org_saas`. Run a smoke test before
+allowing users back in:
 
 ```bash
 cd backend
@@ -122,12 +153,20 @@ The current production schema baseline is staged as SaaS platform management fir
 
 If startup, Developer Tools, Meta Resource, SaaS module pages, supply-chain pages, or AI Assistant calls fail with errors such as `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `column cost_breakdown does not exist`, `relation meta_resources does not exist`, `relation demand_profiles does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`:
 
-1. Confirm `DATABASE_URL` points to the intended `meta_org` database.
+1. Confirm `DATABASE_URL` and `PLATFORM_DATABASE_URL` point to the intended `meta_org_saas` platform database.
 2. Confirm `MIGRATIONS_PATH` points to the root `migrations/` directory. When running from `backend/`, use `../migrations`.
 3. Restart the backend so the migration runner applies `000/001/002/004` in order.
 4. Re-run `cd backend && go test ./...` and `cd frontend && npm run build`.
 5. Open Developer Tools and verify Providers, Channels / Keys, Routing, Invocations, and Usage Analysis all load.
 6. Open Meta Resource, run Sync Existing Resources, and verify the summary includes at least the existing human, agent, tool, and capability counts.
+
+If SaaS management APIs fail with `relation platform.database_maintenance_jobs does not exist` or `relation platform.tenant_database_targets does not exist`, the backend is connected to an old or partially migrated platform database. Rebuild or migrate `meta_org_saas` from the current staged baseline before retrying.
+
+If tenant finance or ERP APIs fail with `relation gl_journal_entries does not exist`, inspect the selected tenant database. A tenant created by raw `psql -f migrations/tenant/001_tenant_business_baseline.sql` is incomplete because `tenantdb:include` is not expanded. Re-run the tenant migration through the backend tenant migrator, or explicitly apply the included ERP baseline during recovery and align the tenant migration checksum with the migrator output.
+
+If browser calls fail with `Failed to fetch`, verify both network reachability and CORS response headers. Windows PowerShell startup commands must quote comma-separated `CORS_ORIGINS`; otherwise the backend can start without matching `Access-Control-Allow-Origin`.
+
+If onboarding fails with `security kernel denied owner_attestation verify`, verify the security kernel process is reachable, `SECURITY_KERNEL_SHARED_SECRET` matches on both sides, the security kernel binary accepts the JSON distribution mode value `saas`, and the backend sends owner attestation as a `general` security feature gate rather than as a tenant business module entitlement.
 
 Meta Resource sync intentionally reads existing source tables without owning them. If sync fails after a schema change, check these source assumptions first:
 

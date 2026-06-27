@@ -2226,7 +2226,7 @@ WITH sample_industry_solution AS (
                         "tenant_database_template": {
                             "deployment_mode": "dedicated_database",
                             "schema_name": "public",
-                            "database_name_prefix": "meta_org_tenant_sample_"
+                            "database_name_prefix": "meta_org_"
                         },
                         "fields": [
                             {"field_name": "id", "data_type": "uuid", "primary_key": true, "default": "gen_random_uuid()"},
@@ -2285,7 +2285,7 @@ WITH sample_industry_solution AS (
             "tenant_database_template": {
                 "deployment_mode": "dedicated_database",
                 "schema_name": "public",
-                "database_name_prefix": "meta_org_tenant_sample_"
+                "database_name_prefix": "meta_org_"
             },
             "notes": "Sample tenant database and sample function definition for SaaS management planning. Physical database creation is executed by tenant database provisioning, not by this baseline migration."
         }'::jsonb
@@ -2716,7 +2716,7 @@ SELECT
     'dedicated_database',
     'local-primary',
     'local',
-    'meta_org_tenant_' || REPLACE(o.id::TEXT, '-', ''),
+    'meta_org_' || LEFT(REPLACE(o.id::TEXT, '-', ''), 4),
     'public',
     'provisioning',
     '{"source":"existing_organizations","physical_database_target":true}'::JSONB

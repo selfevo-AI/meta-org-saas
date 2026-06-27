@@ -78,7 +78,11 @@ func (d Defaults) TargetForOrganization(id uuid.UUID) Target {
 }
 
 func DatabaseNameForOrganization(prefix string, id uuid.UUID) string {
-	return normalizeDatabaseNamePrefix(prefix) + strings.ReplaceAll(id.String(), "-", "")
+	hexID := strings.ReplaceAll(strings.ToLower(id.String()), "-", "")
+	if len(hexID) > 4 {
+		hexID = hexID[:4]
+	}
+	return normalizeDatabaseNamePrefix(prefix) + hexID
 }
 
 func NewDedicatedDatabaseTarget(id uuid.UUID, prefix string, clusterKey string, region string) Target {
@@ -123,7 +127,7 @@ func DatabaseURLForName(adminURL string, databaseName string) (string, error) {
 func normalizeDatabaseNamePrefix(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
-		return "meta_org_tenant_"
+		return "meta_org_"
 	}
 	var b strings.Builder
 	lastUnderscore := false
@@ -141,7 +145,7 @@ func normalizeDatabaseNamePrefix(value string) string {
 	}
 	out := strings.Trim(b.String(), "_")
 	if out == "" {
-		return "meta_org_tenant_"
+		return "meta_org_"
 	}
 	if out[0] >= '0' && out[0] <= '9' {
 		out = "tenant_" + out

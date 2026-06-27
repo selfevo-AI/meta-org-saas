@@ -83,7 +83,7 @@ func TestLoadMonitoringAgentConfigCanEnableScheduler(t *testing.T) {
 }
 
 func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.T) {
-	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable")
+	t.Setenv("DATABASE_URL", "")
 	t.Setenv("PLATFORM_DATABASE_URL", "")
 	t.Setenv("TENANT_DATABASE_ADMIN_URL", "")
 	t.Setenv("TENANT_MIGRATIONS_PATH", "")
@@ -94,17 +94,20 @@ func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.
 
 	cfg := Load()
 
+	if cfg.DatabaseURL != "postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable" {
+		t.Fatalf("DatabaseURL = %q", cfg.DatabaseURL)
+	}
 	if cfg.PlatformDatabaseURL != cfg.DatabaseURL {
 		t.Fatalf("PlatformDatabaseURL = %q, want DatabaseURL fallback %q", cfg.PlatformDatabaseURL, cfg.DatabaseURL)
 	}
-	if cfg.TenantDatabaseAdminURL != cfg.PlatformDatabaseURL {
-		t.Fatalf("TenantDatabaseAdminURL = %q, want PlatformDatabaseURL fallback %q", cfg.TenantDatabaseAdminURL, cfg.PlatformDatabaseURL)
+	if cfg.TenantDatabaseAdminURL != "postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable" {
+		t.Fatalf("TenantDatabaseAdminURL = %q", cfg.TenantDatabaseAdminURL)
 	}
 	if cfg.TenantMigrationsPath != "migrations/tenant" {
 		t.Fatalf("TenantMigrationsPath = %q, want migrations/tenant", cfg.TenantMigrationsPath)
 	}
-	if cfg.TenantDatabaseNamePrefix != "meta_org_tenant_" {
-		t.Fatalf("TenantDatabaseNamePrefix = %q, want meta_org_tenant_", cfg.TenantDatabaseNamePrefix)
+	if cfg.TenantDatabaseNamePrefix != "meta_org_" {
+		t.Fatalf("TenantDatabaseNamePrefix = %q, want meta_org_", cfg.TenantDatabaseNamePrefix)
 	}
 	if cfg.TenantDatabaseMode != "dedicated_database" {
 		t.Fatalf("TenantDatabaseMode = %q, want dedicated_database", cfg.TenantDatabaseMode)
@@ -119,7 +122,7 @@ func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.
 
 func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/legacy?sslmode=disable")
-	t.Setenv("PLATFORM_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org_platform?sslmode=disable")
+	t.Setenv("PLATFORM_DATABASE_URL", "postgres://postgres:postgres@localhost:5432/meta_org_saas_explicit?sslmode=disable")
 	t.Setenv("TENANT_DATABASE_ADMIN_URL", "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable")
 	t.Setenv("TENANT_MIGRATIONS_PATH", "../migrations/tenant")
 	t.Setenv("TENANT_DATABASE_NAME_PREFIX", "customer_org_")
@@ -129,7 +132,7 @@ func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(
 
 	cfg := Load()
 
-	if cfg.PlatformDatabaseURL != "postgres://postgres:postgres@localhost:5432/meta_org_platform?sslmode=disable" {
+	if cfg.PlatformDatabaseURL != "postgres://postgres:postgres@localhost:5432/meta_org_saas_explicit?sslmode=disable" {
 		t.Fatalf("PlatformDatabaseURL = %q", cfg.PlatformDatabaseURL)
 	}
 	if cfg.TenantDatabaseAdminURL != "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" {

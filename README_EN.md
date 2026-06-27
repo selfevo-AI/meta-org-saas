@@ -177,6 +177,15 @@ The stage principle is SaaS management platform first, then platform-created or 
 
 The `000` baseline seeds a `local_manufacturing_demo` industry-solution sample in the SaaS management catalog. It includes a sample tenant database template, the `sample_work_orders` sample table, and `sample.work_order.create` sample function metadata. The physical sample database is still created by tenant database provisioning or a later maintenance job, not directly inside the SQL baseline transaction.
 
+## SaaS Database Naming Rules
+
+- The SaaS platform management database is `meta_org_saas`.
+- Physical tenant business databases are named `meta_org_xxxx`, where `xxxx` is the first four lowercase hexadecimal characters of the tenant organization UUID without hyphens.
+- `TENANT_DATABASE_NAME_PREFIX` defaults to `meta_org_`.
+- `TENANT_DATABASE_ADMIN_URL` should point at an administrative database on the same PostgreSQL instance, such as `postgres`, for tenant database creation and migration.
+- Tenant databases must be created by the backend tenant database provisioner or an equivalent tenant migrator. Do not create fresh tenant databases with `psql -f migrations/tenant/001_tenant_business_baseline.sql`; that file contains `tenantdb:include`, and direct execution does not expand the ERP/Finance baseline.
+- The old single database `meta_org` is no longer an active runtime database. Use it only as an explicitly named backup or migration source, then sync compatible data into a freshly migrated `meta_org_saas`.
+
 ## API Overview
 
 All API routes are mounted under `/api/v1`.
@@ -229,7 +238,7 @@ Service addresses:
 
 Default Docker environment values are defined in `docker-compose.yml`:
 
-- Database: `postgres://postgres:postgres@postgres:5432/meta_org?sslmode=disable`
+- Database: `postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable`
 - Backend port: `8080`
 - Model and finance secret encryption: `MODEL_SECRET_KEY=0123456789abcdef0123456789abcdef`
 - Frontend API URL: `http://localhost:8080/api/v1`
@@ -289,14 +298,14 @@ Use `Set-Item Env:` instead:
 Start-Process -FilePath "powershell" -ArgumentList @(
   '-NoProfile',
   '-Command',
-  'Set-Item Env:MIGRATIONS_PATH ../migrations; Set-Item Env:SERVER_PORT 8080; Set-Item Env:DATABASE_URL postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable; go run ./cmd/server'
-) -WorkingDirectory "D:\project\meta-org\backend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org\backend-dev.log" -RedirectStandardError "D:\project\meta-org\backend-dev-err.log"
+  'Set-Item Env:MIGRATIONS_PATH ../migrations; Set-Item Env:SERVER_PORT 8080; Set-Item Env:DATABASE_URL postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable; Set-Item Env:PLATFORM_DATABASE_URL postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable; Set-Item Env:TENANT_DATABASE_ADMIN_URL postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable; Set-Item Env:TENANT_DATABASE_NAME_PREFIX meta_org_; go run ./cmd/server'
+ ) -WorkingDirectory "D:\project\meta-org-saas\backend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org-saas\backend-dev.log" -RedirectStandardError "D:\project\meta-org-saas\backend-dev-err.log"
 
 Start-Process -FilePath "powershell" -ArgumentList @(
   '-NoProfile',
   '-Command',
   'Set-Item Env:NEXT_PUBLIC_API_URL http://localhost:8080/api/v1; npm run dev'
-) -WorkingDirectory "D:\project\meta-org\frontend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org\frontend-dev.log" -RedirectStandardError "D:\project\meta-org\frontend-dev-err.log"
+ ) -WorkingDirectory "D:\project\meta-org-saas\frontend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org-saas\frontend-dev.log" -RedirectStandardError "D:\project\meta-org-saas\frontend-dev-err.log"
 ```
 
 Verification:
@@ -314,7 +323,11 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health returning `{"status":"ok"}`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
 
-After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply all four staged baselines: `000/001/002/004`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. Confirm `DATABASE_URL`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so the migration runner applies `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
+After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply all four staged baselines: `000/001/002/004`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. If SaaS management endpoints fail with `relation platform.database_maintenance_jobs does not exist` or `relation platform.tenant_database_targets does not exist`, the backend is usually still connected to old `meta_org` or an incomplete platform database. Confirm `DATABASE_URL` and `PLATFORM_DATABASE_URL` point to `meta_org_saas`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so the migration runner applies `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
+
+If tenant Finance / ERP APIs fail with `relation gl_journal_entries does not exist`, inspect the current organization's `meta_org_xxxx` tenant database. A tenant database created manually with `psql -f migrations/tenant/001_tenant_business_baseline.sql` does not expand `tenantdb:include` and will miss ERP/Finance tables.
+
+If the browser reports `Failed to fetch`, first verify the API health endpoint, then check whether the backend response includes `Access-Control-Allow-Origin`. When starting the backend from Windows PowerShell, pass the comma-separated `CORS_ORIGINS` value as one quoted string.
 
 ## Configuration
 
@@ -323,10 +336,10 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | Environment Variable | Default | Description |
 |---|---|---|
 | `SERVER_PORT` | `8080` | Backend listen port. |
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | Backward-compatible PostgreSQL connection string; also used as the platform control database when `PLATFORM_DATABASE_URL` is unset. |
+| `DATABASE_URL` | `postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable` | Backward-compatible PostgreSQL connection string; also used as the platform control database when `PLATFORM_DATABASE_URL` is unset. |
 | `PLATFORM_DATABASE_URL` | Follows `DATABASE_URL` | SaaS platform control database connection string for platform administration, tenant organizations, capability packages, marketplace catalog, and tenant database routing metadata. |
-| `TENANT_DATABASE_ADMIN_URL` | Follows `PLATFORM_DATABASE_URL` | Administrative connection string for physical tenant business database creation and maintenance; locally it can point to the same PostgreSQL instance. SaaS onboarding uses it to try creating tenant databases in `dedicated_database` mode. |
-| `TENANT_DATABASE_NAME_PREFIX` | `meta_org_tenant_` | Prefix used when deriving physical tenant business database names from tenant organization IDs. |
+| `TENANT_DATABASE_ADMIN_URL` | `postgres` database on the same instance as `DATABASE_URL` | Administrative connection string for physical tenant business database creation and maintenance. SaaS onboarding uses it to try creating tenant databases in `dedicated_database` mode. |
+| `TENANT_DATABASE_NAME_PREFIX` | `meta_org_` | Prefix used when deriving physical tenant business database names from tenant organization IDs; physical tenant databases use `meta_org_` plus the first 4 lowercase hex characters of the tenant organization UUID. |
 | `TENANT_DATABASE_MODE` | `dedicated_database` | Tenant database target mode; `dedicated_database` records one physical database per tenant, `shared_schema` preserves the compatibility single-database schema mode. |
 | `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | Default tenant database cluster key recorded in the platform catalog. |
 | `TENANT_DATABASE_DEFAULT_REGION` | `local` | Default tenant database region recorded in the platform catalog. |
@@ -377,7 +390,7 @@ docs/operations/              Production operations and finance adapter protocol
 
 The codebase now provides a single-enterprise Meta-Org entry, Meta Resource / PDCA resource framework, organization management, project lifecycle, AI Gateway, tool runtime loop, cost accounting, generic finance, SaaS module gating, security-kernel integration, inventory/procurement/sales supply-chain workflows, governance, evolution, observability, and verification foundation. It is suitable as a production v1 base for 10-50 humans and 50-250+ agents.
 
-When upgrading from the old `harness_org` database to `meta_org`, explicitly back up and migrate data first. The system does not automatically delete or overwrite the old database.
+When upgrading from the old `harness_org` or `meta_org` database to `meta_org_saas`, explicitly back up and migrate data first. The system does not automatically delete or overwrite the old database.
 
 Important next steps:
 

@@ -34,11 +34,14 @@ impl fmt::Display for SecurityError {
 impl Error for SecurityError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
 pub enum DistributionMode {
+    #[serde(rename = "saas")]
     SaaS,
+    #[serde(rename = "saas_org_private")]
     SaaSOrgPrivate,
+    #[serde(rename = "single_org_commercial")]
     SingleOrgCommercial,
+    #[serde(rename = "private_deployment")]
     PrivateDeployment,
 }
 
@@ -357,4 +360,40 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         diff |= a ^ b;
     }
     diff == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authorization_request_accepts_saas_distribution_mode() {
+        let input = r#"{
+            "actor": {
+                "actor_id": "123e4567-e89b-12d3-a456-426614174000",
+                "actor_type": "human",
+                "authority_tier": "organization_creator",
+                "is_platform_admin": false
+            },
+            "organization_id": null,
+            "distribution_mode": "saas",
+            "license_mode": "commercial",
+            "enabled_modules": [],
+            "enabled_features": ["owner_attestation"],
+            "resource": {
+                "module_key": "general",
+                "resource_type": "owner_attestation",
+                "action": "verify",
+                "scope_level": "deployment",
+                "organization_id": null,
+                "required_authority_tier": "organization_creator",
+                "required_license_mode": "community"
+            }
+        }"#;
+
+        let request: AuthorizationRequest =
+            serde_json::from_str(input).expect("deserialize saas authorization request");
+
+        assert_eq!(request.distribution_mode, DistributionMode::SaaS);
+    }
 }

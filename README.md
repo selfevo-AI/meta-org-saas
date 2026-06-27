@@ -177,6 +177,15 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 
 `000` baseline 会在 SaaS 管理平台目录中写入 `local_manufacturing_demo` 行业解决方案样例，包含样例租户库模板、`sample_work_orders` 样例表和 `sample.work_order.create` 样例功能元数据。物理样例库仍由租户数据库 provisioning 或后续维护任务创建，不在 SQL baseline 事务中直接创建。
 
+## SaaS 分库命名规则
+
+- SaaS 管理平台库固定为 `meta_org_saas`。
+- 租户物理业务库固定为 `meta_org_xxxx`，其中 `xxxx` 是租户组织 UUID 去掉连字符后的前 4 位小写 hex。
+- `TENANT_DATABASE_NAME_PREFIX` 默认值为 `meta_org_`。
+- `TENANT_DATABASE_ADMIN_URL` 应指向同一 PostgreSQL 实例上的管理库，例如 `postgres`，用于创建和迁移租户库。
+- 租户库必须通过后端 tenant database provisioner 或等价的 tenant migrator 创建；不要直接用 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 创建新租户库，因为该文件包含 `tenantdb:include`，直接执行不会展开 ERP/Finance 基线。
+- 旧单库 `meta_org` 不再作为活动运行库；如需迁移，只能作为明确命名的备份或迁移源，再同步到新建并迁移完成的 `meta_org_saas`。
+
 ## API 概览
 
 所有 API 默认挂载在 `/api/v1` 下。
@@ -229,7 +238,7 @@ docker compose up --build
 
 默认 Docker 环境变量见 `docker-compose.yml`：
 
-- 数据库：`postgres://postgres:postgres@postgres:5432/meta_org?sslmode=disable`
+- 数据库：`postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable`
 - 后端端口：`8080`
 - 模型与财务密钥加密：`MODEL_SECRET_KEY=0123456789abcdef0123456789abcdef`
 - 前端 API 地址：`http://localhost:8080/api/v1`
@@ -289,14 +298,14 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8080/api/v1
 Start-Process -FilePath "powershell" -ArgumentList @(
   '-NoProfile',
   '-Command',
-  'Set-Item Env:MIGRATIONS_PATH ../migrations; Set-Item Env:SERVER_PORT 8080; Set-Item Env:DATABASE_URL postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable; go run ./cmd/server'
-) -WorkingDirectory "D:\project\meta-org\backend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org\backend-dev.log" -RedirectStandardError "D:\project\meta-org\backend-dev-err.log"
+  'Set-Item Env:MIGRATIONS_PATH ../migrations; Set-Item Env:SERVER_PORT 8080; Set-Item Env:DATABASE_URL postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable; Set-Item Env:PLATFORM_DATABASE_URL postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable; Set-Item Env:TENANT_DATABASE_ADMIN_URL postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable; Set-Item Env:TENANT_DATABASE_NAME_PREFIX meta_org_; go run ./cmd/server'
+ ) -WorkingDirectory "D:\project\meta-org-saas\backend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org-saas\backend-dev.log" -RedirectStandardError "D:\project\meta-org-saas\backend-dev-err.log"
 
 Start-Process -FilePath "powershell" -ArgumentList @(
   '-NoProfile',
   '-Command',
   'Set-Item Env:NEXT_PUBLIC_API_URL http://localhost:8080/api/v1; npm run dev'
-) -WorkingDirectory "D:\project\meta-org\frontend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org\frontend-dev.log" -RedirectStandardError "D:\project\meta-org\frontend-dev-err.log"
+ ) -WorkingDirectory "D:\project\meta-org-saas\frontend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org-saas\frontend-dev.log" -RedirectStandardError "D:\project\meta-org-saas\frontend-dev-err.log"
 ```
 
 验证方式：
@@ -314,12 +323,16 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 返回 `{"status":"ok"}`。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
 
-AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必须确认四个阶段基线 `000/001/002/004` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或供应链页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`、`relation inventory_items does not exist` 等错误，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。处理顺序：
+AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必须确认四个阶段基线 `000/001/002/004` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或供应链页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`、`relation inventory_items does not exist` 等错误，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。若出现 `relation platform.database_maintenance_jobs does not exist` 或 `relation platform.tenant_database_targets does not exist`，通常是后端仍连接旧 `meta_org` 或不完整的平台库。处理顺序：
 
-1. 确认 `DATABASE_URL` 指向当前 `meta_org` 数据库。
+1. 确认 `DATABASE_URL` 和 `PLATFORM_DATABASE_URL` 指向当前 `meta_org_saas` 平台管理库。
 2. 确认从 `backend/` 本地运行时使用 `MIGRATIONS_PATH=../migrations`。
 3. 重启后端，让迁移器执行 `000_saas_platform_management_baseline.sql`、`001_erp_code_baseline.sql`、`002_erp_platform_integration_baseline.sql` 和 `004_ai_capability_baseline.sql`。
 4. 再打开模型设置，检查 Channels / Keys、Routing、Usage Analysis 页面是否能加载。
+
+如果租户侧 Finance / ERP 接口出现 `relation gl_journal_entries does not exist`，检查当前组织对应的 `meta_org_xxxx` 租户库是否由 tenant migrator 创建。手工 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 不会展开 `tenantdb:include`，会导致 ERP/Finance 表缺失。
+
+如果浏览器显示 `Failed to fetch`，先验证 API 健康接口，再检查后端响应是否包含 `Access-Control-Allow-Origin`。Windows PowerShell 启动后端时，逗号分隔的 `CORS_ORIGINS` 必须作为一个字符串传入。
 5. 打开 Meta Resource 工作区，先执行一次“同步现有资源”，确认 human、agent、external_human、model_channel、tool、capability 资源能进入统一资源视图。
 
 ## 配置
@@ -329,10 +342,10 @@ AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必�
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `SERVER_PORT` | `8080` | 后端监听端口。 |
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable` | 兼容旧入口的 PostgreSQL 连接串；未设置 `PLATFORM_DATABASE_URL` 时也作为平台控制库连接串。 |
+| `DATABASE_URL` | `postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable` | 兼容旧入口的 PostgreSQL 连接串；未设置 `PLATFORM_DATABASE_URL` 时也作为平台控制库连接串。 |
 | `PLATFORM_DATABASE_URL` | 跟随 `DATABASE_URL` | SaaS 平台控制库连接串，保存平台管理、租户组织、能力包、市场和租户数据库目录。 |
-| `TENANT_DATABASE_ADMIN_URL` | 跟随 `PLATFORM_DATABASE_URL` | 租户物理业务库创建/维护的管理连接串，本地可指向同一个 PostgreSQL 实例的管理库；SaaS onboarding 在 `dedicated_database` 模式下会用它尝试创建租户库。 |
-| `TENANT_DATABASE_NAME_PREFIX` | `meta_org_tenant_` | 按租户组织生成物理业务库名的前缀。 |
+| `TENANT_DATABASE_ADMIN_URL` | `DATABASE_URL` 同实例的 `postgres` 库 | 租户物理业务库创建/维护的管理连接串；SaaS onboarding 在 `dedicated_database` 模式下会用它尝试创建租户库。 |
+| `TENANT_DATABASE_NAME_PREFIX` | `meta_org_` | 按租户组织生成物理业务库名的前缀；物理租户库名为 `meta_org_` 加租户组织 UUID 前 4 位小写 hex。 |
 | `TENANT_DATABASE_MODE` | `dedicated_database` | 租户数据库目标模式；`dedicated_database` 为每租户物理库，`shared_schema` 为兼容的单库多 schema。 |
 | `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | 平台目录中默认租户数据库集群 key。 |
 | `TENANT_DATABASE_DEFAULT_REGION` | `local` | 平台目录中默认租户数据库区域。 |
@@ -383,7 +396,7 @@ docker-compose.yml            本地完整环境编排
 
 当前代码已经具备单企业 Meta-Org 入口、Meta Resource / PDCA 资源框架、组织管理、项目生命周期、AI Gateway、工具运行闭环、成本核算、通用财务、SaaS 模块门控、安全内核、库存/采购/销售供应链、治理、演化、观测和验证骨架，适合作为 10-50 人团队与 50-250+ Agent 的生产 v1 基础。
 
-从旧 `harness_org` 数据库升级到 `meta_org` 时，必须先显式备份并迁移数据；系统不会自动删除或覆盖旧库。
+从旧 `harness_org` 或 `meta_org` 数据库升级到 `meta_org_saas` 时，必须先显式备份并迁移数据；系统不会自动删除或覆盖旧库。
 
 需要继续增强的方向：
 
