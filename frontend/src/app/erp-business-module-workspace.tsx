@@ -18,6 +18,12 @@ import {
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import type { ApiOperation } from '@/lib/operations'
+import {
+  defaultWorkbenchFields,
+  defaultWorkbenchLineFields,
+  type DocumentWorkbenchDefinition,
+} from '@/lib/workbench'
+import { DocumentWorkbench } from './document-workbench'
 
 type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance'
 
@@ -169,9 +175,85 @@ function trialBalanceRecords(balance: FinanceGLTrialBalance): ERPBusinessRecord[
   }))
 }
 
+export function buildERPDocumentWorkbenchDefinition(
+  document: DocumentConfig,
+  module: ERPBusinessModule,
+  operations: ApiOperation[],
+): DocumentWorkbenchDefinition {
+  const documentOperations = operations.filter((operation) => {
+    const workspace = recordMap(operation.metadata?.workspace)
+    return textValue(workspace.module) === module && textValue(workspace.table_code) === document.tableCode
+  })
+  const actionOperations = (document.actions ?? []).map((action) => {
+    const operation = documentOperations.find((item) => textValue(recordMap(item.metadata?.workspace).action) === action)
+    return {
+      id: action,
+      labelKey: `erp.action.${action}`,
+      operation,
+      dangerLevel: operation?.dangerLevel,
+      disabledReasonKey: operation ? undefined : 'workbench.api.operationMissing',
+    }
+  })
+
+  return {
+    id: `${module}.${document.id}`,
+    moduleKey: `erp.module.${module}`,
+    titleKey: document.labelKey,
+    tableName: document.tableCode,
+    primaryKey: document.primaryKey,
+    headerFields: defaultWorkbenchFields(document.tableCode, document.primaryKey),
+    detailTables: document.childCode
+      ? [
+          {
+            tableName: document.childCode,
+            labelKey: 'workbench.detail',
+            parentKey: document.primaryKey,
+            lineKey: 'LineNum',
+            fields: defaultWorkbenchLineFields(document.childCode),
+            allowCreate: document.kind !== 'report',
+            allowDelete: document.kind !== 'report',
+          },
+        ]
+      : [],
+    actions: actionOperations,
+    links: [
+      { id: 'module', labelKey: 'workbench.link.module', href: `#module-${module}`, kind: 'module' },
+      { id: 'table', labelKey: 'workbench.link.masterTable', href: `#table-${document.tableCode}`, kind: 'table' },
+      ...(document.childCode ? [{ id: 'child', labelKey: 'workbench.link.detailTable', href: `#table-${document.childCode}`, kind: 'table' as const }] : []),
+      ...documentOperations.map((operation) => ({
+        id: operation.id,
+        labelKey: operation.title,
+        href: `#operation-${operation.id}`,
+        kind: 'operation' as const,
+      })),
+    ],
+    fieldPermissions: [
+      {
+        table_name: document.tableCode,
+        field_name: document.primaryKey,
+        action: 'delete',
+        behavior: 'deny',
+        reason: 'strong business primary key',
+        priority: 1000,
+        status: 'active',
+      },
+      {
+        table_name: document.tableCode,
+        field_name: 'DocStatus',
+        action: 'write',
+        behavior: 'readonly',
+        reason: 'status is changed through approved actions',
+        priority: 900,
+        status: 'active',
+      },
+    ],
+  }
+}
+
 export function ERPBusinessModuleWorkspace({ token, module, externalSelection }: ERPBusinessModuleWorkspaceProps) {
   const { t } = useI18n()
   const fallbackDocuments = moduleDocuments[module]
+  const [runtimeOperations, setRuntimeOperations] = useState<ApiOperation[]>([])
   const [runtimeDocuments, setRuntimeDocuments] = useState<DocumentConfig[]>([])
   const documents = useMemo(() => mergeDocumentConfigs(fallbackDocuments, runtimeDocuments), [fallbackDocuments, runtimeDocuments])
   const [activeID, setActiveID] = useState(documents[0]?.id ?? '')
@@ -201,15 +283,25 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
     () => buildBusinessTimeline(selectedRecord, childRows, currentActionResult, assistantProposals, actionExecutions),
     [actionExecutions, assistantProposals, childRows, currentActionResult, selectedRecord],
   )
+  const workbenchDefinition = useMemo(
+    () => (activeDocument ? buildERPDocumentWorkbenchDefinition(activeDocument, module, runtimeOperations) : null),
+    [activeDocument, module, runtimeOperations],
+  )
 
   useEffect(() => {
     let cancelled = false
     listRuntimeOperations(token)
       .then((operations) => {
-        if (!cancelled) setRuntimeDocuments(deriveRuntimeDocuments(operations, module))
+        if (!cancelled) {
+          setRuntimeOperations(operations)
+          setRuntimeDocuments(deriveRuntimeDocuments(operations, module))
+        }
       })
       .catch(() => {
-        if (!cancelled) setRuntimeDocuments([])
+        if (!cancelled) {
+          setRuntimeOperations([])
+          setRuntimeDocuments([])
+        }
       })
     return () => {
       cancelled = true
@@ -437,7 +529,21 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       </div>
 
       {activeDocument && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-4">
+          {workbenchDefinition && (
+            <DocumentWorkbench
+              token={token}
+              definition={workbenchDefinition}
+              records={records}
+              childRows={childRows}
+              selectedKey={selectedKey}
+              onSelectRecord={setSelectedKey}
+              onRefresh={() => void loadRecords(activeDocument)}
+              busy={busy}
+            />
+          )}
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <section className="rounded-lg border border-slate-200 bg-white">
             <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
               <div>
@@ -570,6 +676,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
               </p>
             )}
           </aside>
+          </div>
         </div>
       )}
     </section>

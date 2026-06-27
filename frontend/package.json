@@ -12,6 +12,7 @@
     "test:operations": "node verify-operations-i18n.mjs",
     "test:system-admin": "node verify-system-admin-workspace.mjs",
     "test:runtime-workbench": "node verify-runtime-workbench.mjs",
+    "test:unified-workbench": "node verify-unified-workbench.mjs",
     "test:supply-chain": "node verify-supply-chain-workspace.mjs"
   },
   "dependencies": {

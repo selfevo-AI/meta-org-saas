@@ -1218,6 +1218,13 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </p>
       )}
 
+      <PlatformGovernanceMap
+        organizationName={selectedOrganization?.name}
+        target={selectedTarget}
+        permissionsEnabled={Object.values(platformPermissions?.permissions ?? {}).filter(Boolean).length}
+        onOpen={setActiveTab}
+      />
+
       {effectiveActiveTab === 'assistant' && (
         <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
           <ContextHealthPanel health={contextHealth} />
@@ -2742,6 +2749,58 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </div>
       )}
     </div>
+  )
+}
+
+function PlatformGovernanceMap({
+  organizationName,
+  target,
+  permissionsEnabled,
+  onOpen,
+}: {
+  organizationName?: string
+  target: OrganizationSchemaTarget | null
+  permissionsEnabled: number
+  onOpen: (tab: TabID) => void
+}) {
+  const { t } = useI18n()
+  const items: Array<{ key: string; label: string; detail: string; tab: TabID; icon: typeof Database }> = [
+    { key: 'tenant', label: 'systemAdmin.saasOrganizations', detail: organizationName || t('common.notSelected'), tab: 'saas', icon: Users },
+    { key: 'database', label: 'systemAdmin.schemaTargets', detail: target?.schema_name || t('common.notSelected'), tab: 'targets', icon: Database },
+    { key: 'permissions', label: 'systemAdmin.permissions', detail: String(permissionsEnabled), tab: 'permissions', icon: ShieldCheck },
+    { key: 'runtime', label: 'systemAdmin.apiWorkbench', detail: t('workbench.api.embedded'), tab: 'runtime', icon: Braces },
+    { key: 'schema', label: 'systemAdmin.schemaPackage', detail: t('systemAdmin.erpAsset.ui_workspaces'), tab: 'schema', icon: FileJson },
+  ]
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.unifiedWorkbench')}</h2>
+          <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.unifiedWorkbenchSummary')}</p>
+        </div>
+        <StatusBadge label="active" />
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        {items.map((item) => {
+          const Icon = item.icon
+          return (
+            <button
+              key={item.key}
+              type="button"
+              onClick={() => onOpen(item.tab)}
+              className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-[#AD4714] hover:bg-[#fff8f3]"
+            >
+              <div className="flex items-center gap-2">
+                <Icon className="h-4 w-4 text-slate-500" />
+                <span className="truncate text-sm font-semibold text-slate-900">{t(item.label)}</span>
+              </div>
+              <p className="mt-2 truncate text-xs text-slate-500">{item.detail}</p>
+            </button>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
