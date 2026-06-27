@@ -134,7 +134,8 @@ export function DocumentWorkbench({
                         {!capability.writable && <LockKeyhole className="h-3 w-3 text-slate-400" />}
                       </span>
                       <input
-                        value={capability.masked ? '***' : displayValue(selectedRecord?.[field.name])}
+                        key={`${selectedKey ?? ''}.${field.tableName}.${field.name}`}
+                        defaultValue={capability.masked ? '***' : displayValue(selectedRecord?.[field.name])}
                         readOnly={!capability.writable}
                         className={`mt-1 h-9 w-full rounded-md border px-3 text-sm outline-none ${
                           capability.writable

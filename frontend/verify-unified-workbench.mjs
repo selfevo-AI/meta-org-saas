@@ -25,6 +25,7 @@ const checks = [
   ['document component', sources.component, 'export function DocumentWorkbench'],
   ['embedded operation drawer', sources.component, 'OperationRunnerDrawer'],
   ['field capability rendering', sources.component, 'resolveFieldCapability'],
+  ['editable field defaults', sources.component, 'defaultValue={capability.masked'],
   ['tenant ERP integration', sources.erp, 'buildERPDocumentWorkbenchDefinition'],
   ['tenant ERP render', sources.erp, '<DocumentWorkbench'],
   ['platform console integration', sources.systemAdmin, 'PlatformGovernanceMap'],
