@@ -114,6 +114,45 @@ func TestHandlerCreatesRecordByTableCode(t *testing.T) {
 	}
 }
 
+func TestHandlerUpdatesChildRecord(t *testing.T) {
+	repo := &fakeRepository{}
+	router := chi.NewRouter()
+	NewHandler(NewService(repo, DefaultCatalog())).RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodPatch, "/erp/MPOR/1001/POR1/1", strings.NewReader(`{"data":{"Payload":{"ItemCode":"I-1001","Quantity":3}}}`))
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("PATCH /erp/MPOR/1001/POR1/1 status = %d, want 200: %s", resp.Code, resp.Body.String())
+	}
+	if repo.updatedChild.Key != "1" || repo.updatedChild.ParentKey != "1001" || repo.updatedChild.TableCode != "POR1" {
+		t.Fatalf("updated child = %#v, want POR1 line 1 under MPOR/1001", repo.updatedChild)
+	}
+	if !strings.Contains(resp.Body.String(), `"table_code":"POR1"`) {
+		t.Fatalf("PATCH child body = %s, want POR1 record", resp.Body.String())
+	}
+}
+
+func TestHandlerDeletesChildRecord(t *testing.T) {
+	repo := &fakeRepository{}
+	router := chi.NewRouter()
+	NewHandler(NewService(repo, DefaultCatalog())).RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodDelete, "/erp/MPOR/1001/POR1/1", nil)
+	resp := httptest.NewRecorder()
+
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("DELETE /erp/MPOR/1001/POR1/1 status = %d, want 204: %s", resp.Code, resp.Body.String())
+	}
+	if repo.deletedChildTable != "POR1" || repo.deletedChildParentKey != "1001" || repo.deletedChildKey != "1" {
+		t.Fatalf("deleted child = %s/%s/%s, want POR1/1001/1", repo.deletedChildTable, repo.deletedChildParentKey, repo.deletedChildKey)
+	}
+}
+
 func TestHandlerRejectsUnknownTable(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(NewService(&fakeRepository{}, DefaultCatalog())).RegisterRoutes(router)

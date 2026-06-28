@@ -1,7 +1,7 @@
 'use client'
 
-import { Braces, ExternalLink, FileText, LockKeyhole, RefreshCw, Rows3, ShieldCheck, Table2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Braces, ExternalLink, FileText, LockKeyhole, Plus, RefreshCw, Rows3, Save, ShieldCheck, Table2, Trash2 } from 'lucide-react'
+import { type FormEvent, useMemo, useState } from 'react'
 
 import { useI18n } from '@/lib/i18n'
 import { resolveFieldCapability, type DocumentWorkbenchDefinition } from '@/lib/workbench'
@@ -18,6 +18,12 @@ interface DocumentWorkbenchProps {
   selectedKey?: string
   onSelectRecord?: (key: string) => void
   onRefresh?: () => void
+  onCreateHeader?: (key: string, data: Record<string, unknown>) => void | Promise<void>
+  onUpdateHeader?: (key: string, data: Record<string, unknown>) => void | Promise<void>
+  onDeleteHeader?: (key: string) => void | Promise<void>
+  onCreateLine?: (lineKey: string, data: Record<string, unknown>) => void | Promise<void>
+  onUpdateLine?: (lineKey: string, data: Record<string, unknown>) => void | Promise<void>
+  onDeleteLine?: (lineKey: string) => void | Promise<void>
   busy?: boolean
 }
 
@@ -29,10 +35,17 @@ export function DocumentWorkbench({
   selectedKey,
   onSelectRecord,
   onRefresh,
+  onCreateHeader,
+  onUpdateHeader,
+  onDeleteHeader,
+  onCreateLine,
+  onUpdateLine,
+  onDeleteLine,
   busy = false,
 }: DocumentWorkbenchProps) {
   const { t } = useI18n()
   const [operation, setOperation] = useState<ApiOperation | null>(null)
+  const [selectedLineKey, setSelectedLineKey] = useState('')
   const selectedRecord = records.find((record) => recordKey(record, definition.primaryKey) === selectedKey) ?? records[0]
   const visibleHeaderFields = useMemo(
     () => definition.headerFields.filter((field) => resolveFieldCapability(field, definition.fieldPermissions).readable),
@@ -43,6 +56,33 @@ export function DocumentWorkbench({
     () => activeDetail?.fields.filter((field) => resolveFieldCapability(field, definition.fieldPermissions).readable) ?? [],
     [activeDetail, definition.fieldPermissions],
   )
+  const selectedLine = childRows.find((row) => recordKey(row, activeDetail?.lineKey ?? 'LineNum') === selectedLineKey) ?? childRows[0]
+  const effectiveLineKey = selectedLine ? recordKey(selectedLine, activeDetail?.lineKey ?? 'LineNum') : ''
+
+  function handleHeaderSubmit(event: FormEvent<HTMLFormElement>, mode: 'create' | 'update') {
+    event.preventDefault()
+    const data = formValues(event.currentTarget)
+    const key = textValue(data[definition.primaryKey]) || selectedKey || textValue(data.key)
+    if (!key) return
+    if (mode === 'create') {
+      void onCreateHeader?.(key, data)
+    } else {
+      void onUpdateHeader?.(key, data)
+    }
+  }
+
+  function handleLineSubmit(event: FormEvent<HTMLFormElement>, mode: 'create' | 'update') {
+    event.preventDefault()
+    if (!activeDetail) return
+    const data = formValues(event.currentTarget)
+    const lineKey = textValue(data[activeDetail.lineKey]) || effectiveLineKey
+    if (!lineKey) return
+    if (mode === 'create') {
+      void onCreateLine?.(lineKey, data)
+    } else {
+      void onUpdateLine?.(lineKey, data)
+    }
+  }
 
   return (
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -119,7 +159,7 @@ export function DocumentWorkbench({
           </div>
 
           <div className="grid min-h-[300px] border-b border-slate-200 lg:grid-cols-[minmax(0,1fr)_220px]">
-            <div className="p-4">
+            <form className="p-4" onSubmit={(event) => handleHeaderSubmit(event, 'update')}>
               <div className="mb-3 flex items-center gap-2">
                 <Table2 className="h-4 w-4 text-slate-500" />
                 <h4 className="text-sm font-semibold text-slate-950">{t('workbench.header')}</h4>
@@ -135,8 +175,10 @@ export function DocumentWorkbench({
                       </span>
                       <input
                         key={`${selectedKey ?? ''}.${field.tableName}.${field.name}`}
+                        name={field.name}
                         defaultValue={capability.masked ? '***' : displayValue(selectedRecord?.[field.name])}
                         readOnly={!capability.writable}
+                        disabled={!capability.writable && !field.primary}
                         className={`mt-1 h-9 w-full rounded-md border px-3 text-sm outline-none ${
                           capability.writable
                             ? 'border-slate-300 bg-white text-slate-900 focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20'
@@ -147,7 +189,41 @@ export function DocumentWorkbench({
                   )
                 })}
               </div>
-            </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    const form = event.currentTarget.form
+                    if (!form) return
+                    const data = formValues(form)
+                    const key = textValue(data[definition.primaryKey]) || textValue(data.key)
+                    if (key) void onCreateHeader?.(key, data)
+                  }}
+                  disabled={busy || !onCreateHeader}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <Plus className="h-4 w-4" />
+                  {t('workbench.header.create')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy || !selectedKey || !onUpdateHeader}
+                  className="inline-flex h-9 items-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-white hover:bg-[#B84F18] disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  {t('workbench.header.save')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedKey && void onDeleteHeader?.(selectedKey)}
+                  disabled={busy || !selectedKey || !onDeleteHeader}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-red-200 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {t('workbench.header.delete')}
+                </button>
+              </div>
+            </form>
             <div className="border-t border-slate-200 bg-slate-50 p-4 lg:border-l lg:border-t-0">
               <h4 className="text-sm font-semibold text-slate-950">{t('workbench.links')}</h4>
               <div className="mt-3 space-y-2">
@@ -173,12 +249,6 @@ export function DocumentWorkbench({
               </div>
               <div className="flex gap-2">
                 <button type="button" className="h-8 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700">
-                  {t('workbench.line.add')}
-                </button>
-                <button type="button" className="h-8 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700">
-                  {t('workbench.line.delete')}
-                </button>
-                <button type="button" className="h-8 rounded-md border border-slate-300 px-3 text-xs font-semibold text-slate-700">
                   {t('workbench.line.batch')}
                 </button>
               </div>
@@ -197,7 +267,11 @@ export function DocumentWorkbench({
                 <tbody>
                   {childRows.length > 0 ? (
                     childRows.map((row, index) => (
-                      <tr key={recordKey(row, activeDetail?.lineKey ?? String(index)) || index} className="border-t border-slate-100">
+                      <tr
+                        key={recordKey(row, activeDetail?.lineKey ?? String(index)) || index}
+                        onClick={() => setSelectedLineKey(recordKey(row, activeDetail?.lineKey ?? 'LineNum'))}
+                        className={`cursor-pointer border-t border-slate-100 ${effectiveLineKey === recordKey(row, activeDetail?.lineKey ?? 'LineNum') ? 'bg-[#fff8f3]' : ''}`}
+                      >
                         {visibleDetailFields.map((field) => {
                           const capability = resolveFieldCapability(field, definition.fieldPermissions)
                           return (
@@ -218,6 +292,66 @@ export function DocumentWorkbench({
                 </tbody>
               </table>
             </div>
+            {activeDetail && (
+              <form
+                key={`${selectedKey ?? ''}.${effectiveLineKey}`}
+                className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3"
+                onSubmit={(event) => handleLineSubmit(event, 'update')}
+              >
+                <p className="text-xs font-semibold text-slate-500">{t('workbench.line.selectHint')}</p>
+                <div className="mt-3 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                  {visibleDetailFields.map((field) => {
+                    const capability = resolveFieldCapability(field, definition.fieldPermissions)
+                    return (
+                      <label key={`${field.tableName}.${field.name}.editor`} className="block min-w-0">
+                        <span className="text-xs font-semibold text-slate-500">{t(field.labelKey)}</span>
+                        <input
+                          name={field.name}
+                          defaultValue={capability.masked ? '***' : displayValue(selectedLine?.[field.name])}
+                          readOnly={!capability.writable}
+                          disabled={!capability.writable && !field.primary}
+                          className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20 disabled:bg-slate-100 disabled:text-slate-500"
+                        />
+                      </label>
+                    )
+                  })}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      const form = event.currentTarget.form
+                      if (!form || !activeDetail) return
+                      const data = formValues(form)
+                      const lineKey = textValue(data[activeDetail.lineKey])
+                      if (lineKey) void onCreateLine?.(lineKey, data)
+                    }}
+                    disabled={busy || !onCreateLine}
+                    className="inline-flex h-8 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    {t('workbench.line.add')}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={busy || !effectiveLineKey || !onUpdateLine}
+                    className="inline-flex h-8 items-center gap-2 rounded-md bg-[#AD4714] px-3 text-xs font-semibold text-white hover:bg-[#B84F18] disabled:opacity-50"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {t('workbench.line.save')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => effectiveLineKey && void onDeleteLine?.(effectiveLineKey)}
+                    disabled={busy || !effectiveLineKey || !onDeleteLine}
+                    className="inline-flex h-8 items-center gap-2 rounded-md border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t('workbench.line.delete')}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       </div>
@@ -248,4 +382,16 @@ function displayValue(value: unknown): string {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return JSON.stringify(value)
+}
+
+function formValues(form: HTMLFormElement): Record<string, unknown> {
+  const data: Record<string, unknown> = {}
+  for (const [key, value] of new FormData(form).entries()) {
+    data[key] = typeof value === 'string' ? value : value.name
+  }
+  return data
+}
+
+function textValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : value === undefined || value === null ? '' : String(value).trim()
 }

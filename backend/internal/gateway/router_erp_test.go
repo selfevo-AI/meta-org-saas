@@ -58,6 +58,14 @@ func (r *gatewayERPRepo) CreateChildRecord(ctx context.Context, parent erp.Table
 	return &erp.Record{TableCode: child.Code, ParentTableCode: parent.Code, ParentKey: parentKey, Key: input.Key, Data: input.Data}, nil
 }
 
+func (r *gatewayERPRepo) UpdateChildRecord(ctx context.Context, parent erp.TableDefinition, child erp.ChildTableDefinition, parentKey string, lineKey string, input erp.RecordInput) (*erp.Record, error) {
+	return &erp.Record{TableCode: child.Code, ParentTableCode: parent.Code, ParentKey: parentKey, Key: lineKey, Data: input.Data}, nil
+}
+
+func (r *gatewayERPRepo) DeleteChildRecord(ctx context.Context, parent erp.TableDefinition, child erp.ChildTableDefinition, parentKey string, lineKey string) error {
+	return nil
+}
+
 func (r *gatewayERPRepo) CreateActionExecution(ctx context.Context, execution erp.ActionExecution) (*erp.ActionExecution, error) {
 	if execution.ID == uuid.Nil {
 		execution.ID = uuid.New()

@@ -160,6 +160,40 @@ func (r *PostgresRepository) CreateChildRecord(ctx context.Context, parent Table
 	return record, nil
 }
 
+func (r *PostgresRepository) UpdateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string, input RecordInput) (*Record, error) {
+	if len(input.Data) == 0 {
+		query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t WHERE %s::TEXT = $1 AND %s::TEXT = $2`,
+			quoteIdent(child.LineKey), quoteIdent(child.Code), quoteIdent(child.ParentKey), quoteIdent(child.LineKey))
+		return scanRecord(child.Code, parent.Code, parentKey, r.querier.QueryRow(ctx, query, parentKey, lineKey))
+	}
+	payload := copyData(input.Data)
+	payload[child.ParentKey] = parentKey
+	payload[child.LineKey] = lineKey
+	payloadBytes, _ := json.Marshal(payload)
+	query := fmt.Sprintf(`UPDATE %s SET "Payload" = "Payload" || $1::jsonb, "UpdatedAt" = NOW() WHERE %s::TEXT = $2 AND %s::TEXT = $3 RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
+		quoteIdent(child.Code), quoteIdent(child.ParentKey), quoteIdent(child.LineKey), quoteIdent(child.LineKey), quoteIdent(child.Code))
+	record, err := scanRecord(child.Code, parent.Code, parentKey, r.querier.QueryRow(ctx, query, string(payloadBytes), parentKey, lineKey))
+	if err != nil {
+		return nil, err
+	}
+	record.ParentTableCode = parent.Code
+	record.ParentKey = parentKey
+	return record, nil
+}
+
+func (r *PostgresRepository) DeleteChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string) error {
+	query := fmt.Sprintf(`DELETE FROM %s WHERE %s::TEXT = $1 AND %s::TEXT = $2`,
+		quoteIdent(child.Code), quoteIdent(child.ParentKey), quoteIdent(child.LineKey))
+	tag, err := r.querier.Exec(ctx, query, parentKey, lineKey)
+	if err != nil {
+		return fmt.Errorf("delete %s: %w", child.Code, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PostgresRepository) CreateActionExecution(ctx context.Context, execution ActionExecution) (*ActionExecution, error) {
 	if execution.ID == uuid.Nil {
 		execution.ID = uuid.New()

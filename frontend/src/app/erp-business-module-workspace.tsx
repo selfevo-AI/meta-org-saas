@@ -6,12 +6,16 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   createERPChildRecord,
   createERPRecord,
+  deleteERPChildRecord,
+  deleteERPRecord,
   getFinanceGLTrialBalance,
   listERPActionExecutions,
   listERPChildRecords,
   listERPRecords,
   listRuntimeOperations,
   runERPAction,
+  updateERPChildRecord,
+  updateERPRecord,
   type ERPActionExecution,
   type ERPActionResult,
   type FinanceGLTrialBalance,
@@ -49,6 +53,7 @@ type ERPBusinessModuleWorkspaceProps = {
   token: string
   module: ERPBusinessModule
   externalSelection?: BusinessSelection | null
+  activeDocumentID?: string | null
 }
 
 type ERPBusinessRecord = Record<string, unknown> & { key: string }
@@ -250,7 +255,7 @@ export function buildERPDocumentWorkbenchDefinition(
   }
 }
 
-export function ERPBusinessModuleWorkspace({ token, module, externalSelection }: ERPBusinessModuleWorkspaceProps) {
+export function ERPBusinessModuleWorkspace({ token, module, externalSelection, activeDocumentID }: ERPBusinessModuleWorkspaceProps) {
   const { t } = useI18n()
   const fallbackDocuments = moduleDocuments[module]
   const [runtimeOperations, setRuntimeOperations] = useState<ApiOperation[]>([])
@@ -307,6 +312,13 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       cancelled = true
     }
   }, [module, token])
+
+  useEffect(() => {
+    if (activeDocumentID && documents.some((document) => document.id === activeDocumentID)) {
+      const timer = window.setTimeout(() => setActiveID(activeDocumentID), 0)
+      return () => window.clearTimeout(timer)
+    }
+  }, [activeDocumentID, documents])
 
   async function loadRecords(document = activeDocument) {
     if (!document) return
@@ -436,6 +448,54 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
     }
   }
 
+  async function handleWorkbenchCreateHeader(key: string, data: Record<string, unknown>) {
+    if (!activeDocument || activeDocument.kind === 'report') return
+    setBusy(true)
+    setError('')
+    try {
+      await createERPRecord(token, activeDocument.tableCode, key, data)
+      setNotice(t('erp.business.documentCreated'))
+      await loadRecords(activeDocument)
+      setSelectedKey(key)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleWorkbenchUpdateHeader(key: string, data: Record<string, unknown>) {
+    if (!activeDocument || activeDocument.kind === 'report') return
+    setBusy(true)
+    setError('')
+    try {
+      await updateERPRecord(token, activeDocument.tableCode, key, data)
+      setNotice(t('erp.business.documentUpdated'))
+      await loadRecords(activeDocument)
+      setSelectedKey(key)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleWorkbenchDeleteHeader(key: string) {
+    if (!activeDocument || activeDocument.kind === 'report') return
+    setBusy(true)
+    setError('')
+    try {
+      await deleteERPRecord(token, activeDocument.tableCode, key)
+      setNotice(t('erp.business.documentDeleted'))
+      setSelectedKey('')
+      await loadRecords(activeDocument)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleCreateLine() {
     if (!activeDocument?.childCode || activeDocument.kind === 'report' || !selectedKey) return
     setBusy(true)
@@ -455,6 +515,51 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
       })
       setLineForm((current) => ({ ...current, lineNum: String(Number(current.lineNum || 1) + 1) }))
       setNotice(t('erp.business.lineCreated'))
+      await loadChildRows(activeDocument, selectedKey)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleWorkbenchCreateLine(lineKey: string, data: Record<string, unknown>) {
+    if (!activeDocument?.childCode || activeDocument.kind === 'report' || !selectedKey) return
+    setBusy(true)
+    setError('')
+    try {
+      await createERPChildRecord(token, activeDocument.tableCode, selectedKey, activeDocument.childCode, lineKey, data)
+      setNotice(t('erp.business.lineCreated'))
+      await loadChildRows(activeDocument, selectedKey)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleWorkbenchUpdateLine(lineKey: string, data: Record<string, unknown>) {
+    if (!activeDocument?.childCode || activeDocument.kind === 'report' || !selectedKey) return
+    setBusy(true)
+    setError('')
+    try {
+      await updateERPChildRecord(token, activeDocument.tableCode, selectedKey, activeDocument.childCode, lineKey, data)
+      setNotice(t('erp.business.lineUpdated'))
+      await loadChildRows(activeDocument, selectedKey)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleWorkbenchDeleteLine(lineKey: string) {
+    if (!activeDocument?.childCode || activeDocument.kind === 'report' || !selectedKey) return
+    setBusy(true)
+    setError('')
+    try {
+      await deleteERPChildRecord(token, activeDocument.tableCode, selectedKey, activeDocument.childCode, lineKey)
+      setNotice(t('erp.business.lineDeleted'))
       await loadChildRows(activeDocument, selectedKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
@@ -539,6 +644,12 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection }:
               selectedKey={selectedKey}
               onSelectRecord={setSelectedKey}
               onRefresh={() => void loadRecords(activeDocument)}
+              onCreateHeader={handleWorkbenchCreateHeader}
+              onUpdateHeader={handleWorkbenchUpdateHeader}
+              onDeleteHeader={handleWorkbenchDeleteHeader}
+              onCreateLine={handleWorkbenchCreateLine}
+              onUpdateLine={handleWorkbenchUpdateLine}
+              onDeleteLine={handleWorkbenchDeleteLine}
               busy={busy}
             />
           )}

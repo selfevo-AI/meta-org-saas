@@ -14,6 +14,10 @@ type fakeRepository struct {
 	childRecords            map[string][]Record
 	created                 Record
 	createdChild            Record
+	updatedChild            Record
+	deletedChildTable       string
+	deletedChildParentKey   string
+	deletedChildKey         string
 	listTableCode           string
 	listExecutionsTableCode string
 	listExecutionsRecordKey string
@@ -58,6 +62,18 @@ func (r *fakeRepository) ListChildRecords(ctx context.Context, parent TableDefin
 func (r *fakeRepository) CreateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, input RecordInput) (*Record, error) {
 	r.createdChild = Record{TableCode: child.Code, ParentTableCode: parent.Code, ParentKey: parentKey, Key: input.Key, Data: input.Data}
 	return &r.createdChild, nil
+}
+
+func (r *fakeRepository) UpdateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string, input RecordInput) (*Record, error) {
+	r.updatedChild = Record{TableCode: child.Code, ParentTableCode: parent.Code, ParentKey: parentKey, Key: lineKey, Data: input.Data}
+	return &r.updatedChild, nil
+}
+
+func (r *fakeRepository) DeleteChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string) error {
+	r.deletedChildTable = child.Code
+	r.deletedChildParentKey = parentKey
+	r.deletedChildKey = lineKey
+	return nil
 }
 
 func (r *fakeRepository) CreateActionExecution(_ context.Context, execution ActionExecution) (*ActionExecution, error) {

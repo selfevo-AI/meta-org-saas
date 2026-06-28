@@ -17,6 +17,8 @@ type Repository interface {
 	DeleteRecord(ctx context.Context, table TableDefinition, key string) error
 	ListChildRecords(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, limit int) ([]Record, error)
 	CreateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, input RecordInput) (*Record, error)
+	UpdateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string, input RecordInput) (*Record, error)
+	DeleteChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string) error
 	CreateActionExecution(ctx context.Context, execution ActionExecution) (*ActionExecution, error)
 	FindActionExecutionByIdempotencyKey(ctx context.Context, key string) (*ActionExecution, error)
 	CompleteActionExecution(ctx context.Context, id uuid.UUID, status string, payload map[string]any, failure *ActionFailure) (*ActionExecution, error)
@@ -132,6 +134,31 @@ func (s *Service) CreateChildRecord(ctx context.Context, tableCode, parentKey, c
 		return nil, err
 	}
 	return s.repo.CreateChildRecord(ctx, parent, child, parentKey, input)
+}
+
+func (s *Service) UpdateChildRecord(ctx context.Context, tableCode, parentKey, childCode, lineKey string, input RecordInput) (*Record, error) {
+	parent, child, err := s.child(tableCode, childCode)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(parentKey) == "" || strings.TrimSpace(lineKey) == "" {
+		return nil, fmt.Errorf("%w: child parent key and line key are required", ErrValidation)
+	}
+	if err := validateChildRecordInput(child, input); err != nil {
+		return nil, err
+	}
+	return s.repo.UpdateChildRecord(ctx, parent, child, parentKey, lineKey, input)
+}
+
+func (s *Service) DeleteChildRecord(ctx context.Context, tableCode, parentKey, childCode, lineKey string) error {
+	parent, child, err := s.child(tableCode, childCode)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(parentKey) == "" || strings.TrimSpace(lineKey) == "" {
+		return fmt.Errorf("%w: child parent key and line key are required", ErrValidation)
+	}
+	return s.repo.DeleteChildRecord(ctx, parent, child, parentKey, lineKey)
 }
 
 func (s *Service) ListActionExecutions(ctx context.Context, tableCode string, recordKey string, limit int) ([]ActionExecution, error) {

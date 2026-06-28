@@ -109,6 +109,34 @@ func (r *businessFakeRepository) CreateChildRecord(ctx context.Context, parent T
 	return &record, nil
 }
 
+func (r *businessFakeRepository) UpdateChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string, input RecordInput) (*Record, error) {
+	bucket := childBucket(parent.Code, parentKey, child.Code)
+	for index, record := range r.children[bucket] {
+		if record.Key == lineKey {
+			next := copyData(record.Data)
+			for key, value := range input.Data {
+				next[key] = value
+			}
+			next[child.ParentKey] = parentKey
+			next[child.LineKey] = lineKey
+			r.children[bucket][index].Data = next
+			return &r.children[bucket][index], nil
+		}
+	}
+	return nil, ErrNotFound
+}
+
+func (r *businessFakeRepository) DeleteChildRecord(ctx context.Context, parent TableDefinition, child ChildTableDefinition, parentKey string, lineKey string) error {
+	bucket := childBucket(parent.Code, parentKey, child.Code)
+	for index, record := range r.children[bucket] {
+		if record.Key == lineKey {
+			r.children[bucket] = append(r.children[bucket][:index], r.children[bucket][index+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
 func (r *businessFakeRepository) CreateActionExecution(_ context.Context, execution ActionExecution) (*ActionExecution, error) {
 	if execution.ID == uuid.Nil {
 		execution.ID = uuid.New()

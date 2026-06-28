@@ -37,6 +37,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     throw new Error(error.error || `HTTP ${response.status}`)
   }
 
+  if (response.status === 204) {
+    return undefined as T
+  }
+
   return response.json()
 }
 
@@ -143,6 +147,26 @@ export async function createERPRecord<T extends Record<string, unknown>>(
   })
 }
 
+export async function updateERPRecord<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  key: string,
+  data: T,
+): Promise<ERPRecord<T>> {
+  return apiRequest<ERPRecord<T>>(`/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    token,
+    body: { data },
+  })
+}
+
+export async function deleteERPRecord(token: string, tableCode: string, key: string): Promise<void> {
+  await apiRequest<void>(`/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}`, {
+    method: 'DELETE',
+    token,
+  })
+}
+
 export async function createERPChildRecord<T extends Record<string, unknown>>(
   token: string,
   tableCode: string,
@@ -156,6 +180,40 @@ export async function createERPChildRecord<T extends Record<string, unknown>>(
     token,
     body: { key: lineKey, data },
   })
+}
+
+export async function updateERPChildRecord<T extends Record<string, unknown>>(
+  token: string,
+  tableCode: string,
+  key: string,
+  childCode: string,
+  lineKey: string,
+  data: T,
+): Promise<ERPRecord<T>> {
+  return apiRequest<ERPRecord<T>>(
+    `/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/${encodeURIComponent(childCode)}/${encodeURIComponent(lineKey)}`,
+    {
+      method: 'PATCH',
+      token,
+      body: { data },
+    },
+  )
+}
+
+export async function deleteERPChildRecord(
+  token: string,
+  tableCode: string,
+  key: string,
+  childCode: string,
+  lineKey: string,
+): Promise<void> {
+  await apiRequest<void>(
+    `/erp/${encodeURIComponent(tableCode)}/${encodeURIComponent(key)}/${encodeURIComponent(childCode)}/${encodeURIComponent(lineKey)}`,
+    {
+      method: 'DELETE',
+      token,
+    },
+  )
 }
 
 export async function runERPAction<T extends Record<string, unknown>>(

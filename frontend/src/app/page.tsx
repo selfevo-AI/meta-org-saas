@@ -306,6 +306,14 @@ type SupplyChainFunction = {
   targetTypes: BusinessTargetType[]
 }
 
+type TenantDocumentMenuItem = {
+  id: string
+  domain: string
+  documentID: string
+  label: string
+  targetType: BusinessTargetType
+}
+
 type OverviewBusinessFunction = {
   id: string
   domain: string
@@ -483,6 +491,63 @@ const supplyChainFunctionGroups: Record<'Procurement' | 'Sales' | 'Inventory', S
 const supplyChainFunctionByID = new Map<SupplyChainFunctionID, SupplyChainFunction>(
   Object.values(supplyChainFunctionGroups).flat().map((item) => [item.id, item]),
 )
+
+const tenantDocumentMenuItems: Record<string, TenantDocumentMenuItem[]> = {
+  Requirement: [
+    { id: 'project:requirement', domain: 'Requirement', documentID: 'requirement', label: 'erp.document.requirement', targetType: 'requirement' },
+  ],
+  Project: [
+    { id: 'project:project', domain: 'Project', documentID: 'project', label: 'erp.document.project', targetType: 'project' },
+  ],
+  Delivery: [
+    { id: 'project:deliverable', domain: 'Delivery', documentID: 'deliverable', label: 'erp.document.delivery', targetType: 'project' },
+  ],
+  Cost: [
+    { id: 'project:cost', domain: 'Cost', documentID: 'cost', label: 'erp.document.cost', targetType: 'cost_budget' },
+  ],
+  Feedback: [
+    { id: 'project:feedback', domain: 'Feedback', documentID: 'feedback', label: 'erp.document.feedback', targetType: 'project' },
+  ],
+  Procurement: [
+    { id: 'procurement:purchase_order', domain: 'Procurement', documentID: 'purchase_order', label: 'erp.document.purchaseOrder', targetType: 'purchase_order' },
+    { id: 'procurement:goods_receipt_po', domain: 'Procurement', documentID: 'goods_receipt_po', label: 'erp.document.goodsReceiptPO', targetType: 'purchase_receipt' },
+    { id: 'procurement:ap_invoice', domain: 'Procurement', documentID: 'ap_invoice', label: 'erp.document.apInvoice', targetType: 'finance_payable' },
+  ],
+  Sales: [
+    { id: 'sales:sales_order', domain: 'Sales', documentID: 'sales_order', label: 'erp.document.salesOrder', targetType: 'sales_order' },
+    { id: 'sales:delivery', domain: 'Sales', documentID: 'delivery', label: 'erp.document.delivery', targetType: 'sales_shipment' },
+    { id: 'sales:ar_invoice', domain: 'Sales', documentID: 'ar_invoice', label: 'erp.document.arInvoice', targetType: 'finance_receivable' },
+    { id: 'sales:incoming_payment', domain: 'Sales', documentID: 'incoming_payment', label: 'erp.document.incomingPayment', targetType: 'finance_settlement' },
+  ],
+  Inventory: [
+    { id: 'inventory:business_partner', domain: 'Inventory', documentID: 'business_partner', label: 'erp.document.businessPartner', targetType: 'business_partner' },
+    { id: 'inventory:item', domain: 'Inventory', documentID: 'item', label: 'erp.document.item', targetType: 'inventory_item' },
+    { id: 'inventory:warehouse', domain: 'Inventory', documentID: 'warehouse', label: 'erp.document.warehouse', targetType: 'warehouse' },
+    { id: 'inventory:warehouse_balance', domain: 'Inventory', documentID: 'warehouse_balance', label: 'erp.document.warehouseBalance', targetType: 'inventory_balance' },
+    { id: 'inventory:goods_receipt', domain: 'Inventory', documentID: 'goods_receipt', label: 'erp.document.goodsReceipt', targetType: 'inventory_movement' },
+    { id: 'inventory:goods_issue', domain: 'Inventory', documentID: 'goods_issue', label: 'erp.document.goodsIssue', targetType: 'inventory_movement' },
+  ],
+  FinanceAccounting: [
+    { id: 'finance:gl_account', domain: 'FinanceAccounting', documentID: 'gl_account', label: 'erp.document.glAccount', targetType: 'finance_settlement' },
+    { id: 'finance:cost_center', domain: 'FinanceAccounting', documentID: 'cost_center', label: 'erp.document.costCenter', targetType: 'cost_ledger_entry' },
+    { id: 'finance:journal_entry', domain: 'FinanceAccounting', documentID: 'journal_entry', label: 'erp.document.journalEntry', targetType: 'finance_settlement' },
+    { id: 'finance:trial_balance', domain: 'FinanceAccounting', documentID: 'trial_balance', label: 'erp.document.trialBalance', targetType: 'finance_settlement' },
+  ],
+  FinanceReceivables: [
+    { id: 'finance:ar_invoice', domain: 'FinanceReceivables', documentID: 'ar_invoice', label: 'erp.document.arInvoice', targetType: 'finance_receivable' },
+    { id: 'finance:incoming_payment', domain: 'FinanceReceivables', documentID: 'incoming_payment', label: 'erp.document.incomingPayment', targetType: 'finance_settlement' },
+  ],
+  FinancePayables: [
+    { id: 'finance:ap_invoice', domain: 'FinancePayables', documentID: 'ap_invoice', label: 'erp.document.apInvoice', targetType: 'finance_payable' },
+  ],
+  FinanceCostAccounting: [
+    { id: 'finance:cost_center', domain: 'FinanceCostAccounting', documentID: 'cost_center', label: 'erp.document.costCenter', targetType: 'cost_ledger_entry' },
+  ],
+}
+
+function buildTenantDocumentMenuItems(domain: string): TenantDocumentMenuItem[] {
+  return tenantDocumentMenuItems[domain] ?? []
+}
 
 const numberFormatter = new Intl.NumberFormat('zh-CN')
 const compactFormatter = new Intl.NumberFormat('zh-CN', { notation: 'compact' })
@@ -1374,6 +1439,7 @@ export default function Home() {
   const [businessNodesByDomain, setBusinessNodesByDomain] = useState<Record<string, BusinessTreeNode[]>>({})
   const [businessSelection, setBusinessSelection] = useState<BusinessSelection | null>(null)
   const [currentSupplyChainFunctionID, setCurrentSupplyChainFunctionID] = useState<SupplyChainFunctionID | null>(null)
+  const [activeTenantDocumentID, setActiveTenantDocumentID] = useState<string | null>(null)
   const [businessTreeLoading, setBusinessTreeLoading] = useState(false)
   const [businessTreeError, setBusinessTreeError] = useState<string | null>(null)
   const [mobileBusinessOpen, setMobileBusinessOpen] = useState(false)
@@ -2049,8 +2115,27 @@ export default function Home() {
     const nextFunction = supplyChainFunctionByID.get(functionID)
     if (!nextFunction) return
     setCurrentSupplyChainFunctionID(functionID)
+    setActiveTenantDocumentID(buildTenantDocumentMenuItems(nextFunction.domain)[0]?.documentID ?? null)
     setWorkspaceView(`domain:${nextFunction.domain}`)
     setBusinessSelection(null)
+    setMobileMenuOpen(false)
+    setMobileBusinessOpen(false)
+  }
+
+  function handleTenantDocumentSelect(item: TenantDocumentMenuItem) {
+    const view = `domain:${item.domain}` as WorkspaceView
+    const selectedSupplyChainFunction = supplyChainFunctionForTarget(item.domain, item.targetType)
+    setCurrentSupplyChainFunctionID(selectedSupplyChainFunction?.id ?? null)
+    setActiveTenantDocumentID(item.documentID)
+    setWorkspaceView(view)
+    setBusinessSelection({
+      id: item.id,
+      domain: item.domain,
+      targetType: item.targetType,
+      targetID: item.documentID,
+      label: t(item.label),
+      description: t('workbench.unified.title'),
+    })
     setMobileMenuOpen(false)
     setMobileBusinessOpen(false)
   }
@@ -2060,8 +2145,10 @@ export default function Home() {
     const defaultFunction = defaultSupplyChainFunction(nextDomain)
     if (defaultFunction) {
       setCurrentSupplyChainFunctionID(defaultFunction.id)
+      setActiveTenantDocumentID(buildTenantDocumentMenuItems(nextDomain)[0]?.documentID ?? null)
     } else {
       setCurrentSupplyChainFunctionID(null)
+      setActiveTenantDocumentID(buildTenantDocumentMenuItems(nextDomain)[0]?.documentID ?? null)
     }
     setWorkspaceView(view)
     setBusinessSelection(null)
@@ -2079,6 +2166,7 @@ export default function Home() {
     const view = node.domain === 'MetaOrg' ? 'overview' : (`domain:${node.domain}` as WorkspaceView)
     const selectedSupplyChainFunction = supplyChainFunctionForTarget(node.domain, node.targetType)
     if (selectedSupplyChainFunction) setCurrentSupplyChainFunctionID(selectedSupplyChainFunction.id)
+    setActiveTenantDocumentID(buildTenantDocumentMenuItems(node.domain).find((item) => item.targetType === node.targetType)?.documentID ?? null)
     setWorkspaceView(view)
     setBusinessSelection(node)
     setOperationContext((current) => ({
@@ -2116,8 +2204,8 @@ export default function Home() {
 
   const activeGroup = visibleMenuGroups.find((group) => group.domains.includes(activeDomain))
   const isOverview = effectiveWorkspaceView === 'overview'
-  const showBusinessChrome = !isOverview && !isPlatformAdminSession
-  const shellUsesOverviewLayout = isOverview || isPlatformAdminSession
+  const showBusinessChrome = false
+  const shellUsesOverviewLayout = isOverview || isPlatformAdminSession || !showBusinessChrome
   const activeOperationCount =
     isOverview
       ? apiOperations.filter((operation) => operation.domain === 'MetaOrg').length
@@ -2366,6 +2454,8 @@ export default function Home() {
               onReset={resetMenuLayout}
               currentSupplyChainFunctionID={activeSupplyChainFunction?.id ?? null}
               onSupplyChainFunctionChange={handleSupplyChainFunctionChange}
+              currentTenantDocumentID={activeTenantDocumentID}
+              onTenantDocumentSelect={handleTenantDocumentSelect}
             />
           </div>
           {mobileMenuOpen && (
@@ -2402,6 +2492,7 @@ export default function Home() {
             />
           </div>
 
+          {/* BusinessTreePanelRemoved: tenant documents now expand under the main navigation menu. */}
           {showBusinessChrome && (
             <div
               className={`workspace-business-pane fixed inset-y-0 left-0 z-30 w-[300px] transform transition lg:static lg:w-auto lg:translate-x-0 ${
@@ -2515,7 +2606,7 @@ export default function Home() {
 				) : ['domain:Requirement', 'domain:Project', 'domain:Delivery', 'domain:Cost', 'domain:Feedback'].includes(
 					  effectiveWorkspaceView,
 				) ? (
-					<ERPBusinessModuleWorkspace token={token} module="project" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="project" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:DeveloperTools' ? (
 					<div className="space-y-5">
 						<DeveloperToolsWorkspace token={token} />
@@ -2531,17 +2622,17 @@ export default function Home() {
 				) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
 					<CostingWorkspace token={token} />
 				) : effectiveWorkspaceView === 'domain:Inventory' ? (
-					<ERPBusinessModuleWorkspace token={token} module="inventory" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="inventory" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Procurement' ? (
-					<ERPBusinessModuleWorkspace token={token} module="procurement" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="procurement" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Sales' ? (
-					<ERPBusinessModuleWorkspace token={token} module="sales" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="sales" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
-					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (
-					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:FinancePayables' ? (
-					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} />
+					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : (
                 <AgentOnlyWorkspace domain={effectiveWorkspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
               )}
@@ -2861,6 +2952,8 @@ function NavigationSidebar({
   onReset,
   currentSupplyChainFunctionID,
   onSupplyChainFunctionChange,
+  currentTenantDocumentID,
+  onTenantDocumentSelect,
 }: {
   workspaceView: WorkspaceView
   groups: MenuGroup[]
@@ -2872,6 +2965,8 @@ function NavigationSidebar({
   onReset: () => void
   currentSupplyChainFunctionID?: SupplyChainFunctionID | null
   onSupplyChainFunctionChange: (functionID: SupplyChainFunctionID) => void
+  currentTenantDocumentID?: string | null
+  onTenantDocumentSelect: (item: TenantDocumentMenuItem) => void
 }) {
   const { t } = useI18n()
   return (
@@ -2930,6 +3025,7 @@ function NavigationSidebar({
                     const Icon = domainIcons[domain] ?? FolderKanban
                     const supplyChainFunctions = supplyChainFunctionsForDomain(domain)
                     const firstSupplyChainFunction = supplyChainFunctions[0]
+                    const tenantDocuments = buildTenantDocumentMenuItems(domain)
 
                     return (
                       <div key={domain} className="space-y-1">
@@ -2939,6 +3035,10 @@ function NavigationSidebar({
                           label={t(domainLabels[domain] ?? domain)}
                           count={count}
                           onClick={() => {
+                            if (tenantDocuments[0]) {
+                              onTenantDocumentSelect(tenantDocuments[0])
+                              return
+                            }
                             if (firstSupplyChainFunction) {
                               onSupplyChainFunctionChange(firstSupplyChainFunction.id)
                               return
@@ -2948,7 +3048,26 @@ function NavigationSidebar({
                           draggable
                           onDragStart={(event) => onDragStart(event, domain)}
                         />
-                        {supplyChainFunctions.length > 0 && workspaceView === menuKey && (
+                        {tenantDocuments.length > 0 && workspaceView === menuKey && (
+                          <div className="space-y-1 pl-7">
+                            {tenantDocuments.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onClick={() => onTenantDocumentSelect(item)}
+                                className={`flex h-8 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs font-semibold transition ${
+                                  currentTenantDocumentID === item.documentID
+                                    ? 'border border-[#DF6A24]/35 bg-[#DF6A24]/10 text-white'
+                                    : 'border border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-950/40 hover:text-slate-200'
+                                }`}
+                              >
+                                <span className="truncate">{t(item.label)}</span>
+                                <span className="text-[10px] font-bold text-slate-500">{item.documentID}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {tenantDocuments.length === 0 && supplyChainFunctions.length > 0 && workspaceView === menuKey && (
                           <div className="space-y-1 pl-7">
                             {supplyChainFunctions.map((item) => (
                               <button

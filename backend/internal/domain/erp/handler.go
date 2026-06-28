@@ -30,6 +30,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/erp/{tableCode}/{key}", h.deleteRecord)
 	r.Get("/erp/{tableCode}/{key}/{childCode}", h.listChildRecords)
 	r.Post("/erp/{tableCode}/{key}/{childCode}", h.createChildRecord)
+	r.Patch("/erp/{tableCode}/{key}/{childCode}/{lineKey}", h.updateChildRecord)
+	r.Delete("/erp/{tableCode}/{key}/{childCode}/{lineKey}", h.deleteChildRecord)
 }
 
 func (h *Handler) catalog(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +159,40 @@ func (h *Handler) createChildRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, record)
+}
+
+func (h *Handler) updateChildRecord(w http.ResponseWriter, r *http.Request) {
+	input, ok := decodeRecordInput(w, r)
+	if !ok {
+		return
+	}
+	record, err := h.service.UpdateChildRecord(
+		r.Context(),
+		chi.URLParam(r, "tableCode"),
+		chi.URLParam(r, "key"),
+		chi.URLParam(r, "childCode"),
+		chi.URLParam(r, "lineKey"),
+		input,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (h *Handler) deleteChildRecord(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.DeleteChildRecord(
+		r.Context(),
+		chi.URLParam(r, "tableCode"),
+		chi.URLParam(r, "key"),
+		chi.URLParam(r, "childCode"),
+		chi.URLParam(r, "lineKey"),
+	); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func decodeRecordInput(w http.ResponseWriter, r *http.Request) (RecordInput, bool) {
