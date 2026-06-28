@@ -33,6 +33,10 @@ func (duplicateEmailRepo) GetUserByID(context.Context, uuid.UUID) (*User, error)
 	return nil, fmt.Errorf("not implemented")
 }
 
+func (duplicateEmailRepo) UpdateUserPassword(context.Context, uuid.UUID, string) error {
+	return fmt.Errorf("not implemented")
+}
+
 func (duplicateEmailRepo) CreateAgent(context.Context, CreateAgentInput) (*AIAgent, string, error) {
 	return nil, "", fmt.Errorf("not implemented")
 }

@@ -3266,8 +3266,12 @@ CROSS JOIN (VALUES
     ('assistant', 'AI Assistant'),
     ('ai_gateway', 'AI Gateway'),
     ('toolruntime', 'Tool Runtime'),
+    ('erp', 'ERP'),
     ('finance', 'Finance'),
     ('costing', 'Costing'),
+    ('inventory', 'Inventory'),
+    ('procurement', 'Procurement'),
+    ('sales', 'Sales'),
     ('developer_tools', 'Developer Tools')
 ) AS modules(module_key, display_name)
 CROSS JOIN LATERAL (SELECT module_key || '-module' AS asset_key) asset_keys

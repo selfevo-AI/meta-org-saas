@@ -114,6 +114,45 @@ type UpdateOrganizationModulesInput struct {
 	EnabledModules []string `json:"enabled_modules"`
 }
 
+type OrganizationUserAccount struct {
+	UserID         uuid.UUID  `json:"user_id"`
+	OrganizationID uuid.UUID  `json:"organization_id"`
+	MembershipID   *uuid.UUID `json:"membership_id,omitempty"`
+	Name           string     `json:"name"`
+	Email          string     `json:"email"`
+	AccountStatus  string     `json:"account_status"`
+	AuthorityTier  string     `json:"authority_tier"`
+	IsOwner        bool       `json:"is_owner"`
+	MemberStatus   string     `json:"member_status"`
+	UpdatedAt      time.Time  `json:"updated_at,omitempty"`
+}
+
+type UpdateOrganizationAccountInput struct {
+	Name          string `json:"name,omitempty"`
+	Email         string `json:"email,omitempty"`
+	AccountStatus string `json:"account_status,omitempty"`
+	AuthorityTier string `json:"authority_tier,omitempty"`
+}
+
+type UpdateOrganizationAccountRecord struct {
+	OrganizationID uuid.UUID
+	UserID         uuid.UUID
+	ActorID        uuid.UUID
+	Name           string
+	Email          string
+	AccountStatus  string
+	AuthorityTier  string
+}
+
+type ResetOrganizationAccountPasswordInput struct {
+	Password string `json:"password,omitempty"`
+}
+
+type ResetOrganizationAccountPasswordResponse struct {
+	UserID            uuid.UUID `json:"user_id"`
+	TemporaryPassword string    `json:"temporary_password,omitempty"`
+}
+
 type CloseOrganizationInput struct {
 	Reason string `json:"reason,omitempty"`
 }

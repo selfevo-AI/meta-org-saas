@@ -44,6 +44,7 @@ import {
   approvePlatformToolApproval,
   approveToolApproval,
   apiRequest,
+  changeOwnPassword,
   completeOnboarding,
   confirmAssistantProposal,
   confirmPlatformAssistantProposal,
@@ -1425,6 +1426,11 @@ export default function Home() {
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [currentOwnPassword, setCurrentOwnPassword] = useState('')
+  const [newOwnPassword, setNewOwnPassword] = useState('')
+  const [confirmOwnPassword, setConfirmOwnPassword] = useState('')
+  const [passwordChanging, setPasswordChanging] = useState(false)
   const [token, setToken] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [userType, setUserType] = useState<string | null>(null)
@@ -1940,6 +1946,30 @@ export default function Home() {
     setBusinessSelection(null)
     setError(null)
     setWorkspaceView('overview')
+  }
+
+  async function handleOwnPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!token) return
+    if (newOwnPassword !== confirmOwnPassword) {
+      setError(t('account.passwordMismatch'))
+      return
+    }
+    setPasswordChanging(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await changeOwnPassword(token, currentOwnPassword, newOwnPassword)
+      setCurrentOwnPassword('')
+      setNewOwnPassword('')
+      setConfirmOwnPassword('')
+      setChangePasswordOpen(false)
+      setNotice(t('account.passwordChanged'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('account.passwordChangeFailed'))
+    } finally {
+      setPasswordChanging(false)
+    }
   }
 
   function toggleMenuGroup(groupID: string) {
@@ -2499,7 +2529,7 @@ export default function Home() {
 
           <WorkspaceLayoutResizer pane="menu" label={t('layout.resizeMenu')} onResizeStart={handleLayoutResizeStart} className="workspace-menu-resizer lg:flex" />
 
-          <div className="workspace-topbar min-w-0">
+          <div className="workspace-topbar relative min-w-0">
             <Topbar
               activeTitle={isOverview ? t('nav.overview') : t(domainLabels[activeDomain] ?? activeDomain)}
               activeDomain={isOverview ? 'SuperClaw' : t(domainLabels[activeDomain] ?? activeDomain)}
@@ -2514,12 +2544,71 @@ export default function Home() {
               overview={overview}
               overviewLoading={overviewLoading}
               onRefresh={() => loadOverview()}
+              onOpenChangePassword={() => setChangePasswordOpen(true)}
               onSignOut={handleSignOut}
               onOpenMenu={() => setMobileMenuOpen(true)}
               showBusinessControl={showBusinessChrome}
               onOpenBusiness={() => setMobileBusinessOpen(true)}
               onResetLayout={handleResetWorkspaceLayout}
             />
+            {changePasswordOpen && (
+              <div className="absolute right-4 top-[68px] z-30 w-[min(92vw,360px)] rounded-lg border border-slate-700 bg-slate-950 p-4 shadow-2xl shadow-black/40">
+                <form className="space-y-3" onSubmit={handleOwnPasswordChange}>
+                  <div className="flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold text-slate-100">{t('account.changePassword')}</h2>
+                    <button
+                      type="button"
+                      onClick={() => setChangePasswordOpen(false)}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 text-slate-300 transition hover:border-slate-500 hover:text-white"
+                      aria-label={t('common.close')}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <label className="block text-xs font-semibold text-slate-300">
+                    {t('account.currentPassword')}
+                    <input
+                      type="password"
+                      value={currentOwnPassword}
+                      onChange={(event) => setCurrentOwnPassword(event.target.value)}
+                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-[#F6A66A]"
+                      autoComplete="current-password"
+                      required
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-300">
+                    {t('account.newPassword')}
+                    <input
+                      type="password"
+                      value={newOwnPassword}
+                      onChange={(event) => setNewOwnPassword(event.target.value)}
+                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-[#F6A66A]"
+                      autoComplete="new-password"
+                      required
+                    />
+                  </label>
+                  <label className="block text-xs font-semibold text-slate-300">
+                    {t('account.confirmNewPassword')}
+                    <input
+                      type="password"
+                      value={confirmOwnPassword}
+                      onChange={(event) => setConfirmOwnPassword(event.target.value)}
+                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-[#F6A66A]"
+                      autoComplete="new-password"
+                      required
+                    />
+                  </label>
+                  <button
+                    type="submit"
+                    disabled={passwordChanging || !currentOwnPassword || !newOwnPassword || !confirmOwnPassword}
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    {passwordChanging ? t('common.loading') : t('common.save')}
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
 
           {/* BusinessTreePanelRemoved: tenant documents now expand under the main navigation menu. */}
@@ -2826,6 +2915,7 @@ function Topbar({
   overview,
   overviewLoading,
   onRefresh,
+  onOpenChangePassword,
   onSignOut,
   onOpenMenu,
   showBusinessControl,
@@ -2845,6 +2935,7 @@ function Topbar({
   overview: MetaOrgOverview | null
   overviewLoading: boolean
   onRefresh: () => void
+  onOpenChangePassword: () => void
   onSignOut: () => void
   onOpenMenu: () => void
   showBusinessControl: boolean
@@ -2959,6 +3050,15 @@ function Topbar({
           >
             {themeMode === 'dark' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
             <span className="hidden sm:inline">{themeMode === 'dark' ? t('shell.theme.dark') : t('shell.theme.light')}</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenChangePassword}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200"
+            aria-label={t('account.changePassword')}
+            title={t('account.changePassword')}
+          >
+            <KeyRound className="h-4 w-4" />
           </button>
           <button
             type="button"

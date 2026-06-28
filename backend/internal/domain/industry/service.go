@@ -505,6 +505,9 @@ func (s *Service) validateModules(ctx context.Context, orgID uuid.UUID, industry
 	for _, key := range PackageModuleKeys(pkg) {
 		allowed[key] = true
 	}
+	for _, key := range defaultAllowedModulesForIndustry(industryKey) {
+		allowed[key] = true
+	}
 	extensionModules, err := s.repo.ListOrganizationExtensionModules(ctx, orgID, industryKey)
 	if err != nil {
 		return err
@@ -518,6 +521,32 @@ func (s *Service) validateModules(ctx context.Context, orgID uuid.UUID, industry
 		}
 	}
 	return nil
+}
+
+func defaultAllowedModulesForIndustry(industryKey string) []string {
+	if normalizeKey(industryKey) != "general" {
+		return nil
+	}
+	return []string{
+		"organization",
+		"project",
+		"workflow",
+		"governance",
+		"verification",
+		"monitoring",
+		"meta_resource",
+		"assistant",
+		"ai_gateway",
+		"toolruntime",
+		"erp",
+		"finance",
+		"costing",
+		"inventory",
+		"procurement",
+		"sales",
+		"developer_tools",
+		"retail",
+	}
 }
 
 func PackageModuleKeys(pkg Package) []string {

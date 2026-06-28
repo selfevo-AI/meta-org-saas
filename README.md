@@ -185,6 +185,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 - `TENANT_DATABASE_ADMIN_URL` 应指向同一 PostgreSQL 实例上的管理库，例如 `postgres`，用于创建和迁移租户库。
 - 租户库必须通过后端 tenant database provisioner 或等价的 tenant migrator 创建；不要直接用 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 创建新租户库，因为该文件包含 `tenantdb:include`，直接执行不会展开 ERP/Finance 基线。
 - 旧单库 `meta_org` 不再作为活动运行库；如需迁移，只能作为明确命名的备份或迁移源，再同步到新建并迁移完成的 `meta_org_saas`。
+- SaaS 管理台维护租户组织、组织所有者、组织账号状态、组织账号权限层级和密码重置。普通账号只能通过自助改密接口修改自己的密码。
 
 ## ERP code-table 供应链规范
 
@@ -339,6 +340,8 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 4. 再打开模型设置，检查 Channels / Keys、Routing、Usage Analysis 页面是否能加载。
 
 如果租户侧 Finance / ERP 接口出现 `relation gl_journal_entries does not exist`，检查当前组织对应的 `meta_org_xxxx` 租户库是否由 tenant migrator 创建。手工 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 不会展开 `tenantdb:include`，会导致 ERP/Finance 表缺失。
+
+如果 SaaS 管理台在为 `general` 行业组织启用 ERP 或行业方案时出现 `industry module policy denied update: module erp is not allowed by industry general`，说明平台行业包或代码层默认模块白名单未包含 ERP 入口模块。当前规范要求 `general` 可启用基础组织治理模块以及 `erp`、`finance`、`costing`、`inventory`、`procurement`、`sales`、`retail` 等 ERP/行业闭环模块；新增行业包时必须同步维护 baseline seed、后端策略校验和 SystemAdmin 前端入口。
 
 如果浏览器显示 `Failed to fetch`，先验证 API 健康接口，再检查后端响应是否包含 `Access-Control-Allow-Origin`。Windows PowerShell 启动后端时，逗号分隔的 `CORS_ORIGINS` 必须作为一个字符串传入。
 5. 打开 Meta Resource 工作区，先执行一次“同步现有资源”，确认 human、agent、external_human、model_channel、tool、capability 资源能进入统一资源视图。

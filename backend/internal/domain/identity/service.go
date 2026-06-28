@@ -30,6 +30,7 @@ type UserRepository interface {
 	CreateUser(ctx context.Context, input CreateUserInput) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, error)
+	UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error
 	CreateAgent(ctx context.Context, input CreateAgentInput) (*AIAgent, string, error)
 	GetAgentByID(ctx context.Context, id uuid.UUID) (*AIAgent, error)
 	ListAgents(ctx context.Context, limit int) ([]AIAgent, error)
@@ -193,6 +194,24 @@ func (s *Service) RegisterUser(ctx context.Context, input CreateUserInput) (*Aut
 		ExpiresAt: expiresAt,
 	}
 	return s.enrichAuthResponse(ctx, resp, user.ID), nil
+}
+
+func (s *Service) ChangeOwnPassword(ctx context.Context, userID uuid.UUID, currentPassword string, newPassword string) error {
+	if userID == uuid.Nil || strings.TrimSpace(currentPassword) == "" || strings.TrimSpace(newPassword) == "" {
+		return fmt.Errorf("%w: current_password and new_password are required", ErrValidation)
+	}
+	user, err := s.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return ErrInvalidCredentials
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash new password: %w", err)
+	}
+	return s.repo.UpdateUserPassword(ctx, userID, string(hash))
 }
 
 func (s *Service) RegisterAgent(ctx context.Context, input CreateAgentInput) (*RegisterAgentResponse, error) {

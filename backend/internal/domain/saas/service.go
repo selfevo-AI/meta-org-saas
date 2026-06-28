@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/identity"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/passwordhash"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
@@ -49,6 +50,9 @@ type repository interface {
 	GetSubscription(context.Context, uuid.UUID) (*OrganizationSubscription, error)
 	ListEnabledModules(context.Context, uuid.UUID) (map[string]bool, error)
 	UpdateOrganizationModules(context.Context, uuid.UUID, []string) (map[string]bool, error)
+	ListOrganizationAccounts(context.Context, uuid.UUID, int) ([]OrganizationUserAccount, error)
+	UpdateOrganizationAccount(context.Context, UpdateOrganizationAccountRecord) (*OrganizationUserAccount, error)
+	ResetOrganizationAccountPassword(context.Context, uuid.UUID, uuid.UUID, string, uuid.UUID) (*OrganizationUserAccount, error)
 	CreateInvitation(context.Context, uuid.UUID, uuid.UUID, CreateInvitationInput, string) (*Invitation, error)
 	ListInvitations(context.Context, uuid.UUID, int) ([]Invitation, error)
 	AcceptInvitationWithNewUser(context.Context, string, AcceptInvitationInput, string) (*OrganizationAccount, uuid.UUID, error)
@@ -346,6 +350,72 @@ func (s *Service) UpdateOrganizationModules(ctx context.Context, actorID uuid.UU
 		return nil, err
 	}
 	return s.repo.UpdateOrganizationModules(ctx, orgID, modules)
+}
+
+func (s *Service) ListOrganizationAccounts(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID, limit int) ([]OrganizationUserAccount, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionOrganizationManage); err != nil {
+		return nil, err
+	}
+	if orgID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	return s.repo.ListOrganizationAccounts(ctx, orgID, normalizeAccountLimit(limit))
+}
+
+func (s *Service) UpdateOrganizationAccount(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID, userID uuid.UUID, input UpdateOrganizationAccountInput) (*OrganizationUserAccount, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionOrganizationManage); err != nil {
+		return nil, err
+	}
+	if orgID == uuid.Nil || userID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id and user_id are required", ErrValidation)
+	}
+	name := strings.TrimSpace(input.Name)
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+	accountStatus := normalizeAccountKey(input.AccountStatus)
+	authorityTier := normalizeAccountKey(input.AuthorityTier)
+	if accountStatus != "" && accountStatus != "active" && accountStatus != "disabled" {
+		return nil, fmt.Errorf("%w: account_status must be active or disabled", ErrValidation)
+	}
+	if authorityTier != "" && !validAuthorityTier(authorityTier) {
+		return nil, fmt.Errorf("%w: invalid authority_tier", ErrValidation)
+	}
+	if name == "" && email == "" && accountStatus == "" && authorityTier == "" {
+		return nil, fmt.Errorf("%w: at least one account field is required", ErrValidation)
+	}
+	return s.repo.UpdateOrganizationAccount(ctx, UpdateOrganizationAccountRecord{
+		OrganizationID: orgID,
+		UserID:         userID,
+		ActorID:        actorID,
+		Name:           name,
+		Email:          email,
+		AccountStatus:  accountStatus,
+		AuthorityTier:  authorityTier,
+	})
+}
+
+func (s *Service) ResetOrganizationAccountPassword(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID, userID uuid.UUID, input ResetOrganizationAccountPasswordInput) (*ResetOrganizationAccountPasswordResponse, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionOrganizationManage); err != nil {
+		return nil, err
+	}
+	if orgID == uuid.Nil || userID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id and user_id are required", ErrValidation)
+	}
+	temporaryPassword := strings.TrimSpace(input.Password)
+	if temporaryPassword == "" {
+		var err error
+		temporaryPassword, err = newInviteToken()
+		if err != nil {
+			return nil, err
+		}
+	}
+	hash, err := passwordhash.GenerateBcryptHash(temporaryPassword, 0)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.repo.ResetOrganizationAccountPassword(ctx, orgID, userID, hash, actorID); err != nil {
+		return nil, err
+	}
+	return &ResetOrganizationAccountPasswordResponse{UserID: userID, TemporaryPassword: temporaryPassword}, nil
 }
 
 func (s *Service) CreateInvitation(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID, input CreateInvitationInput) (*Invitation, error) {
@@ -702,4 +772,18 @@ func newInviteToken() (string, error) {
 		return "", fmt.Errorf("generate invite token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func normalizeAccountLimit(limit int) int {
+	if limit <= 0 {
+		return 50
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
+}
+
+func normalizeAccountKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }

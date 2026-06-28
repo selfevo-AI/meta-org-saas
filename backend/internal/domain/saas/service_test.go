@@ -206,6 +206,41 @@ func TestUpdateOrganizationModulesRequiresIndustryPolicy(t *testing.T) {
 	}
 }
 
+func TestPlatformAdminCanUpdateTenantAccountAndResetPassword(t *testing.T) {
+	actorID := uuid.New()
+	orgID := uuid.New()
+	targetUserID := uuid.New()
+	repo := &fakeRepository{platformRole: "owner"}
+	svc := NewService(repo, ModeSaaS)
+
+	account, err := svc.UpdateOrganizationAccount(context.Background(), actorID, orgID, targetUserID, UpdateOrganizationAccountInput{
+		Name:          "New Owner",
+		Email:         "new-owner@example.test",
+		AccountStatus: "active",
+		AuthorityTier: AuthorityOwner,
+	})
+	if err != nil {
+		t.Fatalf("UpdateOrganizationAccount error = %v", err)
+	}
+	if account.UserID != targetUserID || account.AuthorityTier != AuthorityOwner || !account.IsOwner {
+		t.Fatalf("account = %#v, want promoted owner account", account)
+	}
+	if repo.updatedAccount == nil || repo.updatedAccount.Email != "new-owner@example.test" {
+		t.Fatalf("updatedAccount = %#v, want repository update record", repo.updatedAccount)
+	}
+
+	reset, err := svc.ResetOrganizationAccountPassword(context.Background(), actorID, orgID, targetUserID, ResetOrganizationAccountPasswordInput{})
+	if err != nil {
+		t.Fatalf("ResetOrganizationAccountPassword error = %v", err)
+	}
+	if reset.TemporaryPassword == "" || reset.UserID != targetUserID {
+		t.Fatalf("reset = %#v, want temporary password for target user", reset)
+	}
+	if repo.resetPasswordHash == "" || repo.resetPasswordHash == reset.TemporaryPassword {
+		t.Fatalf("resetPasswordHash = %q, want bcrypt hash", repo.resetPasswordHash)
+	}
+}
+
 func TestCloseOrganizationRequiresPlatformAdmin(t *testing.T) {
 	actorID := uuid.New()
 	orgID := uuid.New()
@@ -367,6 +402,8 @@ type fakeRepository struct {
 	modules                 []Module
 	sampleTenant            *CreatedSampleTenant
 	sampleRecord            CreateSampleTenantRecord
+	updatedAccount          *UpdateOrganizationAccountRecord
+	resetPasswordHash       string
 }
 
 func (f *fakeRepository) BootstrapPlatformAdmin(context.Context, string, string) error {
@@ -421,6 +458,28 @@ func (f *fakeRepository) ListEnabledModules(context.Context, uuid.UUID) (map[str
 func (f *fakeRepository) UpdateOrganizationModules(context.Context, uuid.UUID, []string) (map[string]bool, error) {
 	f.updatedModules = true
 	return map[string]bool{"assistant": true}, nil
+}
+
+func (f *fakeRepository) ListOrganizationAccounts(context.Context, uuid.UUID, int) ([]OrganizationUserAccount, error) {
+	return []OrganizationUserAccount{}, nil
+}
+
+func (f *fakeRepository) UpdateOrganizationAccount(_ context.Context, record UpdateOrganizationAccountRecord) (*OrganizationUserAccount, error) {
+	f.updatedAccount = &record
+	return &OrganizationUserAccount{
+		UserID:         record.UserID,
+		OrganizationID: record.OrganizationID,
+		Name:           record.Name,
+		Email:          record.Email,
+		AccountStatus:  record.AccountStatus,
+		AuthorityTier:  record.AuthorityTier,
+		IsOwner:        record.AuthorityTier == AuthorityOwner,
+	}, nil
+}
+
+func (f *fakeRepository) ResetOrganizationAccountPassword(_ context.Context, orgID uuid.UUID, userID uuid.UUID, passwordHash string, _ uuid.UUID) (*OrganizationUserAccount, error) {
+	f.resetPasswordHash = passwordHash
+	return &OrganizationUserAccount{OrganizationID: orgID, UserID: userID, AccountStatus: "active"}, nil
 }
 
 func (f *fakeRepository) CreateInvitation(context.Context, uuid.UUID, uuid.UUID, CreateInvitationInput, string) (*Invitation, error) {

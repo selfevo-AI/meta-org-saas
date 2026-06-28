@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -33,6 +34,7 @@ func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 }
 
 func (h *Handler) RegisterProtectedRoutes(r chi.Router) {
+	r.Post("/auth/me/password", h.changeOwnPassword)
 	r.Post("/agents/register", h.registerAgent)
 	r.Get("/agents", h.listAgents)
 }
@@ -90,6 +92,46 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, user)
+}
+
+func (h *Handler) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentHumanUser(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if err := h.service.ChangeOwnPassword(r.Context(), user, req.CurrentPassword, req.NewPassword); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrValidation) {
+			status = http.StatusBadRequest
+		} else if errors.Is(err, ErrInvalidCredentials) {
+			status = http.StatusUnauthorized
+		}
+		writeJSON(w, status, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+}
+
+func currentHumanUser(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
+	user, ok := middleware.UserFromContext(r.Context())
+	if !ok || user.Type != "human" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return uuid.Nil, false
+	}
+	userID, err := uuid.Parse(user.ID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid authenticated user"})
+		return uuid.Nil, false
+	}
+	return userID, true
 }
 
 func (h *Handler) registerAgent(w http.ResponseWriter, r *http.Request) {

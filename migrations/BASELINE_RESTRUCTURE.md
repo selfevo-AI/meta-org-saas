@@ -49,6 +49,14 @@ the historical single database `meta_org` as an active runtime database after
 the split; it may only be used as an explicitly named backup or migration
 source.
 
+The SaaS management database also owns tenant account governance. Platform
+administrators may list tenant organization accounts, change the organization
+owner/authority tier, update account status and email/name, and reset tenant
+account passwords. Human users and other authenticated account holders may only
+change their own password through the identity self-service endpoint. These
+flows are platform-governed operations and must not be implemented as direct
+tenant database writes.
+
 Tenant migrations must be executed by the backend tenant migrator or another
 tool that understands `-- tenantdb:include`. Running
 `migrations/tenant/001_tenant_business_baseline.sql` directly with `psql -f`
@@ -58,6 +66,14 @@ incomplete tenant database where ERP/finance tables such as
 If manual recovery is unavoidable, run the included ERP baseline explicitly and
 record the checksum that the tenant migrator calculates for the expanded tenant
 file.
+
+Industry module policy must stay aligned with the staged seeds. The `general`
+industry baseline is allowed to enable core organization/governance modules and
+the ERP operating loop modules (`erp`, `finance`, `costing`, `inventory`,
+`procurement`, `sales`, `retail`) so a tenant can adopt the standard ERP and
+retail distribution industry solutions without a policy denial. Any future
+industry module addition must update both `000_saas_platform_management_baseline.sql`
+seed assets and the backend policy defaults before the UI exposes it.
 
 The June 2026 split-database recovery surfaced these concrete failure modes:
 

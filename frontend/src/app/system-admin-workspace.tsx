@@ -54,6 +54,7 @@ import {
   listIndustryPackages,
   listIndustryPublicationRequests,
   listMonitoringAgentRuns,
+  listOrganizationAccounts,
   listOrganizationInvitations,
   listOrganizationSchemaTargets,
   listDatabaseMaintenanceJobs,
@@ -67,6 +68,7 @@ import {
   listSaaSModules,
   publishPlatformFeature,
   resetPlatformUserPassword,
+  resetOrganizationAccountPassword,
   reviewDatabaseMaintenanceJob,
   reviewIndustryPublicationRequest,
   runMonitoringAgent,
@@ -80,7 +82,9 @@ import {
   type IndustryPublicationRequest,
   type IndustrySolutionManifest,
   type OrganizationIndustryAdoption,
+  type OrganizationUserAccount,
   updateOrganizationModules,
+  updateOrganizationAccount,
   updateIndustryPackage,
   type OrganizationInvitation,
   type OrganizationSubscription,
@@ -305,6 +309,8 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [subscription, setSubscription] = useState<OrganizationSubscription | null>(null)
   const [entitlements, setEntitlements] = useState<Record<string, boolean>>({})
   const [moduleDraft, setModuleDraft] = useState<string[]>([])
+  const [organizationAccounts, setOrganizationAccounts] = useState<OrganizationUserAccount[]>([])
+  const [accountDrafts, setAccountDrafts] = useState<Record<string, { name: string; email: string; account_status: string; authority_tier: string }>>({})
   const [invitations, setInvitations] = useState<OrganizationInvitation[]>([])
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
@@ -573,20 +579,33 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setSubscription(null)
       setEntitlements({})
       setModuleDraft([])
+      setOrganizationAccounts([])
+      setAccountDrafts({})
       setInvitations([])
       return
     }
     setLoading(true)
     setError('')
     try {
-      const [subscriptionItem, entitlementItems, invitationItems] = await Promise.all([
+      const [subscriptionItem, entitlementItems, accountItems, invitationItems] = await Promise.all([
         getOrganizationSubscription(token, activeOrganizationID).catch(() => null),
         getOrganizationEntitlements(token, activeOrganizationID).catch(() => ({} as Record<string, boolean>)),
+        listOrganizationAccounts(token, activeOrganizationID, 100).catch(() => [] as OrganizationUserAccount[]),
         listOrganizationInvitations(token, activeOrganizationID, 100).catch(() => [] as OrganizationInvitation[]),
       ])
       setSubscription(subscriptionItem)
       setEntitlements(entitlementItems)
       setModuleDraft(Object.entries(entitlementItems).filter(([, enabled]) => enabled).map(([key]) => key))
+      setOrganizationAccounts(accountItems)
+      setAccountDrafts(Object.fromEntries(accountItems.map((item) => [
+        item.user_id,
+        {
+          name: item.name,
+          email: item.email,
+          account_status: item.account_status,
+          authority_tier: item.authority_tier,
+        },
+      ])))
       setInvitations(invitationItems)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
@@ -1057,6 +1076,30 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       await disablePlatformUser(token, userID)
       await loadPlatformUsers()
     }, 'systemAdmin.platformUserDisabled')
+  }
+
+  async function saveOrganizationAccount(userID: string) {
+    if (!activeOrganizationID || !canPlatform('organization.manage')) return
+    const draft = accountDrafts[userID]
+    if (!draft) return
+    await runSaaS(async () => {
+      await updateOrganizationAccount(token, activeOrganizationID, userID, {
+        name: draft.name.trim(),
+        email: draft.email.trim(),
+        account_status: draft.account_status,
+        authority_tier: draft.authority_tier,
+      })
+      await loadOrganizationSaaSDetails()
+    }, 'systemAdmin.organizationAccountUpdated')
+  }
+
+  async function resetTenantAccountPassword(userID: string) {
+    if (!activeOrganizationID || !canPlatform('organization.manage')) return
+    await runSaaS(async () => {
+      const result = await resetOrganizationAccountPassword(token, activeOrganizationID, userID)
+      setTemporaryCredential(result.temporary_password)
+      await loadOrganizationSaaSDetails()
+    }, 'systemAdmin.organizationPasswordReset')
   }
 
   async function createMaintenanceJob() {
@@ -1532,6 +1575,119 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   <ShieldCheck className="h-4 w-4" />
                   {t('systemAdmin.closeOrganization')}
                 </button>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.organizationAccounts')}</h2>
+                  <p className="mt-1 text-sm text-slate-500">{selectedOrganization?.name || t('common.notSelected')}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void loadOrganizationSaaSDetails()}
+                  disabled={!activeOrganizationID || loading || !canPlatform('organization.manage')}
+                  className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  {t('common.refresh')}
+                </button>
+              </div>
+              <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+                <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">{t('common.name')}</th>
+                      <th className="px-3 py-2">{t('auth.email')}</th>
+                      <th className="px-3 py-2">{t('systemAdmin.accountStatus')}</th>
+                      <th className="px-3 py-2">{t('systemAdmin.authorityTier')}</th>
+                      <th className="px-3 py-2">{t('table.actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {organizationAccounts.map((account) => {
+                      const draft = accountDrafts[account.user_id] ?? {
+                        name: account.name,
+                        email: account.email,
+                        account_status: account.account_status,
+                        authority_tier: account.authority_tier,
+                      }
+                      return (
+                        <tr key={account.user_id}>
+                          <td className="px-3 py-3">
+                            <input
+                              value={draft.name}
+                              onChange={(event) => setAccountDrafts((current) => ({ ...current, [account.user_id]: { ...draft, name: event.target.value } }))}
+                              disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                              className="h-9 w-full min-w-[140px] rounded-md border border-slate-300 px-2 text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-3">
+                            <input
+                              value={draft.email}
+                              onChange={(event) => setAccountDrafts((current) => ({ ...current, [account.user_id]: { ...draft, email: event.target.value } }))}
+                              type="email"
+                              disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                              className="h-9 w-full min-w-[180px] rounded-md border border-slate-300 px-2 text-sm"
+                            />
+                          </td>
+                          <td className="px-3 py-3">
+                            <select
+                              value={draft.account_status}
+                              onChange={(event) => setAccountDrafts((current) => ({ ...current, [account.user_id]: { ...draft, account_status: event.target.value } }))}
+                              disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                            >
+                              {['active', 'disabled'].map((status) => (
+                                <option key={status} value={status}>{t(status)}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-3">
+                            <select
+                              value={draft.authority_tier}
+                              onChange={(event) => setAccountDrafts((current) => ({ ...current, [account.user_id]: { ...draft, authority_tier: event.target.value } }))}
+                              disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm"
+                            >
+                              {['organization_creator', 'organization_admin', 'reviewer', 'executor'].map((tier) => (
+                                <option key={tier} value={tier}>{t(tier)}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void saveOrganizationAccount(account.user_id)}
+                                disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                                className="inline-flex h-8 items-center gap-1 rounded-md bg-slate-950 px-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <Save className="h-3.5 w-3.5" />
+                                {t('common.save')}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void resetTenantAccountPassword(account.user_id)}
+                                disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
+                                className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-300 px-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                {t('systemAdmin.resetPassword')}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {organizationAccounts.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-6 text-center text-slate-500">{t('systemAdmin.noOrganizationAccounts')}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
 

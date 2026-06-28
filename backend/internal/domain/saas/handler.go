@@ -31,6 +31,9 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Get("/platform/organizations", h.listPlatformOrganizations)
 	r.Post("/platform/admin/sample-tenants/business-closure", h.createBusinessClosureSampleTenant)
 	r.Post("/platform/admin/organizations/{id}/close", h.closePlatformOrganization)
+	r.Get("/platform/admin/organizations/{id}/accounts", h.listOrganizationAccounts)
+	r.Patch("/platform/admin/organizations/{id}/accounts/{userID}", h.updateOrganizationAccount)
+	r.Post("/platform/admin/organizations/{id}/accounts/{userID}/reset-password", h.resetOrganizationAccountPassword)
 }
 
 func (h *Handler) RegisterTenantRoutes(r chi.Router) {
@@ -102,6 +105,41 @@ func (h *Handler) createBusinessClosureSampleTenant(w http.ResponseWriter, r *ht
 	}
 	result, err := h.service.CreateBusinessClosureSampleTenant(r.Context(), userID)
 	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listOrganizationAccounts(w http.ResponseWriter, r *http.Request) {
+	userID, orgID, ok := h.authenticatedPlatformOrg(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.ListOrganizationAccounts(r.Context(), userID, orgID, queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) updateOrganizationAccount(w http.ResponseWriter, r *http.Request) {
+	userID, orgID, targetUserID, ok := h.authenticatedPlatformOrgUser(w, r)
+	if !ok {
+		return
+	}
+	var input UpdateOrganizationAccountInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.UpdateOrganizationAccount(r.Context(), userID, orgID, targetUserID, input)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) resetOrganizationAccountPassword(w http.ResponseWriter, r *http.Request) {
+	userID, orgID, targetUserID, ok := h.authenticatedPlatformOrgUser(w, r)
+	if !ok {
+		return
+	}
+	var input ResetOrganizationAccountPasswordInput
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input)
+	}
+	result, err := h.service.ResetOrganizationAccountPassword(r.Context(), userID, orgID, targetUserID, input)
+	writeResult(w, http.StatusOK, result, err)
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +215,32 @@ func (h *Handler) authenticatedOrg(w http.ResponseWriter, r *http.Request) (uuid
 		return uuid.Nil, uuid.Nil, false
 	}
 	return userID, orgID, true
+}
+
+func (h *Handler) authenticatedPlatformOrg(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, bool) {
+	userID, ok := authenticatedUserID(w, r)
+	if !ok {
+		return uuid.Nil, uuid.Nil, false
+	}
+	orgID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid organization id"})
+		return uuid.Nil, uuid.Nil, false
+	}
+	return userID, orgID, true
+}
+
+func (h *Handler) authenticatedPlatformOrgUser(w http.ResponseWriter, r *http.Request) (uuid.UUID, uuid.UUID, uuid.UUID, bool) {
+	userID, orgID, ok := h.authenticatedPlatformOrg(w, r)
+	if !ok {
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	targetUserID, err := uuid.Parse(chi.URLParam(r, "userID"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid user id"})
+		return uuid.Nil, uuid.Nil, uuid.Nil, false
+	}
+	return userID, orgID, targetUserID, true
 }
 
 func authenticatedUserID(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {

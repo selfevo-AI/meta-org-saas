@@ -177,6 +177,35 @@ func TestApplyPackageRejectsModulesOutsideIndustryAndExtensions(t *testing.T) {
 	}
 }
 
+func TestValidateOrganizationModulesAllowsERPForGeneralIndustry(t *testing.T) {
+	generalPackageID := uuid.MustParse("55555555-5555-5555-5555-555555555555")
+	generalPackage := validPackage()
+	generalPackage.ID = generalPackageID
+	generalPackage.IndustryKey = "general"
+	generalPackage.PackageKey = "general-foundation"
+	generalPackage.Assets = []PackageAsset{
+		{AssetKey: "organization-module", AssetType: AssetTypeModule, Payload: map[string]any{"module_key": "organization"}},
+	}
+	repo := &fakeRepository{
+		packageByID: map[uuid.UUID]*Package{
+			generalPackageID: &generalPackage,
+		},
+		adoption: &OrganizationAdoption{
+			OrganizationID: organizationID,
+			IndustryKey:    "general",
+			PackageID:      generalPackageID,
+			Primary:        true,
+			EnabledModules: []string{"organization"},
+			Status:         StatusActive,
+		},
+	}
+	service := NewService(repo)
+
+	if err := service.ValidateOrganizationModules(context.Background(), organizationID, []string{"organization", "erp"}); err != nil {
+		t.Fatalf("ValidateOrganizationModules() error = %v, want general industry to allow erp", err)
+	}
+}
+
 func TestSubmitPublicationCreatesPendingRequestForTenantExtension(t *testing.T) {
 	repo := &fakeRepository{
 		membership: "organization_admin",
@@ -347,6 +376,7 @@ type fakeRepository struct {
 	packageByID             map[uuid.UUID]*Package
 	extensionByID           map[uuid.UUID]*Extension
 	allowedExtensionModules []string
+	adoption                *OrganizationAdoption
 	publicationRequest      *PublicationRequest
 	publicationGateResults  []PublicationGateResult
 	reviewedStatus          string
@@ -390,8 +420,8 @@ func (f *fakeRepository) GetPackage(context.Context, uuid.UUID) (*Package, error
 	return f.packageByID[uuid.Nil], nil
 }
 
-func (f *fakeRepository) GetPackageByID(context.Context, uuid.UUID) (*Package, error) {
-	return f.packageByID[packageID], nil
+func (f *fakeRepository) GetPackageByID(_ context.Context, id uuid.UUID) (*Package, error) {
+	return f.packageByID[id], nil
 }
 
 func (f *fakeRepository) CreatePackage(context.Context, CreatePackageInput, uuid.UUID) (*Package, error) {
@@ -450,7 +480,7 @@ func (f *fakeRepository) ListOrganizationExtensionModules(context.Context, uuid.
 }
 
 func (f *fakeRepository) GetAdoption(context.Context, uuid.UUID) (*OrganizationAdoption, error) {
-	return nil, nil
+	return f.adoption, nil
 }
 
 func (f *fakeRepository) CreateExtension(context.Context, CreateExtensionInput, uuid.UUID) (*Extension, error) {

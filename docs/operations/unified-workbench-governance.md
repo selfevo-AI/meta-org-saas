@@ -7,6 +7,7 @@ Meta-Org 的操作界面同时服务人类操作员和具备权限的内部/外�
 ## UI 规范
 
 - SaaS 管理台提供统一治理地图，串联租户、数据库目标、字段权限、运行时操作、API Workbench 和 schema 资产。
+- SaaS 管理台的租户治理必须覆盖组织所有者、组织账号、账号状态、权限层级和密码重置；这些操作同时提供人类 UI 和受权限控制的 API。
 - 租户操作台采用单据型工作台：左侧为模块/单据列表，主区域上半部分为主表表头，下半部分为子表明细。
 - 单据、模块、表、字段、API 操作都必须可链接到上下文详情；链接可以先落到当前页面锚点，后续再接入专用详情路由。
 - 现有 tab 语义优先面向人类操作，包括浏览、编辑、审批、执行、审计和 API/Agent。
@@ -24,9 +25,11 @@ Meta-Org 的操作界面同时服务人类操作员和具备权限的内部/外�
 - 每个人类可点击的业务动作都应映射到 `ApiOperation` 或平台 runtime operation。
 - 单据页面内嵌 API/Agent 操作抽屉，独立 API Workbench 继续保留用于集中调试。
 - runtime operation 的 `metadata.workspace` 是租户单据工作台的优先元数据来源；缺失时可使用前端保守默认配置。
+- 账号安全操作分层：平台管理员通过 SaaS 管理台 API 管理租户账号与重置临时密码，所有已认证账号通过身份 API 修改自己的密码；不得要求直接改库。
 
 ## 数据库与分库约束
 
 - SaaS 管理库固定为 `meta_org_saas`。
 - 租户业务库固定为 `meta_org_xxxx`，其中 `xxxx` 是租户组织 UUID 去掉连字符后的前四位小写 hex。
 - 租户业务表、ERP 表和财务表属于租户库；平台权限、schema、runtime operation 和数据库目标属于 SaaS 管理库。
+- `general` 行业组织可以启用 ERP 标准闭环所需模块，包括 `erp`、`finance`、`costing`、`inventory`、`procurement`、`sales` 和 `retail`。若 UI 暴露模块但行业策略拒绝，优先检查 `000` baseline seed 与后端行业策略是否同步。

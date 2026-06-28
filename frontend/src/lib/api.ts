@@ -433,6 +433,14 @@ export async function resetPlatformUserPassword(token: string, userID: string): 
   })
 }
 
+export async function changeOwnPassword(token: string, currentPassword: string, newPassword: string): Promise<{ status: string }> {
+  return apiRequest<{ status: string }>('/auth/me/password', {
+    method: 'POST',
+    token,
+    body: { current_password: currentPassword, new_password: newPassword },
+  })
+}
+
 export async function disablePlatformUser(token: string, userID: string): Promise<PlatformUser> {
   return apiRequest<PlatformUser>(`/platform/admin/users/${encodeURIComponent(userID)}/disable`, { method: 'POST', token })
 }
@@ -484,6 +492,35 @@ export async function updatePlatformOrganizationProfile(
     token,
     body: input,
   })
+}
+
+export async function listOrganizationAccounts(token: string, organizationID: string, limit = 100): Promise<OrganizationUserAccount[]> {
+  const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
+  return apiRequest<OrganizationUserAccount[]>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/accounts${query}`, { token })
+}
+
+export async function updateOrganizationAccount(
+  token: string,
+  organizationID: string,
+  userID: string,
+  input: UpdateOrganizationAccountInput,
+): Promise<OrganizationUserAccount> {
+  return apiRequest<OrganizationUserAccount>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/accounts/${encodeURIComponent(userID)}`,
+    { method: 'PATCH', token, body: input },
+  )
+}
+
+export async function resetOrganizationAccountPassword(
+  token: string,
+  organizationID: string,
+  userID: string,
+  password?: string,
+): Promise<ResetOrganizationAccountPasswordResponse> {
+  return apiRequest<ResetOrganizationAccountPasswordResponse>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/accounts/${encodeURIComponent(userID)}/reset-password`,
+    { method: 'POST', token, body: password ? { password } : {} },
+  )
 }
 
 export async function getOrganizationSubscription(token: string, organizationID: string): Promise<OrganizationSubscription> {
@@ -1605,6 +1642,31 @@ export interface CreatePlatformUserResponse {
 }
 
 export interface ResetPlatformUserPasswordResponse {
+  user_id: string
+  temporary_password: string
+}
+
+export interface OrganizationUserAccount {
+  user_id: string
+  organization_id: string
+  membership_id?: string
+  name: string
+  email: string
+  account_status: string
+  authority_tier: string
+  is_owner: boolean
+  member_status: string
+  updated_at?: string
+}
+
+export interface UpdateOrganizationAccountInput {
+  name?: string
+  email?: string
+  account_status?: string
+  authority_tier?: string
+}
+
+export interface ResetOrganizationAccountPasswordResponse {
   user_id: string
   temporary_password: string
 }

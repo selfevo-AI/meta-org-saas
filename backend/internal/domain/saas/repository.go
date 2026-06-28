@@ -811,6 +811,140 @@ func (r *Repository) UpdateOrganizationModules(ctx context.Context, orgID uuid.U
 	return r.ListEnabledModules(ctx, orgID)
 }
 
+func (r *Repository) ListOrganizationAccounts(ctx context.Context, orgID uuid.UUID, limit int) ([]OrganizationUserAccount, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT u.id, m.organization_id, m.id, u.name, u.email, COALESCE(u.account_status, 'active'),
+		       m.authority_tier, m.authority_tier = 'organization_creator', m.status, GREATEST(u.updated_at, m.updated_at)
+		FROM organization_memberships m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.organization_id = $1 AND m.member_type = 'internal'
+		ORDER BY CASE WHEN m.authority_tier = 'organization_creator' THEN 0 ELSE 1 END, u.email
+		LIMIT $2
+	`, orgID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list organization accounts: %w", err)
+	}
+	defer rows.Close()
+	items := []OrganizationUserAccount{}
+	for rows.Next() {
+		item, err := scanOrganizationUserAccount(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list organization accounts iteration: %w", err)
+	}
+	return items, nil
+}
+
+func (r *Repository) UpdateOrganizationAccount(ctx context.Context, record UpdateOrganizationAccountRecord) (*OrganizationUserAccount, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update organization account: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var membershipID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM organization_memberships
+		WHERE organization_id = $1 AND user_id = $2 AND member_type = 'internal'
+		FOR UPDATE
+	`, record.OrganizationID, record.UserID).Scan(&membershipID); err != nil {
+		return nil, fmt.Errorf("lock organization account: %w", err)
+	}
+	if record.AuthorityTier == AuthorityOwner {
+		if _, err := tx.Exec(ctx, `
+			UPDATE organization_memberships
+			SET authority_tier = 'organization_admin', title = 'Admin', updated_at = NOW()
+			WHERE organization_id = $1 AND user_id <> $2 AND authority_tier = 'organization_creator'
+		`, record.OrganizationID, record.UserID); err != nil {
+			return nil, fmt.Errorf("demote previous organization owner: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users
+		SET name = COALESCE(NULLIF($2, ''), name),
+		    email = COALESCE(NULLIF($3, ''), email),
+		    account_status = COALESCE(NULLIF($4, ''), account_status),
+		    updated_at = NOW()
+		WHERE id = $1
+	`, record.UserID, record.Name, record.Email, record.AccountStatus); err != nil {
+		return nil, fmt.Errorf("update organization user account: %w", err)
+	}
+	if record.AuthorityTier != "" {
+		title := "Member"
+		if record.AuthorityTier == AuthorityOwner {
+			title = "Owner"
+		} else if record.AuthorityTier == AuthorityAdmin {
+			title = "Admin"
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE organization_memberships
+			SET authority_tier = $3, title = $4, updated_at = NOW()
+			WHERE organization_id = $1 AND user_id = $2
+		`, record.OrganizationID, record.UserID, record.AuthorityTier, title); err != nil {
+			return nil, fmt.Errorf("update organization user authority: %w", err)
+		}
+	}
+	item, err := scanOrganizationUserAccount(tx.QueryRow(ctx, `
+		SELECT u.id, m.organization_id, m.id, u.name, u.email, COALESCE(u.account_status, 'active'),
+		       m.authority_tier, m.authority_tier = 'organization_creator', m.status, GREATEST(u.updated_at, m.updated_at)
+		FROM organization_memberships m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.organization_id = $1 AND m.user_id = $2
+	`, record.OrganizationID, record.UserID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update organization account: %w", err)
+	}
+	return item, nil
+}
+
+func (r *Repository) ResetOrganizationAccountPassword(ctx context.Context, orgID uuid.UUID, userID uuid.UUID, passwordHash string, actorID uuid.UUID) (*OrganizationUserAccount, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin reset organization password: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	var membershipID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT id
+		FROM organization_memberships
+		WHERE organization_id = $1 AND user_id = $2 AND member_type = 'internal'
+	`, orgID, userID).Scan(&membershipID); err != nil {
+		return nil, fmt.Errorf("verify organization account: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE users
+		SET password_hash = $2, updated_at = NOW()
+		WHERE id = $1
+	`, userID, passwordHash); err != nil {
+		return nil, fmt.Errorf("reset organization account password: %w", err)
+	}
+	item, err := scanOrganizationUserAccount(tx.QueryRow(ctx, `
+		SELECT u.id, m.organization_id, m.id, u.name, u.email, COALESCE(u.account_status, 'active'),
+		       m.authority_tier, m.authority_tier = 'organization_creator', m.status, GREATEST(u.updated_at, m.updated_at)
+		FROM organization_memberships m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.organization_id = $1 AND m.user_id = $2
+	`, orgID, userID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit reset organization password: %w", err)
+	}
+	return item, nil
+}
+
 func (r *Repository) GetSubscription(ctx context.Context, orgID uuid.UUID) (*OrganizationSubscription, error) {
 	item := &OrganizationSubscription{}
 	var metadataJSON []byte
@@ -1050,6 +1184,27 @@ func scanInvitation(scan interface{ Scan(dest ...any) error }, item *Invitation)
 	}
 	item.Metadata = unmarshalMap(metadataJSON)
 	return nil
+}
+
+func scanOrganizationUserAccount(scan interface{ Scan(dest ...any) error }) (*OrganizationUserAccount, error) {
+	var item OrganizationUserAccount
+	var membershipID pgtype.UUID
+	if err := scan.Scan(
+		&item.UserID,
+		&item.OrganizationID,
+		&membershipID,
+		&item.Name,
+		&item.Email,
+		&item.AccountStatus,
+		&item.AuthorityTier,
+		&item.IsOwner,
+		&item.MemberStatus,
+		&item.UpdatedAt,
+	); err != nil {
+		return nil, fmt.Errorf("scan organization account: %w", err)
+	}
+	item.MembershipID = uuidPointer(membershipID)
+	return &item, nil
 }
 
 func hashToken(token string) string {
