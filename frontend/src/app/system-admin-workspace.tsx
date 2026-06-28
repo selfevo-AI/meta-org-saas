@@ -18,6 +18,7 @@ import {
   Trash2,
   Upload,
   Users,
+  X,
 } from 'lucide-react'
 import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { AIAssistant } from './ai-assistant'
@@ -322,6 +323,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [rolePermissionDraft, setRolePermissionDraft] = useState<Record<string, string>>({})
   const [platformUserDraft, setPlatformUserDraft] = useState({ name: '', email: '', roles: 'operator' })
   const [temporaryCredential, setTemporaryCredential] = useState('')
+  const [temporaryCredentialScope, setTemporaryCredentialScope] = useState<'platform' | 'organization' | ''>('')
   const [maintenanceDraft, setMaintenanceDraft] = useState({ jobType: 'backup', scope: 'platform', reason: '', backupRef: '' })
   const [masters, setMasters] = useState<PlatformMaster[]>([])
   const [details, setDetails] = useState<PlatformDetail[]>([])
@@ -1058,6 +1060,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         roles: splitLines(platformUserDraft.roles),
       })
       setTemporaryCredential(result.temporary_password)
+      setTemporaryCredentialScope('platform')
       setPlatformUserDraft({ name: '', email: '', roles: 'operator' })
       await loadPlatformUsers()
     }, 'systemAdmin.platformUserCreated')
@@ -1067,6 +1070,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     await run(async () => {
       const result = await resetPlatformUserPassword(token, userID)
       setTemporaryCredential(result.temporary_password)
+      setTemporaryCredentialScope('platform')
       await loadPlatformUsers()
     }, 'systemAdmin.platformPasswordReset')
   }
@@ -1098,6 +1102,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     await runSaaS(async () => {
       const result = await resetOrganizationAccountPassword(token, activeOrganizationID, userID)
       setTemporaryCredential(result.temporary_password)
+      setTemporaryCredentialScope('organization')
       await loadOrganizationSaaSDetails()
     }, 'systemAdmin.organizationPasswordReset')
   }
@@ -1594,6 +1599,27 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   {t('common.refresh')}
                 </button>
               </div>
+              {temporaryCredentialScope === 'organization' && temporaryCredential && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase text-amber-700">{t('systemAdmin.temporaryPassword')}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTemporaryCredential('')
+                        setTemporaryCredentialScope('')
+                      }}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-200 text-amber-700 transition hover:bg-amber-100"
+                      aria-label={t('common.close')}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                  <pre className="mt-2 overflow-auto rounded-md bg-white/70 p-2 font-mono text-sm font-semibold text-amber-900">
+                    {temporaryCredential}
+                  </pre>
+                </div>
+              )}
               <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
                 <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
                   <thead className="bg-slate-50 text-xs uppercase text-slate-500">
@@ -2439,10 +2465,26 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             </div>
             <Users className="h-5 w-5 text-slate-500" />
           </div>
-          {temporaryCredential && (
-            <pre className="mt-4 overflow-auto rounded-lg border border-amber-200 bg-amber-50 p-3 font-mono text-xs text-amber-800">
-              {temporaryCredential}
-            </pre>
+          {temporaryCredentialScope === 'platform' && temporaryCredential && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase text-amber-700">{t('systemAdmin.temporaryPassword')}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTemporaryCredential('')
+                    setTemporaryCredentialScope('')
+                  }}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-amber-200 text-amber-700 transition hover:bg-amber-100"
+                  aria-label={t('common.close')}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <pre className="mt-2 overflow-auto rounded-md bg-white/70 p-2 font-mono text-sm font-semibold text-amber-900">
+                {temporaryCredential}
+              </pre>
+            </div>
           )}
           <div className="mt-5 grid gap-4 xl:grid-cols-[320px_1fr]">
             <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
