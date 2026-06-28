@@ -3,6 +3,7 @@ const USER_KEY = 'meta_org.user'
 const ORGANIZATION_KEY = 'meta_org.organization_id'
 const LEGACY_TOKEN_KEY = 'harness_token'
 const LEGACY_USER_KEY = 'harness_user'
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export interface SessionOrganization {
   id: string
@@ -42,7 +43,7 @@ export function setSession(token: string, userId: string, userType: string, deta
     localStorage.removeItem(ORGANIZATION_KEY)
     return
   }
-  const nextOrgID = user.default_organization_id || user.organizations?.[0]?.id
+  const nextOrgID = normalizeOrganizationId(user.default_organization_id || user.organizations?.[0]?.id)
   if (nextOrgID) {
     localStorage.setItem(ORGANIZATION_KEY, nextOrgID)
   } else {
@@ -85,14 +86,27 @@ export function isAuthenticated(): boolean {
 
 export function getCurrentOrganizationId(): string | null {
   if (typeof window === 'undefined') return null
-  return localStorage.getItem(ORGANIZATION_KEY)
+  const value = normalizeOrganizationId(localStorage.getItem(ORGANIZATION_KEY))
+  if (!value) {
+    localStorage.removeItem(ORGANIZATION_KEY)
+  }
+  return value
 }
 
 export function setCurrentOrganizationId(organizationId: string | null): void {
   if (typeof window === 'undefined') return
-  if (organizationId) {
-    localStorage.setItem(ORGANIZATION_KEY, organizationId)
+  const value = normalizeOrganizationId(organizationId)
+  if (value) {
+    localStorage.setItem(ORGANIZATION_KEY, value)
   } else {
     localStorage.removeItem(ORGANIZATION_KEY)
   }
+}
+
+export function normalizeOrganizationId(organizationId?: string | null): string | null {
+  const value = organizationId?.trim()
+  if (!value || value === 'null' || value === 'undefined' || !UUID_PATTERN.test(value)) {
+    return null
+  }
+  return value
 }

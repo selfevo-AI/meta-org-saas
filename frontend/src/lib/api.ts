@@ -1,4 +1,4 @@
-import { getCurrentOrganizationId } from './auth'
+import { getCurrentOrganizationId, normalizeOrganizationId } from './auth'
 import type { ApiOperation } from './operations'
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8080/api/v1'
@@ -16,7 +16,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   if (options.token) {
     headers['Authorization'] = `Bearer ${options.token}`
-    const organizationId = options.organizationId !== undefined ? options.organizationId : getCurrentOrganizationId()
+    const organizationId = normalizeOrganizationId(options.organizationId !== undefined ? options.organizationId : getCurrentOrganizationId())
     if (organizationId) {
       headers['X-Organization-ID'] = organizationId
     }

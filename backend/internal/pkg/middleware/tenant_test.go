@@ -117,3 +117,26 @@ func TestTenantMiddlewareOnboardingRequired(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusPreconditionRequired)
 	}
 }
+
+func TestTenantMiddlewareInvalidOrganization(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := TenantMiddleware(staticTenantResolver{err: ErrTenantInvalid})(next)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req = req.WithContext(context.WithValue(req.Context(), UserContextKey, AuthenticatedUser{
+		ID:   uuid.New().String(),
+		Type: "human",
+		Name: "Tester",
+	}))
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusBadRequest)
+	}
+	if got := rr.Body.String(); got != "{\"error\":\"invalid_organization\"}\n" {
+		t.Fatalf("body = %q", got)
+	}
+}

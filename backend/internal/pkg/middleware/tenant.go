@@ -16,6 +16,7 @@ const TenantContextKey tenantContextKey = "tenant"
 
 var (
 	ErrTenantRequired     = errors.New("organization context is required")
+	ErrTenantInvalid      = errors.New("organization context is invalid")
 	ErrOnboardingRequired = errors.New("onboarding is required")
 	ErrTenantForbidden    = errors.New("organization access forbidden")
 )
@@ -67,6 +68,8 @@ func TenantMiddleware(resolver TenantResolver) func(http.Handler) http.Handler {
 					writeTenantError(w, http.StatusPreconditionRequired, "onboarding_required")
 				case errors.Is(err, ErrTenantRequired):
 					writeTenantError(w, http.StatusBadRequest, "organization_required")
+				case errors.Is(err, ErrTenantInvalid):
+					writeTenantError(w, http.StatusBadRequest, "invalid_organization")
 				case errors.Is(err, ErrTenantForbidden):
 					writeTenantError(w, http.StatusForbidden, "organization_forbidden")
 				default:

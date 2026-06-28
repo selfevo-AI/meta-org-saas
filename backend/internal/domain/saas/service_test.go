@@ -300,6 +300,23 @@ func TestResolveTenantRejectsClosedOrganization(t *testing.T) {
 	}
 }
 
+func TestResolveTenantRejectsInvalidRequestedOrganizationID(t *testing.T) {
+	userID := uuid.New()
+	repo := &fakeRepository{
+		profile: &UserProfile{
+			ID:               userID,
+			OnboardingStatus: OnboardingComplete,
+		},
+	}
+	svc := NewService(repo, ModeSaaS)
+
+	_, err := svc.ResolveTenant(context.Background(), middleware.AuthenticatedUser{ID: userID.String(), Type: "human"}, "null")
+
+	if !errors.Is(err, middleware.ErrTenantInvalid) {
+		t.Fatalf("ResolveTenant error = %v, want ErrTenantInvalid", err)
+	}
+}
+
 func TestResolveTenantIncludesTenantDatabaseTarget(t *testing.T) {
 	userID := uuid.New()
 	orgID := uuid.New()

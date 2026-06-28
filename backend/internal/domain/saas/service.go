@@ -485,7 +485,7 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 	if strings.TrimSpace(requestedOrganizationID) != "" {
 		parsed, err := uuid.Parse(strings.TrimSpace(requestedOrganizationID))
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid organization id", ErrValidation)
+			return nil, middleware.ErrTenantInvalid
 		}
 		requested = &parsed
 	}
