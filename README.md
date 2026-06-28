@@ -169,7 +169,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | 迁移 | 主题 |
 |---|---|
 | `000_saas_platform_management_baseline.sql` | SaaS 管理平台、平台账号、权限治理、订阅、模块、租户和平台主从数据基础。 |
-| `001_erp_code_baseline.sql` | ERP/行业业务基线，包含组织、项目、工作流、财务、成本、供应链等行业解决方案表。 |
+| `001_erp_code_baseline.sql` | ERP/行业业务基线，包含组织、项目、工作流、财务、成本，以及以 ERP code-table 为主模型的供应链和行业解决方案表。 |
 | `002_erp_platform_integration_baseline.sql` | ERP 与平台管理的运行期投影、模块集成和平台主数据同步。 |
 | `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、上下文、skill、AI 用量，以及跨阶段外键重建。 |
 
@@ -185,6 +185,14 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 - `TENANT_DATABASE_ADMIN_URL` 应指向同一 PostgreSQL 实例上的管理库，例如 `postgres`，用于创建和迁移租户库。
 - 租户库必须通过后端 tenant database provisioner 或等价的 tenant migrator 创建；不要直接用 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 创建新租户库，因为该文件包含 `tenantdb:include`，直接执行不会展开 ERP/Finance 基线。
 - 旧单库 `meta_org` 不再作为活动运行库；如需迁移，只能作为明确命名的备份或迁移源，再同步到新建并迁移完成的 `meta_org_saas`。
+
+## ERP code-table 供应链规范
+
+- 租户业务库中的采购、销售、库存、仓库和零售行业方案统一以 ERP code-table 工作台为主模型。
+- 采购订单使用 `MPOR/POR1`，销售订单使用 `MRDR/RDR1`，仓库库存余额使用 `MITW/ITW1`，库存收发使用 `MIGN/IGN1` 和 `MIGE/IGE1`。
+- 零售配送闭环使用 `MRPS/RPS1`、`MDRQ/DRQ1`、`MDSP/DSP1`、`MDRC/DRC1`、`MDIF/DIF1`、`MSTP/STP1`、`MCNT/CNT1` 和 `MSPR/SPR1`。
+- fresh tenant baseline 不再创建旧语义供应链表，例如 `inventory_counts`、`inventory_transfers`、`purchase_orders`、`sales_shipments`、`inventory_balances`、`sales_orders`。
+- 旧库存/采购/销售语义 API 若继续保留，只能作为兼容层或迁移入口；新增行业方案、UI 工作台、Agent API 和 demo 验证必须优先走 ERP code-table。
 
 ## API 概览
 
@@ -323,7 +331,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
 
 成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 返回 `{"status":"ok"}`。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
 
-AI Gateway、Meta Resource、SaaS、安全内核和供应链模块启动时必须确认四个阶段基线 `000/001/002/004` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或供应链页面出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`、`relation inventory_items does not exist` 等错误，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。若出现 `relation platform.database_maintenance_jobs does not exist` 或 `relation platform.tenant_database_targets does not exist`，通常是后端仍连接旧 `meta_org` 或不完整的平台库。处理顺序：
+AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启动时必须确认四个阶段基线 `000/001/002/004` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或 ERP 工作台出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`，或缺少 `MITW`、`MPOR`、`MRDR`、`MRPS`、`MDRQ` 等 ERP code-table 关系，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。若出现 `relation platform.database_maintenance_jobs does not exist` 或 `relation platform.tenant_database_targets does not exist`，通常是后端仍连接旧 `meta_org` 或不完整的平台库。处理顺序：
 
 1. 确认 `DATABASE_URL` 和 `PLATFORM_DATABASE_URL` 指向当前 `meta_org_saas` 平台管理库。
 2. 确认从 `backend/` 本地运行时使用 `MIGRATIONS_PATH=../migrations`。

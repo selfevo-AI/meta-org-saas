@@ -264,6 +264,25 @@ export async function listIndustryPackages(token: string, industryKey: string, l
   return apiRequest<IndustryPackage[]>(`/platform/admin/industries/${encodeURIComponent(industryKey)}/packages${query}`, { token })
 }
 
+export async function updateIndustryPackage(
+  token: string,
+  packageID: string,
+  input: UpdateIndustryPackageInput,
+): Promise<IndustryPackage> {
+  return apiRequest<IndustryPackage>(`/platform/admin/industry-packages/${encodeURIComponent(packageID)}`, {
+    method: 'PATCH',
+    token,
+    body: input,
+  })
+}
+
+export async function deleteIndustryPackage(token: string, packageID: string): Promise<IndustryPackage> {
+  return apiRequest<IndustryPackage>(`/platform/admin/industry-packages/${encodeURIComponent(packageID)}`, {
+    method: 'DELETE',
+    token,
+  })
+}
+
 export async function applyIndustryPackageToOrganization(
   token: string,
   packageID: string,
@@ -573,6 +592,16 @@ export async function createERPStandardSolutionFlow(
       method: 'POST',
       token,
       body: input,
+    },
+  )
+}
+
+export async function createRetailDistributionSolutionFlow(token: string, organizationID: string): Promise<SchemaChangeRequest> {
+  return apiRequest<SchemaChangeRequest>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-flows/retail-distribution`,
+    {
+      method: 'POST',
+      token,
     },
   )
 }
@@ -1661,6 +1690,14 @@ export interface IndustryPackage {
   created_by?: string
   created_at: string
   updated_at: string
+}
+
+export interface UpdateIndustryPackageInput {
+  name?: string
+  description?: string
+  status?: string
+  assets?: IndustryPackageAsset[]
+  metadata?: Record<string, unknown>
 }
 
 export interface OrganizationIndustryAdoption {

@@ -153,7 +153,7 @@ npm run test:erp-operations
 npm run test:operations
 npm run test:system-admin
 npm run test:runtime-workbench
-npm run test:supply-chain
+# Then run the retail closed-loop checklist in docs/operations/retail-distribution-industry-solution.md.
 ```
 
 Service checks:

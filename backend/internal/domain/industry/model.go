@@ -150,6 +150,24 @@ type CreatePackageInput struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
+type UpdatePackageInput struct {
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status,omitempty"`
+	Assets      []PackageAsset `json:"assets"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
+type UpdatePackageRecord struct {
+	PackageID   uuid.UUID
+	Name        string
+	Description string
+	Status      string
+	Assets      []PackageAsset
+	Metadata    map[string]any
+	ActorID     uuid.UUID
+}
+
 type ApplyPackageInput struct {
 	PackageID      uuid.UUID      `json:"package_id"`
 	OrganizationID uuid.UUID      `json:"organization_id"`

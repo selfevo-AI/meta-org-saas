@@ -601,6 +601,38 @@ func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, i
 	})
 }
 
+func (s *Service) BuildRetailDistributionSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*SchemaChangeRequest, error) {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "retail_chain_distribution"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "retail_distribution_v1"
+	}
+	if input.Name == "" {
+		input.Name = "Retail Distribution v1"
+	}
+	input.EnabledModules = []string{"master_data", "procurement", "inventory", "sales", "finance", "retail"}
+	pkg := BuildRetailDistributionSolutionSchemaPackage(input)
+	desiredManifest, err := ManifestFromSchemaPackage(pkg)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	currentManifest := IndustrySolutionManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
+	if input.CurrentTemplate != nil {
+		if parsed, err := ManifestFromSchemaPackage(*input.CurrentTemplate); err == nil {
+			currentManifest = parsed
+		}
+	}
+	pkg.Metadata["package_diff"] = BuildPackageAssetDiff(currentManifest, desiredManifest)
+	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
+		OrganizationID:       input.OrganizationID,
+		RequestType:          "retail_distribution_solution_flow",
+		Reason:               "Create retail distribution industry solution flow",
+		SchemaPackage:        pkg,
+		CurrentSchemaPackage: input.CurrentTemplate,
+	})
+}
+
 func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 	catalog := erp.DefaultCatalog()
 	actions := erp.DefaultActionRegistry().List()
@@ -846,6 +878,60 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 	}
 }
 
+func BuildRetailDistributionSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "retail_chain_distribution"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "retail_distribution_v1"
+	}
+	if input.Name == "" {
+		input.Name = "Retail Distribution v1"
+	}
+	input.EnabledModules = []string{"master_data", "procurement", "inventory", "sales", "finance", "retail"}
+	pkg := BuildERPSolutionSchemaPackage(input)
+	pkg.ModuleKey = "retail_distribution"
+	pkg.Metadata["solution_key"] = "retail_distribution_v1"
+	pkg.Metadata["code_table_only"] = true
+	pkg.Metadata["semantic_supply_chain_policy"] = "removed_from_primary_model"
+	pkg.Metadata["ui_workspaces"] = []string{"master_data", "procurement", "sales", "inventory", "finance", "retail", "developer_erp_code"}
+	pkg.Metadata["assistant_targets"] = []string{"store", "pos_terminal", "member", "promotion", "item_publication", "pos_sale", "distribution_request", "distribution_shipment", "distribution_receipt", "distribution_difference", "stock_policy", "store_count", "special_purchase_request", "purchase_order", "delivery", "ar_invoice", "incoming_payment", "trial_balance"}
+	pkg.Metadata["process_loops"] = append(mapSliceFromAny(pkg.Metadata["process_loops"]),
+		map[string]any{"key": "retail_replenishment_to_distribution", "steps": []string{"MSTP.replenish", "MDRQ.submit", "MDRQ.approve", "MDRQ.auto-allocate", "MDSP.ship", "MDRC.receive", "MDIF.resolve"}},
+		map[string]any{"key": "retail_pos_to_cash", "steps": []string{"MRPS.close", "MIGE", "MINV", "MRCT"}},
+		map[string]any{"key": "retail_count_to_adjustment", "steps": []string{"MCNT.submit", "MCNT.approve", "MCNT.post-adjustment", "MIGN", "MIGE"}},
+		map[string]any{"key": "retail_special_procurement", "steps": []string{"MSPR.submit", "MSPR.approve", "MSPR.convert-to-purchase-order", "MPOR.submit", "MPOR.approve", "MPDN.post"}},
+	)
+	pkg.Metadata["verification_scenarios"] = append(mapSliceFromAny(pkg.Metadata["verification_scenarios"]),
+		map[string]any{"scenario_key": "retail_replenishment_to_distribution_smoke", "steps": []string{"MSTP.replenish", "MDRQ.submit", "MDRQ.approve", "MDRQ.auto-allocate", "MDSP.ship", "MDRC.receive"}, "expected": []string{"MDRQ", "MDSP", "MIGE", "MDRC", "MIGN"}},
+		map[string]any{"scenario_key": "retail_pos_to_cash_smoke", "steps": []string{"MRPS.close"}, "expected": []string{"MIGE", "MINV", "MRCT"}},
+		map[string]any{"scenario_key": "retail_count_to_adjustment_smoke", "steps": []string{"MCNT.submit", "MCNT.approve", "MCNT.post-adjustment"}, "expected": []string{"MIGN", "MIGE"}},
+		map[string]any{"scenario_key": "retail_special_procurement_smoke", "steps": []string{"MSPR.submit", "MSPR.approve", "MSPR.convert-to-purchase-order"}, "expected": []string{"MPOR"}},
+	)
+	pkg.Metadata["context_rules"] = append(mapSliceFromAny(pkg.Metadata["context_rules"]),
+		map[string]any{
+			"key":                  "retail_distribution_state_context",
+			"scope":                "retail",
+			"source_tables":        []string{"MBRN", "MTER", "MMBR", "MPRM", "MPUB", "MRPS", "MDRQ", "MDSP", "MDRC", "MDIF", "MSTP", "MCNT", "MSPR", "MITW", "MIGN", "MIGE", "MINV", "MRCT"},
+			"required_permissions": []string{"erp:read", "assistant:erp"},
+			"workflow_stages":      []string{"draft", "submitted", "approved", "allocated", "shipped", "received", "posted", "closed"},
+			"attention_budget":     "retail_distribution_loop",
+		},
+	)
+	pkg.Metadata["assistant_skills"] = append(mapSliceFromAny(pkg.Metadata["assistant_skills"]),
+		map[string]any{
+			"skill_key":     "retail_distribution_operator",
+			"targets":       []string{"stock_policy", "distribution_request", "distribution_shipment", "distribution_receipt", "pos_sale", "store_count", "special_purchase_request"},
+			"context_rules": []string{"retail_distribution_state_context"},
+			"allowed_tools": []string{"erp.mstp.replenish", "erp.mdrq.submit", "erp.mdrq.approve", "erp.mdrq.auto-allocate", "erp.mdsp.ship", "erp.mdrc.receive", "erp.mrps.close", "erp.mcnt.post-adjustment", "erp.mspr.convert-to-purchase-order"},
+		},
+	)
+	manifest := buildIndustryManifest(input, pkg.Metadata)
+	manifest.Dependencies = append(manifest.Dependencies, "erp.retail_code_tables")
+	setIndustryManifest(&pkg, manifest)
+	return pkg
+}
+
 type erpRuntimeWorkspaceDocument struct {
 	Module       string
 	DocumentID   string
@@ -896,6 +982,19 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		{Module: "finance", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 50},
 		{Module: "finance", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 60},
 		{Module: "finance", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 70},
+		{Module: "retail", DocumentID: "store", LabelKey: "erp.document.store", SubmoduleKey: "erp.submodule.stores", TableCode: "MBRN", SortOrder: 10},
+		{Module: "retail", DocumentID: "pos_terminal", LabelKey: "erp.document.posTerminal", SubmoduleKey: "erp.submodule.pos", TableCode: "MTER", SortOrder: 20},
+		{Module: "retail", DocumentID: "member", LabelKey: "erp.document.member", SubmoduleKey: "erp.submodule.membersPromotions", TableCode: "MMBR", SortOrder: 30},
+		{Module: "retail", DocumentID: "promotion", LabelKey: "erp.document.promotion", SubmoduleKey: "erp.submodule.membersPromotions", TableCode: "MPRM", SortOrder: 40},
+		{Module: "retail", DocumentID: "item_publication", LabelKey: "erp.document.itemPublication", SubmoduleKey: "erp.submodule.membersPromotions", TableCode: "MPUB", Actions: []string{"publish"}, SortOrder: 50},
+		{Module: "retail", DocumentID: "pos_sale", LabelKey: "erp.document.posSale", SubmoduleKey: "erp.submodule.pos", TableCode: "MRPS", Actions: []string{"close"}, SortOrder: 60},
+		{Module: "retail", DocumentID: "distribution_request", LabelKey: "erp.document.distributionRequest", SubmoduleKey: "erp.submodule.distribution", TableCode: "MDRQ", Actions: []string{"submit", "approve", "auto-allocate"}, SortOrder: 70},
+		{Module: "retail", DocumentID: "distribution_shipment", LabelKey: "erp.document.distributionShipment", SubmoduleKey: "erp.submodule.distribution", TableCode: "MDSP", Actions: []string{"ship"}, SortOrder: 80},
+		{Module: "retail", DocumentID: "distribution_receipt", LabelKey: "erp.document.distributionReceipt", SubmoduleKey: "erp.submodule.distribution", TableCode: "MDRC", Actions: []string{"receive"}, SortOrder: 90},
+		{Module: "retail", DocumentID: "distribution_difference", LabelKey: "erp.document.distributionDifference", SubmoduleKey: "erp.submodule.distribution", TableCode: "MDIF", Actions: []string{"resolve"}, SortOrder: 100},
+		{Module: "retail", DocumentID: "stock_policy", LabelKey: "erp.document.stockPolicy", SubmoduleKey: "erp.submodule.inventoryControl", TableCode: "MSTP", Actions: []string{"replenish"}, SortOrder: 110},
+		{Module: "retail", DocumentID: "store_count", LabelKey: "erp.document.storeCount", SubmoduleKey: "erp.submodule.inventoryControl", TableCode: "MCNT", Actions: []string{"submit", "approve", "post-adjustment"}, SortOrder: 120},
+		{Module: "retail", DocumentID: "special_purchase_request", LabelKey: "erp.document.specialPurchaseRequest", SubmoduleKey: "erp.submodule.specialProcurement", TableCode: "MSPR", Actions: []string{"submit", "approve", "convert-to-purchase-order"}, SortOrder: 130},
 	}
 	operations := []map[string]any{}
 	seenPaths := map[string]bool{}

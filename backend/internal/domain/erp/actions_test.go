@@ -21,6 +21,20 @@ func TestDefaultActionRegistryIncludesBusinessActions(t *testing.T) {
 		{"MIGN", "post"},
 		{"MIGE", "post"},
 		{"MJDT", "post"},
+		{"MRPS", "close"},
+		{"MDRQ", "submit"},
+		{"MDRQ", "approve"},
+		{"MDRQ", "auto-allocate"},
+		{"MDSP", "ship"},
+		{"MDRC", "receive"},
+		{"MDIF", "resolve"},
+		{"MSTP", "replenish"},
+		{"MCNT", "submit"},
+		{"MCNT", "approve"},
+		{"MCNT", "post-adjustment"},
+		{"MSPR", "submit"},
+		{"MSPR", "approve"},
+		{"MSPR", "convert-to-purchase-order"},
 	}
 
 	for _, tc := range cases {

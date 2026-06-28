@@ -135,38 +135,33 @@ func bootstrapBusinessClosureSample(ctx context.Context, db DB, input TenantBoot
 	}
 
 	if _, err := db.Exec(ctx, `
-		WITH supplier AS (
-			INSERT INTO business_partners(partner_code, partner_type, name, email, status, organization_id, metadata)
-			VALUES ('SUP-DEMO', 'supplier', 'Demo Supplier', 'supplier@local.test', 'active', $1, jsonb_build_object('sample_key', $2::text))
-			ON CONFLICT (organization_id, partner_code) WHERE partner_code <> ''
-			DO UPDATE SET name = EXCLUDED.name, metadata = business_partners.metadata || EXCLUDED.metadata, updated_at = NOW()
-			RETURNING id
-		), customer AS (
-			INSERT INTO business_partners(partner_code, partner_type, name, email, status, organization_id, metadata)
-			VALUES ('CUS-DEMO', 'customer', 'Demo Customer', 'customer@local.test', 'active', $1, jsonb_build_object('sample_key', $2::text))
-			ON CONFLICT (organization_id, partner_code) WHERE partner_code <> ''
-			DO UPDATE SET name = EXCLUDED.name, metadata = business_partners.metadata || EXCLUDED.metadata, updated_at = NOW()
-			RETURNING id
-		), item AS (
-			INSERT INTO items(item_code, name, item_type, base_uom, status, organization_id, metadata)
-			VALUES ('ITM-DEMO', 'Demo Assembly Kit', 'material', 'EA', 'active', $1, jsonb_build_object('sample_key', $2::text))
-			ON CONFLICT (organization_id, item_code) WHERE item_code <> ''
-			DO UPDATE SET name = EXCLUDED.name, metadata = items.metadata || EXCLUDED.metadata, updated_at = NOW()
-			RETURNING id
-		), warehouse AS (
-			INSERT INTO warehouses(warehouse_code, name, status, organization_id, department_id, metadata)
-			VALUES ('WHS-DEMO', 'Demo Warehouse', 'active', $1, $3, jsonb_build_object('sample_key', $2::text))
-			ON CONFLICT (organization_id, warehouse_code) WHERE warehouse_code <> ''
-			DO UPDATE SET name = EXCLUDED.name, metadata = warehouses.metadata || EXCLUDED.metadata, updated_at = NOW()
-			RETURNING id
-		)
-		INSERT INTO inventory_balances(item_id, warehouse_id, quantity, average_cost, value_amount, currency, organization_id, metadata)
-		SELECT item.id, warehouse.id, 120, 25, 3000, 'CNY', $1, jsonb_build_object('sample_key', $2::text)
-		FROM item, warehouse
-		ON CONFLICT (item_id, warehouse_id, COALESCE(location_id, '00000000-0000-0000-0000-000000000000'::uuid))
-		DO UPDATE SET quantity = EXCLUDED.quantity, average_cost = EXCLUDED.average_cost, value_amount = EXCLUDED.value_amount, metadata = inventory_balances.metadata || EXCLUDED.metadata, updated_at = NOW()
+		INSERT INTO "MCRD"("CardCode", "Payload")
+		VALUES
+			('SUP-DEMO', jsonb_build_object('CardCode', 'SUP-DEMO', 'CardType', 'S', 'CardName', 'Demo Supplier', 'Email', 'supplier@local.test', 'organization_id', $1::uuid, 'sample_key', $2::text)),
+			('CUS-DEMO', jsonb_build_object('CardCode', 'CUS-DEMO', 'CardType', 'C', 'CardName', 'Demo Customer', 'Email', 'customer@local.test', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("CardCode") DO UPDATE SET
+			"Payload" = "MCRD"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW();
+
+		INSERT INTO "MITM"("ItemCode", "Payload")
+		VALUES ('ITM-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO', 'ItemName', 'Demo Assembly Kit', 'ItemType', 'material', 'InvntryUom', 'EA', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("ItemCode") DO UPDATE SET
+			"Payload" = "MITM"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW();
+
+		INSERT INTO "MWHS"("WhsCode", "Payload")
+		VALUES ('WHS-DEMO', jsonb_build_object('WhsCode', 'WHS-DEMO', 'WhsName', 'Demo Warehouse', 'organization_id', $1::uuid, 'department_id', $3::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("WhsCode") DO UPDATE SET
+			"Payload" = "MWHS"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW();
+
+		INSERT INTO "MITW"("ItemCode", "Payload")
+		VALUES ('ITM-DEMO|WHS-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO|WHS-DEMO', 'BaseItemCode', 'ITM-DEMO', 'WhsCode', 'WHS-DEMO', 'OnHand', 120, 'AvgPrice', 25, 'StockValue', 3000, 'Currency', 'CNY', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("ItemCode") DO UPDATE SET
+			"Payload" = "MITW"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW();
 	`, input.OrganizationID, input.SampleKey, departmentID); err != nil {
-		return fmt.Errorf("bootstrap sample inventory data: %w", err)
+		return fmt.Errorf("bootstrap sample ERP code-table inventory data: %w", err)
 	}
 	return nil
 }

@@ -81,6 +81,61 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
 			return tx.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"BtfStatus": "P"})
 		})
+	case "MPUB:publish":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "published"})
+	case "MRPS:close":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.closePOSSale(ctx, key)
+		})
+	case "MDRQ:submit":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"DocStatus": "S"})
+	case "MDRQ:approve":
+		if err := s.requireDocumentField(ctx, tableCode, key, "DocStatus", "S", "distribution request must be submitted before approval"); err != nil {
+			return nil, err
+		}
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
+	case "MDRQ:auto-allocate":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.autoAllocateDistributionRequest(ctx, key)
+		})
+	case "MDSP:ship":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.shipDistribution(ctx, key)
+		})
+	case "MDRC:receive":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.receiveDistribution(ctx, key)
+		})
+	case "MDIF:resolve":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.resolveDistributionDifference(ctx, key)
+		})
+	case "MSTP:replenish":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.replenishFromStockPolicy(ctx, key)
+		})
+	case "MCNT:submit":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"DocStatus": "S"})
+	case "MCNT:approve":
+		if err := s.requireDocumentField(ctx, tableCode, key, "DocStatus", "S", "store count must be submitted before approval"); err != nil {
+			return nil, err
+		}
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
+	case "MCNT:post-adjustment":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.postStoreCountAdjustment(ctx, key)
+		})
+	case "MSPR:submit":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"DocStatus": "S"})
+	case "MSPR:approve":
+		if err := s.requireDocumentField(ctx, tableCode, key, "DocStatus", "S", "special purchase request must be submitted before approval"); err != nil {
+			return nil, err
+		}
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"WddStatus": "A"})
+	case "MSPR:convert-to-purchase-order":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.convertSpecialPurchaseRequest(ctx, key)
+		})
 	default:
 		return nil, fmt.Errorf("%w: %s for %s", errUnsupportedERPAction, action, tableCode)
 	}
@@ -331,6 +386,323 @@ func (s *Service) allocateIncomingPayment(ctx context.Context, key string, input
 	return &ActionResult{TableCode: "MRCT", Key: key, Action: "allocate", Status: "allocated", Record: payment, Effects: map[string]any{"allocated_amount": amount, "target_table": targetTableCode, "target_key": targetKey}}, nil
 }
 
+func (s *Service) closePOSSale(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MRPS")
+	sale, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if isPostedDocument(sale) {
+		return &ActionResult{TableCode: "MRPS", Key: key, Action: "close", Status: "posted", Record: sale}, nil
+	}
+	lines, err := s.listChildPayloads(ctx, "MRPS", key, "RPS1")
+	if err != nil {
+		return nil, err
+	}
+	total := sumLineAmount(lines)
+	issue, err := s.createDocument(ctx, "MRPS", key, "close", "MIGE", "IGE-"+key, map[string]any{"CardCode": sale.Data["CardCode"], "DocTotal": total, "BaseEntry": key})
+	if err != nil {
+		return nil, err
+	}
+	invoice, err := s.createDocument(ctx, "MRPS", key, "close", "MINV", "INV-"+key, map[string]any{"CardCode": sale.Data["CardCode"], "DocTotal": total, "PaidToDate": total, "BaseEntry": key, "DocStatus": "C"})
+	if err != nil {
+		return nil, err
+	}
+	payment, err := s.createDocument(ctx, "MRPS", key, "close", "MRCT", "RCT-"+key, map[string]any{"CardCode": sale.Data["CardCode"], "DocTotal": total, "OpenBal": 0, "BaseEntry": "INV-" + key})
+	if err != nil {
+		return nil, err
+	}
+	for i, line := range lines {
+		if err := s.adjustInventory(ctx, stringValue(line, "ItemCode", ""), stringValue(line, "WhsCode", ""), numericValue(line, "Quantity"), -1); err != nil {
+			return nil, err
+		}
+		lineNum := fmt.Sprint(i + 1)
+		if _, err := s.createDocumentLine(ctx, "MIGE", issue.Key, "IGE1", lineNum, line); err != nil {
+			return nil, err
+		}
+		if _, err := s.createDocumentLine(ctx, "MINV", invoice.Key, "INV1", lineNum, line); err != nil {
+			return nil, err
+		}
+		if _, err := s.createDocumentLine(ctx, "MRCT", payment.Key, "RCT1", lineNum, line); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"DocStatus": "C", "Posted": "Y", "PaidToDate": total}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MRPS", Key: key, Action: "close", Status: "closed", Record: updated, GeneratedRecords: []Record{*issue, *invoice, *payment}}, nil
+}
+
+func (s *Service) autoAllocateDistributionRequest(ctx context.Context, key string) (*ActionResult, error) {
+	if err := s.requireDocumentField(ctx, "MDRQ", key, "WddStatus", "A", "distribution request must be approved before allocation"); err != nil {
+		return nil, err
+	}
+	table, _ := s.table("MDRQ")
+	request, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.listChildPayloads(ctx, "MDRQ", key, "DRQ1")
+	if err != nil {
+		return nil, err
+	}
+	shipmentKey := "DSP-" + key
+	shipment, err := s.createDocument(ctx, "MDRQ", key, "auto-allocate", "MDSP", shipmentKey, map[string]any{"BaseEntry": key, "FromWhsCode": request.Data["FromWhsCode"], "ToWhsCode": request.Data["ToWhsCode"], "DocTotal": sumLineAmount(lines)})
+	if err != nil {
+		return nil, err
+	}
+	for i, line := range lines {
+		next := copyData(line)
+		if stringValue(next, "FromWhsCode", "") == "" {
+			next["FromWhsCode"] = request.Data["FromWhsCode"]
+		}
+		if stringValue(next, "ToWhsCode", "") == "" {
+			next["ToWhsCode"] = request.Data["ToWhsCode"]
+		}
+		if _, err := s.createDocumentLine(ctx, "MDSP", shipment.Key, "DSP1", fmt.Sprint(i+1), next); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"AllocatedShipmentKey": shipmentKey, "DocStatus": "A"}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MDRQ", Key: key, Action: "auto-allocate", Status: "allocated", Record: updated, GeneratedRecords: []Record{*shipment}}, nil
+}
+
+func (s *Service) shipDistribution(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MDSP")
+	shipment, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if isPostedDocument(shipment) {
+		return &ActionResult{TableCode: "MDSP", Key: key, Action: "ship", Status: "posted", Record: shipment}, nil
+	}
+	lines, err := s.listChildPayloads(ctx, "MDSP", key, "DSP1")
+	if err != nil {
+		return nil, err
+	}
+	issue, err := s.createDocument(ctx, "MDSP", key, "ship", "MIGE", "IGE-"+key, map[string]any{"BaseEntry": key, "DocTotal": sumLineAmount(lines)})
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := s.createDocument(ctx, "MDSP", key, "ship", "MDRC", "DRC-"+key, map[string]any{"BaseEntry": key, "FromWhsCode": shipment.Data["FromWhsCode"], "ToWhsCode": shipment.Data["ToWhsCode"]})
+	if err != nil {
+		return nil, err
+	}
+	for i, line := range lines {
+		fromWhs := firstNonEmptyString(stringValue(line, "FromWhsCode", ""), stringValue(line, "WhsCode", ""), stringValue(shipment.Data, "FromWhsCode", ""))
+		if err := s.adjustInventory(ctx, stringValue(line, "ItemCode", ""), fromWhs, numericValue(line, "Quantity"), -1); err != nil {
+			return nil, err
+		}
+		lineNum := fmt.Sprint(i + 1)
+		if _, err := s.createDocumentLine(ctx, "MIGE", issue.Key, "IGE1", lineNum, line); err != nil {
+			return nil, err
+		}
+		if _, err := s.createDocumentLine(ctx, "MDRC", receipt.Key, "DRC1", lineNum, line); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"DocStatus": "C", "Posted": "Y", "ReceiptKey": receipt.Key}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MDSP", Key: key, Action: "ship", Status: "shipped", Record: updated, GeneratedRecords: []Record{*issue, *receipt}}, nil
+}
+
+func (s *Service) receiveDistribution(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MDRC")
+	receiptDoc, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if isPostedDocument(receiptDoc) {
+		return &ActionResult{TableCode: "MDRC", Key: key, Action: "receive", Status: "posted", Record: receiptDoc}, nil
+	}
+	lines, err := s.listChildPayloads(ctx, "MDRC", key, "DRC1")
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := s.createDocument(ctx, "MDRC", key, "receive", "MIGN", "IGN-"+key, map[string]any{"BaseEntry": key, "DocTotal": sumLineAmount(lines)})
+	if err != nil {
+		return nil, err
+	}
+	generated := []Record{*receipt}
+	for i, line := range lines {
+		toWhs := firstNonEmptyString(stringValue(line, "ToWhsCode", ""), stringValue(line, "WhsCode", ""), stringValue(receiptDoc.Data, "ToWhsCode", ""))
+		receivedQty := numericValue(line, "ReceivedQuantity")
+		if receivedQty == 0 {
+			receivedQty = numericValue(line, "Quantity")
+		}
+		if err := s.adjustInventory(ctx, stringValue(line, "ItemCode", ""), toWhs, receivedQty, 1); err != nil {
+			return nil, err
+		}
+		lineNum := fmt.Sprint(i + 1)
+		if _, err := s.createDocumentLine(ctx, "MIGN", receipt.Key, "IGN1", lineNum, line); err != nil {
+			return nil, err
+		}
+		if diff := receivedQty - numericValue(line, "Quantity"); diff != 0 {
+			difference, err := s.createDocument(ctx, "MDRC", key, "receive", "MDIF", "DIF-"+key, map[string]any{"BaseEntry": key, "DifferenceQuantity": diff})
+			if err != nil {
+				return nil, err
+			}
+			if _, err := s.createDocumentLine(ctx, "MDIF", difference.Key, "DIF1", lineNum, withDifferenceQuantity(line, diff)); err != nil {
+				return nil, err
+			}
+			generated = append(generated, *difference)
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"DocStatus": "C", "Posted": "Y"}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MDRC", Key: key, Action: "receive", Status: "received", Record: updated, GeneratedRecords: generated}, nil
+}
+
+func (s *Service) resolveDistributionDifference(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MDIF")
+	lines, err := s.listChildPayloads(ctx, "MDIF", key, "DIF1")
+	if err != nil {
+		return nil, err
+	}
+	generated := []Record{}
+	for i, line := range lines {
+		diff := numericValue(line, "DifferenceQuantity")
+		if diff == 0 {
+			continue
+		}
+		tableCode := "MIGN"
+		childCode := "IGN1"
+		direction := 1.0
+		docKey := "IGN-" + key
+		if diff < 0 {
+			tableCode = "MIGE"
+			childCode = "IGE1"
+			direction = -1
+			docKey = "IGE-" + key
+			diff = -diff
+		}
+		doc, err := s.createDocument(ctx, "MDIF", key, "resolve", tableCode, docKey, map[string]any{"BaseEntry": key})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.adjustInventory(ctx, stringValue(line, "ItemCode", ""), stringValue(line, "WhsCode", ""), diff, direction); err != nil {
+			return nil, err
+		}
+		if _, err := s.createDocumentLine(ctx, tableCode, doc.Key, childCode, fmt.Sprint(i+1), line); err != nil {
+			return nil, err
+		}
+		generated = append(generated, *doc)
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"DocStatus": "C", "Posted": "Y"}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MDIF", Key: key, Action: "resolve", Status: "resolved", Record: updated, GeneratedRecords: generated}, nil
+}
+
+func (s *Service) replenishFromStockPolicy(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MSTP")
+	policy, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.listChildPayloads(ctx, "MSTP", key, "STP1")
+	if err != nil {
+		return nil, err
+	}
+	request, err := s.createDocument(ctx, "MSTP", key, "replenish", "MDRQ", "DRQ-"+key, map[string]any{"BaseEntry": key, "FromWhsCode": policy.Data["FromWhsCode"], "ToWhsCode": policy.Data["ToWhsCode"], "DocStatus": "O"})
+	if err != nil {
+		return nil, err
+	}
+	for i, line := range lines {
+		if _, err := s.createDocumentLine(ctx, "MDRQ", request.Key, "DRQ1", fmt.Sprint(i+1), line); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"Status": "replenished", "LastRequestKey": request.Key}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MSTP", Key: key, Action: "replenish", Status: "replenished", Record: updated, GeneratedRecords: []Record{*request}}, nil
+}
+
+func (s *Service) postStoreCountAdjustment(ctx context.Context, key string) (*ActionResult, error) {
+	if err := s.requireDocumentField(ctx, "MCNT", key, "WddStatus", "A", "store count must be approved before adjustment"); err != nil {
+		return nil, err
+	}
+	table, _ := s.table("MCNT")
+	lines, err := s.listChildPayloads(ctx, "MCNT", key, "CNT1")
+	if err != nil {
+		return nil, err
+	}
+	generated := []Record{}
+	for i, line := range lines {
+		diff := numericValue(line, "CountedQuantity") - numericValue(line, "BookQuantity")
+		if diff == 0 {
+			continue
+		}
+		tableCode := "MIGN"
+		childCode := "IGN1"
+		direction := 1.0
+		docKey := "IGN-" + key
+		if diff < 0 {
+			tableCode = "MIGE"
+			childCode = "IGE1"
+			direction = -1
+			docKey = "IGE-" + key
+			diff = -diff
+		}
+		doc, err := s.createDocument(ctx, "MCNT", key, "post-adjustment", tableCode, docKey, map[string]any{"BaseEntry": key})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.adjustInventory(ctx, stringValue(line, "ItemCode", ""), stringValue(line, "WhsCode", ""), diff, direction); err != nil {
+			return nil, err
+		}
+		if _, err := s.createDocumentLine(ctx, tableCode, doc.Key, childCode, fmt.Sprint(i+1), withDifferenceQuantity(line, diff)); err != nil {
+			return nil, err
+		}
+		generated = append(generated, *doc)
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"DocStatus": "C", "Posted": "Y"}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MCNT", Key: key, Action: "post-adjustment", Status: "posted", Record: updated, GeneratedRecords: generated}, nil
+}
+
+func (s *Service) convertSpecialPurchaseRequest(ctx context.Context, key string) (*ActionResult, error) {
+	if err := s.requireDocumentField(ctx, "MSPR", key, "WddStatus", "A", "special purchase request must be approved before conversion"); err != nil {
+		return nil, err
+	}
+	table, _ := s.table("MSPR")
+	request, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.listChildPayloads(ctx, "MSPR", key, "SPR1")
+	if err != nil {
+		return nil, err
+	}
+	order, err := s.createDocument(ctx, "MSPR", key, "convert-to-purchase-order", "MPOR", "PO-"+key, map[string]any{"BaseEntry": key, "CardCode": request.Data["CardCode"], "DocTotal": sumLineAmount(lines)})
+	if err != nil {
+		return nil, err
+	}
+	for i, line := range lines {
+		if _, err := s.createDocumentLine(ctx, "MPOR", order.Key, "POR1", fmt.Sprint(i+1), line); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"DocStatus": "C", "ConvertedOrderKey": order.Key}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MSPR", Key: key, Action: "convert-to-purchase-order", Status: "converted", Record: updated, GeneratedRecords: []Record{*order}}, nil
+}
+
 func (s *Service) postInventoryDocument(ctx context.Context, tableCode string, key string, direction float64) (*ActionResult, error) {
 	table, _ := s.table(tableCode)
 	current, err := s.repo.GetRecord(ctx, table, key)
@@ -518,11 +890,11 @@ func (s *Service) createDocumentLine(ctx context.Context, parentCode string, par
 	if err != nil {
 		return nil, err
 	}
-	data := map[string]any{
-		child.ParentKey: parentKey,
-		"LineNum":       lineNum,
-		"LineStatus":    "O",
-		"Payload":       payload,
+	data := copyData(payload)
+	data[child.ParentKey] = parentKey
+	data["LineNum"] = lineNum
+	if _, ok := data["LineStatus"]; !ok {
+		data["LineStatus"] = "O"
 	}
 	return s.repo.CreateChildRecord(ctx, parent, child, parentKey, RecordInput{Key: lineNum, Data: data})
 }
@@ -584,6 +956,12 @@ func sumLineAmount(lines []map[string]any) float64 {
 		total += quantity * price
 	}
 	return total
+}
+
+func withDifferenceQuantity(line map[string]any, quantity float64) map[string]any {
+	next := copyData(line)
+	next["DifferenceQuantity"] = quantity
+	return next
 }
 
 func actionStatus(record *Record) string {

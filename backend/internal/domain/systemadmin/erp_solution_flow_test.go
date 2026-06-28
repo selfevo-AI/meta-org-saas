@@ -76,6 +76,45 @@ func TestBuildERPSolutionFlowBuildsCompleteChangePackage(t *testing.T) {
 	}
 }
 
+func TestBuildRetailDistributionSolutionFlowBuildsCodeTablePackage(t *testing.T) {
+	repo := &fakeRepository{role: "system_owner"}
+	service := NewService(repo)
+	organizationID := uuid.New()
+
+	result, err := service.BuildRetailDistributionSolutionFlow(context.Background(), uuid.New(), ERPSolutionFlowRequest{
+		OrganizationID: organizationID,
+		IndustryKey:    "retail_chain_distribution",
+		PackageKey:     "retail_distribution_v1",
+		Name:           "Retail Distribution v1",
+	})
+	if err != nil {
+		t.Fatalf("BuildRetailDistributionSolutionFlow error: %v", err)
+	}
+	if result.RequestType != "retail_distribution_solution_flow" {
+		t.Fatalf("RequestType = %q, want retail_distribution_solution_flow", result.RequestType)
+	}
+	manifest, err := ManifestFromSchemaPackage(result.SchemaPackage)
+	if err != nil {
+		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+	}
+	if manifest.IndustryKey != "retail_chain_distribution" || manifest.PackageKey != "retail_distribution_v1" {
+		t.Fatalf("manifest package = %s/%s, want retail_chain_distribution/retail_distribution_v1", manifest.IndustryKey, manifest.PackageKey)
+	}
+	for _, tableCode := range []string{"MRPS", "MDRQ", "MDSP", "MDRC", "MDIF", "MCNT", "MSPR"} {
+		if !manifestHasDatabaseAsset(manifest, tableCode) {
+			t.Fatalf("manifest missing retail ERP code-table %s", tableCode)
+		}
+	}
+	for _, loopKey := range []string{"retail_replenishment_to_distribution", "retail_pos_to_cash", "retail_count_to_adjustment", "retail_special_procurement"} {
+		if !manifestHasProcessLoop(manifest, loopKey) {
+			t.Fatalf("manifest missing process loop %s", loopKey)
+		}
+	}
+	if !manifestHasRuntimeWorkspace(manifest, "retail", "pos_sale", "MRPS", "close") {
+		t.Fatalf("manifest missing POS close runtime workspace")
+	}
+}
+
 func schemaPackageHasTable(pkg SchemaPackage, name string) bool {
 	for _, table := range pkg.Tables {
 		if table.Name == name {
@@ -98,6 +137,24 @@ func hasWorkspaceRuntimeOperation(operations []map[string]any, module string, do
 func hasRuntimeOperationPath(operations []map[string]any, path string) bool {
 	for _, operation := range operations {
 		if operation["path"] == path {
+			return true
+		}
+	}
+	return false
+}
+
+func manifestHasDatabaseAsset(manifest IndustrySolutionManifest, tableCode string) bool {
+	for _, asset := range manifest.Assets {
+		if asset.AssetType == AssetTypeDatabaseAsset && asset.Payload["table_code"] == tableCode {
+			return true
+		}
+	}
+	return false
+}
+
+func manifestHasProcessLoop(manifest IndustrySolutionManifest, key string) bool {
+	for _, asset := range manifest.Assets {
+		if asset.AssetType == AssetTypeProcessLoop && asset.Payload["key"] == key {
 			return true
 		}
 	}

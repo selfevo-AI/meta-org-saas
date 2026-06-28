@@ -29,6 +29,21 @@ func DefaultActionRegistry() ActionRegistry {
 		{TableCode: "MIGE", Action: "post", Label: "Post goods issue", Description: "Decrease inventory balance"},
 		{TableCode: "MJDT", Action: "post", Label: "Post journal entry", Description: "Post journal entry"},
 		{TableCode: "MGLR", Action: "run", Label: "Run trial balance", Description: "Calculate posted journal entry debit and credit totals"},
+		{TableCode: "MRPS", Action: "close", Label: "Close POS sale", Description: "Close POS sale and generate cash, invoice, and inventory issue", NextTables: []string{"MIGE", "MINV", "MRCT"}},
+		{TableCode: "MDRQ", Action: "submit", Label: "Submit distribution request", Description: "Submit store distribution request for approval"},
+		{TableCode: "MDRQ", Action: "approve", Label: "Approve distribution request", Description: "Approve store distribution request"},
+		{TableCode: "MDRQ", Action: "auto-allocate", Label: "Auto allocate distribution request", Description: "Create HQ distribution shipment from approved request", NextTables: []string{"MDSP"}},
+		{TableCode: "MDSP", Action: "ship", Label: "Ship distribution", Description: "Post HQ distribution shipment and decrease source inventory", NextTables: []string{"MIGE"}},
+		{TableCode: "MDRC", Action: "receive", Label: "Receive distribution", Description: "Post store distribution receipt and increase destination inventory", NextTables: []string{"MIGN", "MDIF"}},
+		{TableCode: "MDIF", Action: "resolve", Label: "Resolve distribution difference", Description: "Resolve distribution difference with inventory adjustment", NextTables: []string{"MIGN", "MIGE"}},
+		{TableCode: "MSTP", Action: "replenish", Label: "Generate replenishment request", Description: "Generate distribution request from stock policy", NextTables: []string{"MDRQ"}},
+		{TableCode: "MCNT", Action: "submit", Label: "Submit store count", Description: "Submit store inventory count for HQ approval"},
+		{TableCode: "MCNT", Action: "approve", Label: "Approve store count", Description: "Approve store inventory count"},
+		{TableCode: "MCNT", Action: "post-adjustment", Label: "Post count adjustment", Description: "Post store count differences to inventory", NextTables: []string{"MIGN", "MIGE"}},
+		{TableCode: "MSPR", Action: "submit", Label: "Submit special purchase request", Description: "Submit branch special purchase request"},
+		{TableCode: "MSPR", Action: "approve", Label: "Approve special purchase request", Description: "Approve branch special purchase request"},
+		{TableCode: "MSPR", Action: "convert-to-purchase-order", Label: "Convert to purchase order", Description: "Create purchase order from approved branch special purchase request", NextTables: []string{"MPOR"}},
+		{TableCode: "MPUB", Action: "publish", Label: "Publish items", Description: "Publish new items and promotion visibility to stores"},
 	}
 	registry := ActionRegistry{actions: map[string]ActionDefinition{}}
 	for _, def := range defs {

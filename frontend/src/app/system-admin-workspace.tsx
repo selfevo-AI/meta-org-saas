@@ -11,9 +11,11 @@ import {
   Layers3,
   Play,
   RefreshCw,
+  Save,
   Send,
   ShieldCheck,
   Table2,
+  Trash2,
   Upload,
   Users,
 } from 'lucide-react'
@@ -28,6 +30,7 @@ import {
   closePlatformOrganization,
   createBusinessClosureSampleTenant,
   createERPStandardSolutionFlow,
+  createRetailDistributionSolutionFlow,
   createDatabaseMaintenanceJob,
   createIndustryExtension,
   createIndustrySolutionSchemaChange,
@@ -37,6 +40,7 @@ import {
   createPlatformUser,
   createPrivateDeploymentExport,
   disablePlatformUser,
+  deleteIndustryPackage,
   getPlatformPermissionProfile,
   getPlatformAssistantContextHealth,
   getMonitoringAgentStatus,
@@ -77,6 +81,7 @@ import {
   type IndustrySolutionManifest,
   type OrganizationIndustryAdoption,
   updateOrganizationModules,
+  updateIndustryPackage,
   type OrganizationInvitation,
   type OrganizationSubscription,
   type OrganizationSchemaTarget,
@@ -195,6 +200,16 @@ function jsonText(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2)
 }
 
+function industryPackageDraftFrom(pkg?: IndustryPackage | null) {
+  return {
+    name: pkg?.name ?? '',
+    description: pkg?.description ?? '',
+    status: pkg?.status ?? 'draft',
+    assetsJson: jsonText(pkg?.assets ?? []),
+    metadataJson: jsonText(pkg?.metadata ?? {}),
+  }
+}
+
 function formatDateTime(value?: string): string {
   if (!value) return ''
   return new Intl.DateTimeFormat(undefined, {
@@ -273,6 +288,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [selectedIndustryKey, setSelectedIndustryKey] = useState('general')
   const [selectedPackageID, setSelectedPackageID] = useState('')
   const [industryModuleDraft, setIndustryModuleDraft] = useState<string[]>([])
+  const [industryPackageDraft, setIndustryPackageDraft] = useState(() => industryPackageDraftFrom(null))
   const [erpSolutionModuleDraft, setERPSolutionModuleDraft] = useState<string[]>(erpSolutionModules)
   const [industryTableDraft, setIndustryTableDraft] = useState({
     tableName: '',
@@ -595,6 +611,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setIndustryPackages(packageItems)
       const nextPackage = packageItems.find((item) => item.id === selectedPackageID) ?? packageItems[0] ?? null
       setSelectedPackageID(nextPackage?.id || '')
+      setIndustryPackageDraft(industryPackageDraftFrom(nextPackage))
       const packageModules =
         nextPackage?.assets
           .filter((asset) => asset.asset_type === 'module')
@@ -884,6 +901,46 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }, 'systemAdmin.industryApplied')
   }
 
+  async function saveSelectedIndustryPackage() {
+    if (!selectedIndustryPackage || !canPlatform('industry.solution.manage')) return
+    let assets: IndustryPackage['assets']
+    let metadata: Record<string, unknown>
+    try {
+      const parsedAssets = JSON.parse(industryPackageDraft.assetsJson)
+      if (!Array.isArray(parsedAssets)) throw new Error('assets must be array')
+      assets = parsedAssets as IndustryPackage['assets']
+      const parsedMetadata = JSON.parse(industryPackageDraft.metadataJson)
+      if (!parsedMetadata || typeof parsedMetadata !== 'object' || Array.isArray(parsedMetadata)) throw new Error('metadata must be object')
+      metadata = parsedMetadata as Record<string, unknown>
+    } catch {
+      setError(t('systemAdmin.invalidJson'))
+      return
+    }
+    await run(async () => {
+      const updated = await updateIndustryPackage(token, selectedIndustryPackage.id, {
+        name: industryPackageDraft.name.trim(),
+        description: industryPackageDraft.description.trim(),
+        status: industryPackageDraft.status,
+        assets,
+        metadata,
+      })
+      setSelectedPackageID(updated.id)
+      setIndustryPackageDraft(industryPackageDraftFrom(updated))
+      await loadIndustryManagement()
+    }, 'systemAdmin.industryPackageUpdated')
+  }
+
+  async function deleteSelectedIndustryPackage() {
+    if (!selectedIndustryPackage || !canPlatform('industry.solution.manage')) return
+    if (typeof window !== 'undefined' && !window.confirm(t('systemAdmin.deleteIndustryPackageConfirm'))) return
+    await run(async () => {
+      await deleteIndustryPackage(token, selectedIndustryPackage.id)
+      setSelectedPackageID('')
+      setIndustryPackageDraft(industryPackageDraftFrom(null))
+      await loadIndustryManagement()
+    }, 'systemAdmin.industryPackageDeleted')
+  }
+
   async function createERPSolutionFlow() {
     if (!activeOrganizationID || !canPlatform('schema.manage')) return
     await run(async () => {
@@ -900,6 +957,19 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setSchemaJson(jsonText(request.schema_package))
       setActiveTab('schema')
     }, 'systemAdmin.erpSolutionCreated')
+  }
+
+  async function createRetailDistributionFlow() {
+    if (!activeOrganizationID || !canPlatform('schema.manage') || !canPlatform('industry.solution.manage')) return
+    await run(async () => {
+      const request = await createRetailDistributionSolutionFlow(token, activeOrganizationID)
+      setChangeRequest(request)
+      setVerificationReport(null)
+      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id).catch(() => []))
+      setSchemaPackage(request.schema_package)
+      setSchemaJson(jsonText(request.schema_package))
+      setActiveTab('schema')
+    }, 'systemAdmin.retailSolutionCreated')
   }
 
   async function createIndustryTableFieldChange() {
@@ -1631,6 +1701,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                         .map((asset) => String(asset.payload.module_key || ''))
                         .filter(Boolean) ?? [],
                     )
+                    setIndustryPackageDraft(industryPackageDraftFrom(nextPackage))
                   }}
                   className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm"
                 >
@@ -1644,6 +1715,74 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               <div className="grid grid-cols-2 gap-2">
                 <Metric label={t('systemAdmin.packageAssets')} value={String(selectedIndustryPackage?.assets.length ?? 0)} />
                 <Metric label={t('systemAdmin.packageModules')} value={String(selectedIndustryPackageModules.length)} />
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.industryPackageEditor')}</h3>
+                    <p className="mt-1 text-xs text-slate-600">{t('systemAdmin.industryPackageEditorSummary')}</p>
+                  </div>
+                  <FileJson className="h-5 w-5 text-slate-500" />
+                </div>
+                <div className="mt-3 grid gap-2">
+                  <input
+                    value={industryPackageDraft.name}
+                    onChange={(event) => setIndustryPackageDraft((current) => ({ ...current, name: event.target.value }))}
+                    placeholder={t('systemAdmin.packageName')}
+                    className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                  />
+                  <input
+                    value={industryPackageDraft.description}
+                    onChange={(event) => setIndustryPackageDraft((current) => ({ ...current, description: event.target.value }))}
+                    placeholder={t('systemAdmin.packageDescription')}
+                    className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                  />
+                  <select
+                    value={industryPackageDraft.status}
+                    onChange={(event) => setIndustryPackageDraft((current) => ({ ...current, status: event.target.value }))}
+                    className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm"
+                  >
+                    {['draft', 'active', 'archived'].map((status) => (
+                      <option key={status} value={status}>
+                        {t(`systemAdmin.packageStatus.${status}`)}
+                      </option>
+                    ))}
+                  </select>
+                  <textarea
+                    value={industryPackageDraft.assetsJson}
+                    onChange={(event) => setIndustryPackageDraft((current) => ({ ...current, assetsJson: event.target.value }))}
+                    placeholder={t('systemAdmin.packageAssetsJson')}
+                    spellCheck={false}
+                    className="min-h-[120px] rounded-md border border-slate-300 bg-slate-950 p-3 font-mono text-xs text-slate-100"
+                  />
+                  <textarea
+                    value={industryPackageDraft.metadataJson}
+                    onChange={(event) => setIndustryPackageDraft((current) => ({ ...current, metadataJson: event.target.value }))}
+                    placeholder={t('systemAdmin.packageMetadataJson')}
+                    spellCheck={false}
+                    className="min-h-[88px] rounded-md border border-slate-300 bg-slate-950 p-3 font-mono text-xs text-slate-100"
+                  />
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveSelectedIndustryPackage()}
+                    disabled={!selectedIndustryPackage || loading || !canPlatform('industry.solution.manage')}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Save className="h-4 w-4" />
+                    {t('systemAdmin.saveIndustryPackage')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteSelectedIndustryPackage()}
+                    disabled={!selectedIndustryPackage || loading || !canPlatform('industry.solution.manage')}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {t('systemAdmin.deleteIndustryPackage')}
+                  </button>
+                </div>
               </div>
               <div className="space-y-2">
                 <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.enabledModules')}</span>
@@ -1713,6 +1852,15 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 >
                   <Braces className="h-4 w-4" />
                   {t('systemAdmin.createERPSolution')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void createRetailDistributionFlow()}
+                  disabled={!activeOrganizationID || loading || !canPlatform('schema.manage') || !canPlatform('industry.solution.manage')}
+                  className="mt-2 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#AD4714]/30 bg-white px-4 text-sm font-semibold text-[#AD4714] transition hover:bg-[#fff8f3] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Layers3 className="h-4 w-4" />
+                  {t('systemAdmin.createRetailSolution')}
                 </button>
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">

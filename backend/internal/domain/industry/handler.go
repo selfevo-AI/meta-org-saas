@@ -26,6 +26,8 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/industries", h.createIndustry)
 	r.Get("/platform/admin/industries/{industryKey}/packages", h.listPackages)
 	r.Post("/platform/admin/industries/{industryKey}/packages", h.createPackage)
+	r.Patch("/platform/admin/industry-packages/{packageID}", h.updatePackage)
+	r.Delete("/platform/admin/industry-packages/{packageID}", h.deletePackage)
 	r.Post("/platform/admin/industry-packages/{packageID}/activate", h.activatePackage)
 	r.Post("/platform/admin/industry-packages/{packageID}/apply-to-organization/{organizationID}", h.applyPackage)
 	r.Get("/platform/admin/industry-publication-requests", h.listPublicationRequests)
@@ -76,6 +78,28 @@ func (h *Handler) createPackage(w http.ResponseWriter, r *http.Request) {
 	input.IndustryKey = chi.URLParam(r, "industryKey")
 	result, err := h.service.CreatePackage(r.Context(), actorID, input)
 	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) updatePackage(w http.ResponseWriter, r *http.Request) {
+	actorID, packageID, ok := h.actorAndID(w, r, "packageID", "invalid package id")
+	if !ok {
+		return
+	}
+	var input UpdatePackageInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.UpdatePackage(r.Context(), actorID, packageID, input)
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) deletePackage(w http.ResponseWriter, r *http.Request) {
+	actorID, packageID, ok := h.actorAndID(w, r, "packageID", "invalid package id")
+	if !ok {
+		return
+	}
+	result, err := h.service.DeletePackage(r.Context(), actorID, packageID)
+	writeResult(w, http.StatusOK, result, err)
 }
 
 func (h *Handler) activatePackage(w http.ResponseWriter, r *http.Request) {

@@ -566,6 +566,44 @@ func TestConvertRequirementCreatesProject(t *testing.T) {
 	assertGeneratedTable(t, result, "MPRJ")
 }
 
+func TestPOSSaleCloseGeneratesCashInvoiceAndInventoryIssue(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MRPS", "POS-1", map[string]any{"DocEntry": "POS-1", "DocStatus": "O", "CardCode": "CASH"})
+	repo.seedChild("MRPS", "POS-1", "RPS1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "STORE-1", "Quantity": 2, "Price": 15}})
+	repo.seed("MITW", "I-1|STORE-1", map[string]any{"ItemCode": "I-1|STORE-1", "OnHand": 5})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MRPS", "POS-1", "close", ActionInput{IdempotencyKey: "pos-close"})
+	if err != nil {
+		t.Fatalf("POS close error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MIGE")
+	assertGeneratedTable(t, result, "MINV")
+	assertGeneratedTable(t, result, "MRCT")
+	if repo.balance("I-1", "STORE-1") != 3 {
+		t.Fatalf("store balance = %v, want 3", repo.balance("I-1", "STORE-1"))
+	}
+	if result.Record.Data["DocStatus"] != "C" || result.Record.Data["Posted"] != "Y" {
+		t.Fatalf("POS sale record = %#v, want closed and posted", result.Record.Data)
+	}
+}
+
+func TestDistributionRequestAutoAllocateCreatesShipment(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MDRQ", "DRQ-1", map[string]any{"DocEntry": "DRQ-1", "DocStatus": "O", "WddStatus": "A", "FromWhsCode": "HQ", "ToWhsCode": "STORE-1"})
+	repo.seedChild("MDRQ", "DRQ-1", "DRQ1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "I-1", "WhsCode": "HQ", "ToWhsCode": "STORE-1", "Quantity": 4, "Price": 8}})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MDRQ", "DRQ-1", "auto-allocate", ActionInput{IdempotencyKey: "auto-allocate"})
+	if err != nil {
+		t.Fatalf("auto-allocate error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MDSP")
+	if repo.childCount("MDSP", "DSP-DRQ-1", "DSP1") != 1 {
+		t.Fatalf("shipment child rows = %d, want 1", repo.childCount("MDSP", "DSP-DRQ-1", "DSP1"))
+	}
+}
+
 func TestConvertRequirementRejectsUnapprovedRequirement(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	repo.seed("MREQ", "REQ-1", map[string]any{"ReqCode": "REQ-1", "Name": "Portal", "Status": "draft"})

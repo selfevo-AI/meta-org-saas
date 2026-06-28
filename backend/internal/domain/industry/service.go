@@ -29,7 +29,11 @@ type repository interface {
 	GetPackage(context.Context, uuid.UUID) (*Package, error)
 	GetPackageByID(context.Context, uuid.UUID) (*Package, error)
 	CreatePackage(context.Context, CreatePackageInput, uuid.UUID) (*Package, error)
+	UpdatePackage(context.Context, UpdatePackageRecord) (*Package, error)
 	ActivatePackage(context.Context, uuid.UUID, uuid.UUID) (*Package, error)
+	ArchivePackage(context.Context, uuid.UUID, uuid.UUID) (*Package, error)
+	DeletePackage(context.Context, uuid.UUID) (*Package, error)
+	PackageHasAdoptions(context.Context, uuid.UUID) (bool, error)
 	UpsertAdoption(context.Context, ApplyPackageInput, Package) (*OrganizationAdoption, error)
 	ListOrganizationExtensionModules(context.Context, uuid.UUID, string) ([]string, error)
 	GetAdoption(context.Context, uuid.UUID) (*OrganizationAdoption, error)
@@ -157,11 +161,97 @@ func (s *Service) CreatePackage(ctx context.Context, actorID uuid.UUID, input Cr
 	return s.repo.CreatePackage(ctx, input, actorID)
 }
 
+func (s *Service) UpdatePackage(ctx context.Context, actorID uuid.UUID, packageID uuid.UUID, input UpdatePackageInput) (*Package, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionManage); err != nil {
+		return nil, err
+	}
+	if packageID == uuid.Nil {
+		return nil, fmt.Errorf("%w: package id is required", ErrValidation)
+	}
+	current, err := s.repo.GetPackageByID(ctx, packageID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, ErrNotFound
+	}
+	if current.Status != StatusDraft {
+		return nil, fmt.Errorf("%w: only draft industry packages can be edited", ErrValidation)
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		name = current.Name
+	}
+	description := strings.TrimSpace(input.Description)
+	if description == "" {
+		description = current.Description
+	}
+	status := normalizeKey(input.Status)
+	if status == "" {
+		status = current.Status
+	}
+	if status != StatusDraft && status != StatusActive && status != StatusArchived {
+		return nil, fmt.Errorf("%w: unsupported package status %q", ErrValidation, status)
+	}
+	assets := input.Assets
+	if assets == nil {
+		assets = current.Assets
+	}
+	pkg := Package{
+		IndustryKey: current.IndustryKey,
+		PackageKey:  current.PackageKey,
+		Version:     current.Version,
+		Name:        name,
+		Status:      status,
+		Assets:      assets,
+	}
+	if err := ValidatePackage(pkg); err != nil {
+		return nil, err
+	}
+	metadata := input.Metadata
+	if metadata == nil {
+		metadata = current.Metadata
+	}
+	return s.repo.UpdatePackage(ctx, UpdatePackageRecord{
+		PackageID:   packageID,
+		Name:        name,
+		Description: description,
+		Status:      status,
+		Assets:      assets,
+		Metadata:    metadata,
+		ActorID:     actorID,
+	})
+}
+
 func (s *Service) ActivatePackage(ctx context.Context, actorID uuid.UUID, packageID uuid.UUID) (*Package, error) {
 	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApprove); err != nil {
 		return nil, err
 	}
 	return s.repo.ActivatePackage(ctx, packageID, actorID)
+}
+
+func (s *Service) DeletePackage(ctx context.Context, actorID uuid.UUID, packageID uuid.UUID) (*Package, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionManage); err != nil {
+		return nil, err
+	}
+	if packageID == uuid.Nil {
+		return nil, fmt.Errorf("%w: package id is required", ErrValidation)
+	}
+	current, err := s.repo.GetPackageByID(ctx, packageID)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, ErrNotFound
+	}
+	applied, err := s.repo.PackageHasAdoptions(ctx, packageID)
+	if err != nil {
+		return nil, err
+	}
+	if current.Status == StatusDraft && !applied {
+		return s.repo.DeletePackage(ctx, packageID)
+	}
+	return s.repo.ArchivePackage(ctx, packageID, actorID)
 }
 
 func (s *Service) ApplyPackageToOrganization(ctx context.Context, actorID uuid.UUID, input ApplyPackageInput) (*OrganizationAdoption, error) {

@@ -24,11 +24,40 @@ func TestDefaultCatalogIncludesERPBusinessHierarchy(t *testing.T) {
 		{"Finance", "Journal Entries", "Journal Entry", "MJDT", "JDT1", "post"},
 		{"Finance", "Trial Balance", "Trial Balance", "MGLR", "", "run"},
 		{"Master Data", "Items", "Item", "MITM", "ITM1", ""},
+		{"Retail", "Stores", "Store", "MBRN", "BRN1", ""},
+		{"Retail", "POS", "POS Sale", "MRPS", "RPS1", "close"},
+		{"Retail", "Distribution", "Distribution Request", "MDRQ", "DRQ1", "auto-allocate"},
+		{"Retail", "Distribution", "Distribution Shipment", "MDSP", "DSP1", "ship"},
+		{"Retail", "Distribution", "Distribution Receipt", "MDRC", "DRC1", "receive"},
+		{"Retail", "Distribution", "Distribution Difference", "MDIF", "DIF1", "resolve"},
+		{"Retail", "Inventory Control", "Stock Policy", "MSTP", "STP1", "replenish"},
+		{"Retail", "Inventory Control", "Store Count", "MCNT", "CNT1", "post-adjustment"},
+		{"Retail", "Special Procurement", "Special Purchase Request", "MSPR", "SPR1", "convert-to-purchase-order"},
 	}
 
 	for _, tc := range cases {
 		if !catalog.HasBusinessDocument(tc.module, tc.submodule, tc.document, tc.table, tc.child, tc.action) {
 			t.Fatalf("catalog missing hierarchy %#v", tc)
+		}
+	}
+}
+
+func TestDefaultCatalogUsesERPCodeTablesForRetailInsteadOfSemanticSupplyChain(t *testing.T) {
+	catalog := DefaultCatalog()
+	semanticTables := []string{
+		"inventory_counts",
+		"inventory_transfers",
+		"purchase_orders",
+		"sales_shipments",
+	}
+	for _, table := range semanticTables {
+		if _, ok := catalog.Table(table); ok {
+			t.Fatalf("catalog contains semantic supply-chain table %s, want ERP code-table only", table)
+		}
+	}
+	for _, table := range []string{"MCNT", "MDSP", "MDRC", "MPOR", "MDLN"} {
+		if _, ok := catalog.Table(table); !ok {
+			t.Fatalf("catalog missing ERP code-table %s", table)
 		}
 	}
 }

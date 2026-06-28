@@ -46,6 +46,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/organizations/{id}/schema/change-requests", h.createOrganizationSchemaChange)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-schema/change-requests", h.createIndustrySolutionSchemaChange)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/erp-standard", h.createERPSolutionFlow)
+	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/retail-distribution", h.createRetailDistributionSolutionFlow)
 	r.Post("/platform/admin/schema-change-requests/{id}/approve", h.approveSchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/verify", h.verifySchemaChange)
 	r.Post("/platform/admin/schema-change-requests/{id}/apply", h.applySchemaChange)
@@ -295,6 +296,22 @@ func (h *Handler) createERPSolutionFlow(w http.ResponseWriter, r *http.Request) 
 	}
 	input.OrganizationID = orgID
 	result, err := h.service.BuildERPSolutionFlow(r.Context(), actorID, input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) createRetailDistributionSolutionFlow(w http.ResponseWriter, r *http.Request) {
+	actorID, orgID, ok := h.actorAndOrganization(w, r)
+	if !ok {
+		return
+	}
+	var input ERPSolutionFlowRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+	}
+	input.OrganizationID = orgID
+	result, err := h.service.BuildRetailDistributionSolutionFlow(r.Context(), actorID, input)
 	writeResult(w, http.StatusCreated, result, err)
 }
 

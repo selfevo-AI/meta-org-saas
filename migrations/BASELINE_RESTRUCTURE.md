@@ -16,8 +16,10 @@ The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
 and sample validation data, then includes `001_erp_code_baseline.sql` so each
 dedicated tenant database owns its ERP, project, workflow, costing, finance,
-inventory, procurement, and sales runtime tables without cross-database foreign
-keys.
+inventory, procurement, sales, and retail runtime tables without cross-database
+foreign keys. Procurement, sales, inventory, warehouse, and retail distribution
+business objects are represented by ERP code-table master/detail pairs rather
+than by a second set of semantic supply-chain tables.
 
 ## Database Naming And Provisioning Rules
 
@@ -56,6 +58,19 @@ incomplete tenant database where ERP/finance tables such as
 If manual recovery is unavoidable, run the included ERP baseline explicitly and
 record the checksum that the tenant migrator calculates for the expanded tenant
 file.
+
+The June 2026 split-database recovery surfaced these concrete failure modes:
+
+- `relation platform.database_maintenance_jobs does not exist`
+- `relation platform.tenant_database_targets does not exist`
+- `security_kernel_unavailable` during owner attestation for tenant creation
+- `relation gl_journal_entries does not exist` in tenant finance APIs
+- browser `Failed to fetch` when the frontend reached an unavailable or
+  incorrectly configured backend
+
+The corrective contract is to rebuild `meta_org_saas` from the staged platform
+baseline, create tenant databases through the backend provisioner, and verify
+tenant migration expansion before using tenant ERP/finance APIs.
 
 ## Stage Ownership
 
@@ -155,13 +170,33 @@ are applied.
 
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
 tenant departments, project lifecycle, workflow, finance, costing,
-supply-chain, ERP action execution ledger tables, and other ERP-facing domain
-structures. This file can change when the SaaS platform creates or adjusts an
-industry solution. The ERP action ledger uses `MAEX` and `AEX1`; `MACT` remains
-the ERP G/L account table. Semantic GL runtime tables such as `gl_accounts`,
-`gl_cost_centers`, `gl_journal_entries`, and `gl_journal_entry_lines` also
-belong here because they are tenant ERP/finance structures behind the
-compatible ERP table codes (`MACT`, `MPRC`, `MJDT`, `JDT1`, `MGLR`).
+ERP code-table supply-chain, ERP action execution ledger tables, and other
+ERP-facing domain structures. This file can change when the SaaS platform
+creates or adjusts an industry solution. The ERP action ledger uses `MAEX` and
+`AEX1`; `MACT` remains the ERP G/L account table. Semantic GL runtime tables
+such as `gl_accounts`, `gl_cost_centers`, `gl_journal_entries`, and
+`gl_journal_entry_lines` also belong here because they are tenant ERP/finance
+structures behind the compatible ERP table codes (`MACT`, `MPRC`, `MJDT`,
+`JDT1`, `MGLR`).
+
+Supply-chain domain ownership is now code-table-only for fresh tenant
+databases:
+
+- Purchase orders: `MPOR/POR1`
+- Sales orders: `MRDR/RDR1`
+- Warehouse balances: `MITW/ITW1`
+- Goods receipts and issues: `MIGN/IGN1`, `MIGE/IGE1`
+- Retail POS and distribution: `MRPS/RPS1`, `MDRQ/DRQ1`, `MDSP/DSP1`,
+  `MDRC/DRC1`, `MDIF/DIF1`
+- Retail stock policy, count, and special procurement: `MSTP/STP1`,
+  `MCNT/CNT1`, `MSPR/SPR1`
+
+Fresh tenant databases must not create the old semantic supply-chain physical
+tables such as `inventory_counts`, `inventory_transfers`, `purchase_orders`,
+`sales_shipments`, `inventory_balances`, or `sales_orders`. Historical data
+from backup databases should be transformed into ERP code-table payloads during
+an explicit migration step instead of restoring those tables as the primary
+runtime model.
 
 ## Organization And Department Boundary
 

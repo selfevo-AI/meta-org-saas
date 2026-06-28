@@ -92,13 +92,26 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		"CREATE TABLE IF NOT EXISTS workflow_templates",
 		"CREATE TABLE IF NOT EXISTS saas_modules",
 		"-- tenantdb:include ../001_erp_code_baseline.sql",
-		"CREATE TABLE IF NOT EXISTS purchase_orders",
-		"CREATE TABLE IF NOT EXISTS sales_orders",
-		"CREATE TABLE IF NOT EXISTS inventory_balances",
+		"('MPOR','Purchase Order','purchase','DocEntry','master','')",
+		"('MRDR','Sales Order','sale','DocEntry','master','')",
+		"('MITW','Items - Warehouse','product','ItemCode','master','')",
+		"('MRPS','Retail POS Sale','retail','DocEntry','master','')",
 		"CREATE TABLE IF NOT EXISTS finance_payables",
 	} {
 		if !strings.Contains(sql, snippet) {
 			t.Fatalf("tenant baseline SQL missing %q", snippet)
+		}
+	}
+	for _, legacySnippet := range []string{
+		"CREATE TABLE IF NOT EXISTS inventory_balances",
+		"CREATE TABLE IF NOT EXISTS purchase_orders",
+		"CREATE TABLE IF NOT EXISTS sales_orders",
+		"CREATE TABLE IF NOT EXISTS inventory_counts",
+		"CREATE TABLE IF NOT EXISTS inventory_transfers",
+		"CREATE TABLE IF NOT EXISTS sales_shipments",
+	} {
+		if strings.Contains(sql, legacySnippet) {
+			t.Fatalf("tenant baseline SQL still declares legacy semantic supply-chain table with %q", legacySnippet)
 		}
 	}
 }

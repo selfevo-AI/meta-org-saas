@@ -179,6 +179,45 @@ func (r *Repository) CreatePackage(ctx context.Context, input CreatePackageInput
 	return item, nil
 }
 
+func (r *Repository) UpdatePackage(ctx context.Context, record UpdatePackageRecord) (*Package, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin update industry package: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	item := &Package{}
+	err = scanPackage(tx.QueryRow(ctx, `
+		UPDATE platform.custom_packages
+		SET name = $2,
+		    description = $3,
+		    status = $4,
+		    metadata = $5,
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
+	`, record.PackageID, record.Name, record.Description, record.Status, jsonBytes(record.Metadata)), item)
+	if err != nil {
+		return nil, fmt.Errorf("update industry package: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.custom_package_assets WHERE package_id = $1`, record.PackageID); err != nil {
+		return nil, fmt.Errorf("replace package assets: %w", err)
+	}
+	for _, asset := range record.Assets {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO platform.custom_package_assets(package_id, asset_key, asset_type, payload, metadata)
+			VALUES ($1, $2, $3, $4, $5)
+		`, item.ID, asset.AssetKey, asset.AssetType, jsonBytes(asset.Payload), jsonBytes(asset.Metadata)); err != nil {
+			return nil, fmt.Errorf("update package asset %s: %w", asset.AssetKey, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit update industry package: %w", err)
+	}
+	item.Assets = record.Assets
+	return item, nil
+}
+
 func (r *Repository) ActivatePackage(ctx context.Context, packageID uuid.UUID, actorID uuid.UUID) (*Package, error) {
 	item := &Package{}
 	err := scanPackage(r.db.QueryRow(ctx, `
@@ -198,6 +237,63 @@ func (r *Repository) ActivatePackage(ctx context.Context, packageID uuid.UUID, a
 	}
 	item.Assets = assets
 	return item, nil
+}
+
+func (r *Repository) ArchivePackage(ctx context.Context, packageID uuid.UUID, actorID uuid.UUID) (*Package, error) {
+	item := &Package{}
+	err := scanPackage(r.db.QueryRow(ctx, `
+		UPDATE platform.custom_packages
+		SET status = 'archived',
+		    metadata = metadata || jsonb_build_object('archived_by', $2::text),
+		    updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
+	`, packageID, actorID), item)
+	if err != nil {
+		return nil, fmt.Errorf("archive industry package: %w", err)
+	}
+	assets, err := r.listPackageAssets(ctx, packageID)
+	if err != nil {
+		return nil, err
+	}
+	item.Assets = assets
+	return item, nil
+}
+
+func (r *Repository) DeletePackage(ctx context.Context, packageID uuid.UUID) (*Package, error) {
+	item, err := r.GetPackageByID(ctx, packageID)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin delete industry package: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.custom_package_assets WHERE package_id = $1`, packageID); err != nil {
+		return nil, fmt.Errorf("delete package assets: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.custom_packages WHERE id = $1`, packageID); err != nil {
+		return nil, fmt.Errorf("delete industry package: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit delete industry package: %w", err)
+	}
+	item.Status = StatusArchived
+	return item, nil
+}
+
+func (r *Repository) PackageHasAdoptions(ctx context.Context, packageID uuid.UUID) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM platform.organization_industry_adoptions
+			WHERE package_id = $1 AND status <> 'archived'
+		)
+	`, packageID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check package adoptions: %w", err)
+	}
+	return exists, nil
 }
 
 func (r *Repository) UpsertAdoption(ctx context.Context, input ApplyPackageInput, pkg Package) (*OrganizationAdoption, error) {

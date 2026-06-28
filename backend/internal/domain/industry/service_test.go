@@ -88,6 +88,66 @@ func TestAdoptIndustryCreatesSinglePrimaryAdoption(t *testing.T) {
 	}
 }
 
+func TestUpdatePackageAllowsHumanEditingDraftSolutionAssets(t *testing.T) {
+	repo := &fakeRepository{
+		role: "system_owner",
+		packageByID: map[uuid.UUID]*Package{
+			packageID: validPackagePointer(packageID),
+		},
+	}
+	repo.packageByID[packageID].Status = StatusDraft
+	service := NewService(repo)
+
+	updated, err := service.UpdatePackage(context.Background(), actorID, packageID, UpdatePackageInput{
+		Name:        "Retail Distribution v1",
+		Description: "ERP code-table retail distribution package",
+		Assets: []PackageAsset{
+			{AssetKey: "retail-module", AssetType: AssetTypeModule, Payload: map[string]any{"module_key": "retail", "display_name": "Retail"}},
+			{AssetKey: "retail-pos-operation", AssetType: AssetTypeRuntimeOperation, Payload: map[string]any{"operation_key": "erp.mrps.close", "path": "/erp/MRPS/{key}/actions/close"}},
+		},
+		Metadata: map[string]any{"code_table_only": true},
+	})
+	if err != nil {
+		t.Fatalf("UpdatePackage() error = %v", err)
+	}
+	if updated.Name != "Retail Distribution v1" || len(updated.Assets) != 2 {
+		t.Fatalf("updated package = %#v, want edited draft assets", updated)
+	}
+	if repo.updatedPackage == nil || repo.updatedPackage.PackageID != packageID {
+		t.Fatalf("updatedPackage = %#v, want package id recorded", repo.updatedPackage)
+	}
+}
+
+func TestDeletePackageArchivesAppliedSolutionAndDeletesDraft(t *testing.T) {
+	repo := &fakeRepository{
+		role: "system_owner",
+		packageByID: map[uuid.UUID]*Package{
+			packageID: validPackagePointer(packageID),
+		},
+	}
+	repo.packageByID[packageID].Status = StatusDraft
+	service := NewService(repo)
+
+	deleted, err := service.DeletePackage(context.Background(), actorID, packageID)
+	if err != nil {
+		t.Fatalf("DeletePackage() draft error = %v", err)
+	}
+	if deleted.Status != StatusArchived || repo.deletedPackageID != packageID {
+		t.Fatalf("draft delete result = %#v deleted=%s, want archived/deleted record", deleted, repo.deletedPackageID)
+	}
+
+	repo.deletedPackageID = uuid.Nil
+	repo.packageByID[packageID] = validPackagePointer(packageID)
+	repo.packageApplied = true
+	archived, err := service.DeletePackage(context.Background(), actorID, packageID)
+	if err != nil {
+		t.Fatalf("DeletePackage() applied error = %v", err)
+	}
+	if archived.Status != StatusArchived || repo.deletedPackageID != uuid.Nil {
+		t.Fatalf("applied delete result = %#v deleted=%s, want archived without physical delete", archived, repo.deletedPackageID)
+	}
+}
+
 func TestApplyPackageRejectsModulesOutsideIndustryAndExtensions(t *testing.T) {
 	repo := &fakeRepository{
 		role: "system_owner",
@@ -290,6 +350,9 @@ type fakeRepository struct {
 	publicationRequest      *PublicationRequest
 	publicationGateResults  []PublicationGateResult
 	reviewedStatus          string
+	updatedPackage          *UpdatePackageRecord
+	deletedPackageID        uuid.UUID
+	packageApplied          bool
 	adoptionWrites          int
 }
 
@@ -335,8 +398,39 @@ func (f *fakeRepository) CreatePackage(context.Context, CreatePackageInput, uuid
 	return nil, nil
 }
 
+func (f *fakeRepository) UpdatePackage(_ context.Context, record UpdatePackageRecord) (*Package, error) {
+	f.updatedPackage = &record
+	current := *f.packageByID[record.PackageID]
+	current.Name = record.Name
+	current.Description = record.Description
+	current.Status = record.Status
+	current.Assets = record.Assets
+	current.Metadata = record.Metadata
+	f.packageByID[record.PackageID] = &current
+	return &current, nil
+}
+
 func (f *fakeRepository) ActivatePackage(context.Context, uuid.UUID, uuid.UUID) (*Package, error) {
 	return nil, nil
+}
+
+func (f *fakeRepository) ArchivePackage(_ context.Context, packageID uuid.UUID, _ uuid.UUID) (*Package, error) {
+	current := *f.packageByID[packageID]
+	current.Status = StatusArchived
+	f.packageByID[packageID] = &current
+	return &current, nil
+}
+
+func (f *fakeRepository) DeletePackage(_ context.Context, packageID uuid.UUID) (*Package, error) {
+	current := *f.packageByID[packageID]
+	current.Status = StatusArchived
+	f.deletedPackageID = packageID
+	delete(f.packageByID, packageID)
+	return &current, nil
+}
+
+func (f *fakeRepository) PackageHasAdoptions(context.Context, uuid.UUID) (bool, error) {
+	return f.packageApplied, nil
 }
 
 func (f *fakeRepository) UpsertAdoption(context.Context, ApplyPackageInput, Package) (*OrganizationAdoption, error) {

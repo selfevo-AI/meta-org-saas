@@ -72,10 +72,13 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 		"public.projects",
 		"public.workflow_templates",
 		"public.finance_payables",
-		"public.inventory_balances",
-		"public.purchase_orders",
-		"public.sales_orders",
 		`public."MREG"`,
+		`public."MITW"`,
+		`public."MPOR"`,
+		`public."MRDR"`,
+		`public."MRPS"`,
+		`public."MDRQ"`,
+		`public."MCNT"`,
 	} {
 		assertTenantTableExists(t, ctx, targetPool, tableRef)
 	}

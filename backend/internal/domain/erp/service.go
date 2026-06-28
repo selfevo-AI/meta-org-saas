@@ -415,8 +415,12 @@ func (s *Service) child(tableCode, childCode string) (TableDefinition, ChildTabl
 }
 
 func validateRecordInput(table TableDefinition, input RecordInput) error {
+	_, acceptsPayload := table.Field("Payload")
 	for name := range input.Data {
 		if _, ok := table.Field(name); !ok {
+			if acceptsPayload {
+				continue
+			}
 			return fmt.Errorf("%w: unknown field %s for %s", ErrValidation, name, table.Code)
 		}
 	}
@@ -424,8 +428,12 @@ func validateRecordInput(table TableDefinition, input RecordInput) error {
 }
 
 func validateChildRecordInput(child ChildTableDefinition, input RecordInput) error {
+	_, acceptsPayload := child.Field("Payload")
 	for name := range input.Data {
 		if _, ok := child.Field(name); !ok {
+			if acceptsPayload {
+				continue
+			}
 			return fmt.Errorf("%w: unknown field %s for %s", ErrValidation, name, child.Code)
 		}
 	}

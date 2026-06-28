@@ -227,16 +227,30 @@ func TestServiceRejectsActionExecutionTimelineForUnknownTable(t *testing.T) {
 	}
 }
 
-func TestCreateRecordRejectsUnknownFields(t *testing.T) {
+func TestCreateRecordAllowsPayloadExtensionFields(t *testing.T) {
 	service := NewService(&fakeRepository{}, DefaultCatalog())
 
 	_, err := service.CreateRecord(context.Background(), "MCRD", RecordInput{
 		Key:  "C0001",
-		Data: map[string]any{"CardType": "C", "NotAField": "bad"},
+		Data: map[string]any{"CardType": "C", "IndustrySpecificField": "ok"},
 	})
 
+	if err != nil {
+		t.Fatalf("CreateRecord() error = %v, want nil for payload-backed code table", err)
+	}
+}
+
+func TestValidateRecordInputRejectsUnknownFieldsWithoutPayload(t *testing.T) {
+	table := TableDefinition{
+		Code:        "STRICT",
+		Fields:      []FieldDefinition{field("Code", "nVarChar", "20", "Code", true)},
+		fieldLookup: map[string]FieldDefinition{"Code": field("Code", "nVarChar", "20", "Code", true)},
+	}
+
+	err := validateRecordInput(table, RecordInput{Data: map[string]any{"NotAField": "bad"}})
+
 	if !errors.Is(err, ErrValidation) {
-		t.Fatalf("CreateRecord() error = %v, want ErrValidation", err)
+		t.Fatalf("validateRecordInput() error = %v, want ErrValidation", err)
 	}
 }
 

@@ -29,7 +29,7 @@ import {
 } from '@/lib/workbench'
 import { DocumentWorkbench } from './document-workbench'
 
-type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance'
+type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail'
 
 type BusinessSelection = {
   targetID?: string
@@ -96,6 +96,21 @@ const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
     { id: 'warehouse_balance', labelKey: 'erp.document.warehouseBalance', submoduleKey: 'erp.submodule.warehouseBalances', tableCode: 'MITW', primaryKey: 'ItemCode', childCode: 'ITW1' },
     { id: 'goods_receipt', labelKey: 'erp.document.goodsReceipt', submoduleKey: 'erp.submodule.goodsReceipts', tableCode: 'MIGN', primaryKey: 'DocEntry', childCode: 'IGN1', actions: ['post'] },
     { id: 'goods_issue', labelKey: 'erp.document.goodsIssue', submoduleKey: 'erp.submodule.goodsIssues', tableCode: 'MIGE', primaryKey: 'DocEntry', childCode: 'IGE1', actions: ['post'] },
+  ],
+  retail: [
+    { id: 'retail_branch', labelKey: 'erp.document.retailBranch', submoduleKey: 'erp.submodule.retailBranches', tableCode: 'MBRN', primaryKey: 'StoreCode', childCode: 'BRN1', sortOrder: 10 },
+    { id: 'retail_terminal', labelKey: 'erp.document.retailTerminal', submoduleKey: 'erp.submodule.retailTerminals', tableCode: 'MTER', primaryKey: 'TerminalCode', childCode: 'TER1', sortOrder: 20 },
+    { id: 'retail_member', labelKey: 'erp.document.retailMember', submoduleKey: 'erp.submodule.retailMembers', tableCode: 'MMBR', primaryKey: 'MemberCode', childCode: 'MBR1', sortOrder: 30 },
+    { id: 'retail_promotion', labelKey: 'erp.document.retailPromotion', submoduleKey: 'erp.submodule.retailPromotions', tableCode: 'MPRM', primaryKey: 'PromotionCode', childCode: 'PRM1', sortOrder: 40 },
+    { id: 'retail_publishing', labelKey: 'erp.document.retailPublishing', submoduleKey: 'erp.submodule.retailPublishing', tableCode: 'MPUB', primaryKey: 'PublicationCode', childCode: 'PUB1', actions: ['publish'], sortOrder: 50 },
+    { id: 'pos_sale', labelKey: 'erp.document.posSale', submoduleKey: 'erp.submodule.posSales', tableCode: 'MRPS', primaryKey: 'DocEntry', childCode: 'RPS1', actions: ['close'], sortOrder: 60 },
+    { id: 'distribution_request', labelKey: 'erp.document.distributionRequest', submoduleKey: 'erp.submodule.distributionRequests', tableCode: 'MDRQ', primaryKey: 'DocEntry', childCode: 'DRQ1', actions: ['submit', 'approve', 'auto-allocate'], sortOrder: 70 },
+    { id: 'distribution_shipment', labelKey: 'erp.document.distributionShipment', submoduleKey: 'erp.submodule.distributionShipments', tableCode: 'MDSP', primaryKey: 'DocEntry', childCode: 'DSP1', actions: ['ship'], sortOrder: 80 },
+    { id: 'distribution_receipt', labelKey: 'erp.document.distributionReceipt', submoduleKey: 'erp.submodule.distributionReceipts', tableCode: 'MDRC', primaryKey: 'DocEntry', childCode: 'DRC1', actions: ['receive'], sortOrder: 90 },
+    { id: 'distribution_difference', labelKey: 'erp.document.distributionDifference', submoduleKey: 'erp.submodule.distributionDifferences', tableCode: 'MDIF', primaryKey: 'DocEntry', childCode: 'DIF1', actions: ['resolve'], sortOrder: 100 },
+    { id: 'stock_policy', labelKey: 'erp.document.stockPolicy', submoduleKey: 'erp.submodule.stockPolicies', tableCode: 'MSTP', primaryKey: 'PolicyCode', childCode: 'STP1', actions: ['replenish'], sortOrder: 110 },
+    { id: 'store_count', labelKey: 'erp.document.storeCount', submoduleKey: 'erp.submodule.storeCounts', tableCode: 'MCNT', primaryKey: 'DocEntry', childCode: 'CNT1', actions: ['submit', 'approve', 'post-adjustment'], sortOrder: 120 },
+    { id: 'special_purchase_request', labelKey: 'erp.document.specialPurchaseRequest', submoduleKey: 'erp.submodule.specialPurchaseRequests', tableCode: 'MSPR', primaryKey: 'DocEntry', childCode: 'SPR1', actions: ['submit', 'approve', 'convert-to-purchase-order'], sortOrder: 130 },
   ],
   finance: [
     { id: 'gl_account', labelKey: 'erp.document.glAccount', submoduleKey: 'erp.submodule.chartOfAccounts', tableCode: 'MACT', primaryKey: 'AcctCode', childCode: 'AACT', sortOrder: 10 },

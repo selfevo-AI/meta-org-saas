@@ -154,6 +154,7 @@ const domainLabels: Record<string, string> = {
   Inventory: '库存',
   Procurement: '采购',
   Sales: '销售',
+  Retail: '零售',
 }
 
 const domainIcons: Record<string, typeof Gauge> = {
@@ -259,6 +260,19 @@ type BusinessTargetType =
   | 'sales_order'
   | 'sales_shipment'
   | 'sales_return'
+  | 'retail_branch'
+  | 'retail_terminal'
+  | 'retail_member'
+  | 'retail_promotion'
+  | 'retail_publishing'
+  | 'pos_sale'
+  | 'distribution_request'
+  | 'distribution_shipment'
+  | 'distribution_receipt'
+  | 'distribution_difference'
+  | 'stock_policy'
+  | 'store_count'
+  | 'special_purchase_request'
   | 'cost_rate_card'
   | 'cost_budget'
   | 'cost_ledger_entry'
@@ -358,7 +372,7 @@ type WorkspaceLayoutWidths = {
 type WorkspaceLayoutPane = keyof WorkspaceLayoutWidths
 
 const lifecycleDomains = ['Requirement', 'Project', 'Delivery', 'Cost', 'Feedback']
-const virtualDomains = ['Costing', 'MetaResource', 'SystemAdmin']
+const virtualDomains = ['Costing', 'MetaResource', 'Retail', 'SystemAdmin']
 const platformOnlyDomainSet = new Set([
   'Capability',
   'Governance',
@@ -389,6 +403,7 @@ const dedicatedDomains = new Set([
   'Inventory',
   'Procurement',
   'Sales',
+  'Retail',
   ...lifecycleDomains,
 ])
 const menuStorageKey = 'meta_org.menu.groups.v2'
@@ -432,7 +447,7 @@ const defaultMenuGroups: MenuGroup[] = [
   {
     id: 'supplyChain',
     label: 'nav.group.supplyChain',
-    domains: ['Procurement', 'Sales', 'Inventory'],
+    domains: ['Procurement', 'Sales', 'Inventory', 'Retail'],
   },
   {
     id: 'finance',
@@ -526,6 +541,21 @@ const tenantDocumentMenuItems: Record<string, TenantDocumentMenuItem[]> = {
     { id: 'inventory:warehouse_balance', domain: 'Inventory', documentID: 'warehouse_balance', label: 'erp.document.warehouseBalance', targetType: 'inventory_balance' },
     { id: 'inventory:goods_receipt', domain: 'Inventory', documentID: 'goods_receipt', label: 'erp.document.goodsReceipt', targetType: 'inventory_movement' },
     { id: 'inventory:goods_issue', domain: 'Inventory', documentID: 'goods_issue', label: 'erp.document.goodsIssue', targetType: 'inventory_movement' },
+  ],
+  Retail: [
+    { id: 'retail:branch', domain: 'Retail', documentID: 'retail_branch', label: 'erp.document.retailBranch', targetType: 'retail_branch' },
+    { id: 'retail:terminal', domain: 'Retail', documentID: 'retail_terminal', label: 'erp.document.retailTerminal', targetType: 'retail_terminal' },
+    { id: 'retail:member', domain: 'Retail', documentID: 'retail_member', label: 'erp.document.retailMember', targetType: 'retail_member' },
+    { id: 'retail:promotion', domain: 'Retail', documentID: 'retail_promotion', label: 'erp.document.retailPromotion', targetType: 'retail_promotion' },
+    { id: 'retail:publishing', domain: 'Retail', documentID: 'retail_publishing', label: 'erp.document.retailPublishing', targetType: 'retail_publishing' },
+    { id: 'retail:pos_sale', domain: 'Retail', documentID: 'pos_sale', label: 'erp.document.posSale', targetType: 'pos_sale' },
+    { id: 'retail:distribution_request', domain: 'Retail', documentID: 'distribution_request', label: 'erp.document.distributionRequest', targetType: 'distribution_request' },
+    { id: 'retail:distribution_shipment', domain: 'Retail', documentID: 'distribution_shipment', label: 'erp.document.distributionShipment', targetType: 'distribution_shipment' },
+    { id: 'retail:distribution_receipt', domain: 'Retail', documentID: 'distribution_receipt', label: 'erp.document.distributionReceipt', targetType: 'distribution_receipt' },
+    { id: 'retail:distribution_difference', domain: 'Retail', documentID: 'distribution_difference', label: 'erp.document.distributionDifference', targetType: 'distribution_difference' },
+    { id: 'retail:stock_policy', domain: 'Retail', documentID: 'stock_policy', label: 'erp.document.stockPolicy', targetType: 'stock_policy' },
+    { id: 'retail:store_count', domain: 'Retail', documentID: 'store_count', label: 'erp.document.storeCount', targetType: 'store_count' },
+    { id: 'retail:special_purchase_request', domain: 'Retail', documentID: 'special_purchase_request', label: 'erp.document.specialPurchaseRequest', targetType: 'special_purchase_request' },
   ],
   FinanceAccounting: [
     { id: 'finance:gl_account', domain: 'FinanceAccounting', documentID: 'gl_account', label: 'erp.document.glAccount', targetType: 'finance_settlement' },
@@ -2627,6 +2657,8 @@ export default function Home() {
 					<ERPBusinessModuleWorkspace token={token} module="procurement" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Sales' ? (
 					<ERPBusinessModuleWorkspace token={token} module="sales" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
+				) : effectiveWorkspaceView === 'domain:Retail' ? (
+					<ERPBusinessModuleWorkspace token={token} module="retail" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
 					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (

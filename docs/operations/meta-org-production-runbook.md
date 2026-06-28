@@ -151,7 +151,7 @@ Channel key rotation:
 
 The current production schema baseline is staged as SaaS platform management first, ERP/industry business baseline second, ERP-platform integration third, and AI capability baseline after both platform and ERP tables exist. The active migration files are `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`.
 
-If startup, Developer Tools, Meta Resource, SaaS module pages, supply-chain pages, or AI Assistant calls fail with errors such as `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `column cost_breakdown does not exist`, `relation meta_resources does not exist`, `relation demand_profiles does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`:
+If startup, Developer Tools, Meta Resource, SaaS module pages, ERP code-table workspaces, or AI Assistant calls fail with errors such as `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `column cost_breakdown does not exist`, `relation meta_resources does not exist`, `relation demand_profiles does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or missing ERP code-table relations such as `MITW`, `MPOR`, `MRDR`, `MRPS`, or `MDRQ`:
 
 1. Confirm `DATABASE_URL` and `PLATFORM_DATABASE_URL` point to the intended `meta_org_saas` platform database.
 2. Confirm `MIGRATIONS_PATH` points to the root `migrations/` directory. When running from `backend/`, use `../migrations`.
