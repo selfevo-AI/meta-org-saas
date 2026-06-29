@@ -73,6 +73,9 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 	if deps == nil {
 		panic("gateway.RegisterRoutes: deps must not be nil")
 	}
+	if deps.AIGatewayHandler != nil {
+		deps.AIGatewayHandler.RegisterCompatibleRoutes(r)
+	}
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", healthCheck)
 		if deps.IdentityHandler != nil {

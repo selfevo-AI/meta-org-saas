@@ -2,6 +2,8 @@ package aigateway
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -38,6 +40,10 @@ type InvocationRepository interface {
 	FailInvocation(ctx context.Context, id uuid.UUID, input FailInvocationInput) error
 	CreateUsageLedger(ctx context.Context, input CreateUsageLedgerInput) error
 	ReleaseChannel(ctx context.Context, id *uuid.UUID, amount float64) error
+	AuthenticateAccessToken(ctx context.Context, token string) (AccessTokenContext, error)
+	ReserveAccessTokenBalance(ctx context.Context, input ReserveBalanceInput) (BalanceReservation, error)
+	SettleAccessTokenBalance(ctx context.Context, input SettleBalanceInput) error
+	RefundAccessTokenBalance(ctx context.Context, reservationID uuid.UUID, reason string) error
 }
 
 type CatalogRepository interface {
@@ -63,6 +69,15 @@ type CatalogRepository interface {
 	CreateRoutingRule(ctx context.Context, input CreateRoutingRuleInput) (*RoutingRule, error)
 	UsageAnalysis(ctx context.Context, filter UsageAnalysisFilter) (*UsageAnalysis, error)
 	ResolvePricingTarget(ctx context.Context, input EstimateCostInput) (ResolvedModel, error)
+	CreateAccessToken(ctx context.Context, input CreateAccessTokenStoreInput) (*AccessToken, error)
+	ListAccessTokens(ctx context.Context, organizationID *uuid.UUID, limit int) ([]AccessToken, error)
+	CreateModelGroup(ctx context.Context, input CreateModelGroupInput) (*ModelGroup, error)
+	ListModelGroups(ctx context.Context, organizationID *uuid.UUID, limit int) ([]ModelGroup, error)
+	CreateModelChannelAbility(ctx context.Context, input CreateModelChannelAbilityInput) (*ModelChannelAbility, error)
+	ListModelChannelAbilities(ctx context.Context, modelGroupID *uuid.UUID, limit int) ([]ModelChannelAbility, error)
+	GetGatewayBalance(ctx context.Context, organizationID uuid.UUID, currency string) (*GatewayBalance, error)
+	ListBalanceTransactions(ctx context.Context, organizationID uuid.UUID, limit int) ([]BalanceTransaction, error)
+	AdjustGatewayBalance(ctx context.Context, input AdjustGatewayBalanceInput) (*GatewayBalance, error)
 }
 
 type Service struct {
@@ -150,6 +165,8 @@ type InvokeInput struct {
 	Tools              []ToolDefinition `json:"tools,omitempty"`
 	Attribution        Attribution      `json:"attribution"`
 	Metadata           map[string]any   `json:"metadata,omitempty"`
+	AccessTokenID      *uuid.UUID       `json:"access_token_id,omitempty"`
+	ModelGroupID       *uuid.UUID       `json:"model_group_id,omitempty"`
 }
 
 type InvokeOutput struct {
@@ -177,6 +194,8 @@ type CreateInvocationInput struct {
 	ProviderID            uuid.UUID
 	ModelID               uuid.UUID
 	ChannelID             *uuid.UUID
+	AccessTokenID         *uuid.UUID
+	ModelGroupID          *uuid.UUID
 	Mode                  string
 	Status                string
 	Attribution           Attribution
@@ -188,6 +207,7 @@ type CreateInvocationInput struct {
 	RequestHash           string
 	EstimatedInputTokens  int
 	EstimatedOutputTokens int
+	ReservedAmount        float64
 	Metadata              map[string]any
 }
 
@@ -209,6 +229,8 @@ type FailInvocationInput struct {
 
 type CreateUsageLedgerInput struct {
 	InvocationID        uuid.UUID
+	AccessTokenID       *uuid.UUID
+	ModelGroupID        *uuid.UUID
 	ChannelID           *uuid.UUID
 	ModelPriceVersionID *uuid.UUID
 	LedgerType          string
@@ -223,6 +245,187 @@ type CreateUsageLedgerInput struct {
 	UpstreamModel       string
 	Metadata            map[string]any
 	Reason              string
+}
+
+type AccessTokenContext struct {
+	ID                   uuid.UUID      `json:"id"`
+	OrganizationID       uuid.UUID      `json:"organization_id"`
+	ModelGroupID         *uuid.UUID     `json:"model_group_id,omitempty"`
+	AllowedModels        []string       `json:"allowed_models"`
+	AllowedModelPatterns []string       `json:"allowed_model_patterns,omitempty"`
+	AllowChannelOverride bool           `json:"allow_channel_override"`
+	Status               string         `json:"status"`
+	Metadata             map[string]any `json:"metadata,omitempty"`
+}
+
+type AccessToken struct {
+	ID                   uuid.UUID      `json:"id"`
+	OrganizationID       uuid.UUID      `json:"organization_id"`
+	ModelGroupID         *uuid.UUID     `json:"model_group_id,omitempty"`
+	Name                 string         `json:"name"`
+	TokenHash            string         `json:"-"`
+	MaskedToken          string         `json:"masked_token"`
+	PlainToken           string         `json:"plain_token,omitempty"`
+	Status               string         `json:"status"`
+	AllowedModels        []string       `json:"allowed_models"`
+	AllowedModelPatterns []string       `json:"allowed_model_patterns"`
+	AllowChannelOverride bool           `json:"allow_channel_override"`
+	QuotaAmount          float64        `json:"quota_amount"`
+	QuotaUsed            float64        `json:"quota_used"`
+	QuotaCurrency        string         `json:"quota_currency"`
+	ExpiresAt            *time.Time     `json:"expires_at,omitempty"`
+	LastUsedAt           *time.Time     `json:"last_used_at,omitempty"`
+	Metadata             map[string]any `json:"metadata"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+}
+
+type CreateAccessTokenInput struct {
+	OrganizationID       uuid.UUID      `json:"organization_id"`
+	ModelGroupID         *uuid.UUID     `json:"model_group_id,omitempty"`
+	Name                 string         `json:"name"`
+	AllowedModels        []string       `json:"allowed_models,omitempty"`
+	AllowedModelPatterns []string       `json:"allowed_model_patterns,omitempty"`
+	AllowChannelOverride bool           `json:"allow_channel_override,omitempty"`
+	QuotaAmount          float64        `json:"quota_amount,omitempty"`
+	QuotaCurrency        string         `json:"quota_currency,omitempty"`
+	ExpiresAt            *time.Time     `json:"expires_at,omitempty"`
+	Metadata             map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateAccessTokenStoreInput struct {
+	OrganizationID       uuid.UUID
+	ModelGroupID         *uuid.UUID
+	Name                 string
+	TokenHash            string
+	MaskedToken          string
+	AllowedModels        []string
+	AllowedModelPatterns []string
+	AllowChannelOverride bool
+	QuotaAmount          float64
+	QuotaCurrency        string
+	ExpiresAt            *time.Time
+	Metadata             map[string]any
+}
+
+type ModelGroup struct {
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID *uuid.UUID     `json:"organization_id,omitempty"`
+	DepartmentID   *uuid.UUID     `json:"department_id,omitempty"`
+	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
+	AgentID        *uuid.UUID     `json:"agent_id,omitempty"`
+	Name           string         `json:"name"`
+	GroupKey       string         `json:"group_key"`
+	Status         string         `json:"status"`
+	RateMultiplier float64        `json:"rate_multiplier"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type ModelChannelAbility struct {
+	ID             uuid.UUID      `json:"id"`
+	ModelGroupID   *uuid.UUID     `json:"model_group_id,omitempty"`
+	ChannelID      uuid.UUID      `json:"channel_id"`
+	RequestedModel string         `json:"requested_model"`
+	ModelPattern   string         `json:"model_pattern"`
+	UpstreamModel  string         `json:"upstream_model"`
+	Priority       int            `json:"priority"`
+	Enabled        bool           `json:"enabled"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type CreateModelChannelAbilityInput struct {
+	ModelGroupID   *uuid.UUID     `json:"model_group_id,omitempty"`
+	ChannelID      uuid.UUID      `json:"channel_id"`
+	RequestedModel string         `json:"requested_model,omitempty"`
+	ModelPattern   string         `json:"model_pattern,omitempty"`
+	UpstreamModel  string         `json:"upstream_model,omitempty"`
+	Priority       int            `json:"priority,omitempty"`
+	Enabled        *bool          `json:"enabled,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+}
+
+type CreateModelGroupInput struct {
+	OrganizationID *uuid.UUID     `json:"organization_id,omitempty"`
+	DepartmentID   *uuid.UUID     `json:"department_id,omitempty"`
+	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
+	AgentID        *uuid.UUID     `json:"agent_id,omitempty"`
+	Name           string         `json:"name"`
+	GroupKey       string         `json:"group_key,omitempty"`
+	Status         string         `json:"status,omitempty"`
+	RateMultiplier float64        `json:"rate_multiplier,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+}
+
+type GatewayBalance struct {
+	ID             uuid.UUID      `json:"id"`
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	BalanceAmount  float64        `json:"balance_amount"`
+	ReservedAmount float64        `json:"reserved_amount"`
+	Currency       string         `json:"currency"`
+	Metadata       map[string]any `json:"metadata"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+type BalanceTransaction struct {
+	ID              uuid.UUID      `json:"id"`
+	OrganizationID  uuid.UUID      `json:"organization_id"`
+	AccessTokenID   *uuid.UUID     `json:"access_token_id,omitempty"`
+	ModelGroupID    *uuid.UUID     `json:"model_group_id,omitempty"`
+	InvocationID    *uuid.UUID     `json:"invocation_id,omitempty"`
+	ReservationID   *uuid.UUID     `json:"reservation_id,omitempty"`
+	TransactionType string         `json:"transaction_type"`
+	Amount          float64        `json:"amount"`
+	Currency        string         `json:"currency"`
+	Reason          string         `json:"reason"`
+	Metadata        map[string]any `json:"metadata"`
+	CreatedAt       time.Time      `json:"created_at"`
+}
+
+type AdapterDescriptor struct {
+	AdapterKey       string   `json:"adapter_key"`
+	DisplayName      string   `json:"display_name"`
+	ProviderType     string   `json:"provider_type"`
+	AdapterMode      string   `json:"adapter_mode"`
+	DefaultBaseURL   string   `json:"default_base_url"`
+	SupportedModels  []string `json:"supported_models"`
+	SupportedModes   []string `json:"supported_modes"`
+	RequiresNativeIO bool     `json:"requires_native_io"`
+}
+
+type ReserveBalanceInput struct {
+	AccessTokenID   uuid.UUID
+	OrganizationID  uuid.UUID
+	ModelGroupID    *uuid.UUID
+	EstimatedAmount float64
+	Currency        string
+	Reason          string
+}
+
+type BalanceReservation struct {
+	ID             uuid.UUID `json:"id"`
+	ReservedAmount float64   `json:"reserved_amount"`
+	Currency       string    `json:"currency"`
+}
+
+type SettleBalanceInput struct {
+	ReservationID uuid.UUID
+	AccessTokenID uuid.UUID
+	ActualAmount  float64
+	Currency      string
+	Reason        string
+}
+
+type AdjustGatewayBalanceInput struct {
+	OrganizationID uuid.UUID      `json:"organization_id"`
+	Amount         float64        `json:"amount"`
+	Currency       string         `json:"currency,omitempty"`
+	Reason         string         `json:"reason"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
 type CreateProviderInput struct {
@@ -425,6 +628,33 @@ type EstimateCostOutput struct {
 }
 
 func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput, error) {
+	return s.invokeSync(ctx, input, nil)
+}
+
+func (s *Service) InvokeWithAccessToken(ctx context.Context, token string, input InvokeInput) (*InvokeOutput, error) {
+	accessToken, err := s.repo.AuthenticateAccessToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if accessToken.Status != "" && accessToken.Status != "active" {
+		return nil, fmt.Errorf("%w: ai access token is not active", ErrForbidden)
+	}
+	if !accessTokenAllowsModel(accessToken, input.Model) {
+		return nil, fmt.Errorf("%w: model %q is not allowed for this ai access token", ErrForbidden, input.Model)
+	}
+	orgID := accessToken.OrganizationID
+	input.Attribution.OrganizationID = &orgID
+	input.ProviderType = firstNonEmpty(input.ProviderType, ProviderOpenAI)
+	input.AccessTokenID = &accessToken.ID
+	input.ModelGroupID = accessToken.ModelGroupID
+	input.Attribution.SourceSurface = firstNonEmpty(input.Attribution.SourceSurface, "organization_api")
+	if !accessToken.AllowChannelOverride {
+		input.PreferredChannelID = nil
+	}
+	return s.invokeSync(ctx, input, &accessToken)
+}
+
+func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken *AccessTokenContext) (*InvokeOutput, error) {
 	if err := validateInvokeInput(input); err != nil {
 		return nil, err
 	}
@@ -435,11 +665,34 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 	if err != nil {
 		return nil, err
 	}
+	var reservation *BalanceReservation
+	if accessToken != nil {
+		estimatedUsage := estimateInvocationUsage(input, target)
+		estimatedBreakdown := CalculateCostBreakdown(estimatedUsage, target.Price, target.RateMultiplier, normalizedServiceTier(input.ServiceTier))
+		reserved, err := s.repo.ReserveAccessTokenBalance(ctx, ReserveBalanceInput{
+			AccessTokenID:   accessToken.ID,
+			OrganizationID:  accessToken.OrganizationID,
+			ModelGroupID:    accessToken.ModelGroupID,
+			EstimatedAmount: estimatedBreakdown.ActualCost,
+			Currency:        currencyOrDefault(target.Currency),
+			Reason:          "ai_invocation_reserve",
+		})
+		if err != nil {
+			return nil, err
+		}
+		reservation = &reserved
+	}
 	if err := s.authorizeInvocationWithKernel(ctx, input, target); err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		return nil, err
 	}
 	adapter, err := s.adapterFor(target)
 	if err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		return nil, err
 	}
 
@@ -449,6 +702,8 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 		ProviderID:        target.ProviderID,
 		ModelID:           target.ModelID,
 		ChannelID:         target.ChannelID,
+		AccessTokenID:     input.AccessTokenID,
+		ModelGroupID:      input.ModelGroupID,
 		Mode:              ModeSync,
 		Status:            StatusStarted,
 		Attribution:       input.Attribution,
@@ -457,9 +712,13 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 		ModelMappingChain: target.ModelMappingChain,
 		ServiceTier:       normalizedServiceTier(input.ServiceTier),
 		ReasoningEffort:   strings.TrimSpace(input.ReasoningEffort),
+		ReservedAmount:    reservedAmount(reservation),
 		Metadata:          input.Metadata,
 	})
 	if err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
@@ -480,6 +739,9 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 	})
 	if err != nil {
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		releaseChannel = false
 		s.recordInvocationSpan(ctx, trace, observability.SpanAIInvocation, invocation.ID, target, input.Attribution, StatusFailed, err.Error(), int(time.Since(started).Milliseconds()))
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
@@ -491,6 +753,8 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 	currency := currencyOrDefault(target.Currency)
 	if err := s.repo.CreateUsageLedger(ctx, CreateUsageLedgerInput{
 		InvocationID:        invocation.ID,
+		AccessTokenID:       input.AccessTokenID,
+		ModelGroupID:        input.ModelGroupID,
 		ChannelID:           target.ChannelID,
 		ModelPriceVersionID: target.PriceVersionID,
 		LedgerType:          "usage",
@@ -503,9 +767,25 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 		ReasoningEffort:     strings.TrimSpace(input.ReasoningEffort),
 		RequestedModel:      target.RequestedModel,
 		UpstreamModel:       target.UpstreamModel,
+		Metadata:            accessTokenLedgerMetadata(input),
 	}); err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
+	}
+	if reservation != nil {
+		if err := s.repo.SettleAccessTokenBalance(ctx, SettleBalanceInput{
+			ReservationID: reservation.ID,
+			AccessTokenID: accessToken.ID,
+			ActualAmount:  cost,
+			Currency:      currency,
+			Reason:        "ai_invocation_settle",
+		}); err != nil {
+			s.completeObservationTrace(ctx, trace, observability.TraceFailed)
+			return nil, err
+		}
 	}
 	releaseAmount = cost
 	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, releaseAmount)
@@ -737,6 +1017,87 @@ func (s *Service) CreateRoutingRule(ctx context.Context, input CreateRoutingRule
 	return s.catalogRepo().CreateRoutingRule(ctx, input)
 }
 
+func (s *Service) CreateAccessToken(ctx context.Context, input CreateAccessTokenInput) (*AccessToken, error) {
+	if input.OrganizationID == uuid.Nil || strings.TrimSpace(input.Name) == "" {
+		return nil, fmt.Errorf("%w: organization_id and name are required", ErrValidation)
+	}
+	plainToken, err := generateAccessToken()
+	if err != nil {
+		return nil, err
+	}
+	result, err := s.catalogRepo().CreateAccessToken(ctx, CreateAccessTokenStoreInput{
+		OrganizationID:       input.OrganizationID,
+		ModelGroupID:         input.ModelGroupID,
+		Name:                 strings.TrimSpace(input.Name),
+		TokenHash:            hashAccessToken(plainToken),
+		MaskedToken:          maskSecret(plainToken),
+		AllowedModels:        input.AllowedModels,
+		AllowedModelPatterns: input.AllowedModelPatterns,
+		AllowChannelOverride: input.AllowChannelOverride,
+		QuotaAmount:          input.QuotaAmount,
+		QuotaCurrency:        currencyOrDefault(input.QuotaCurrency),
+		ExpiresAt:            input.ExpiresAt,
+		Metadata:             input.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.PlainToken = plainToken
+	return result, nil
+}
+
+func (s *Service) ListAccessTokens(ctx context.Context, organizationID *uuid.UUID, limit int) ([]AccessToken, error) {
+	return s.catalogRepo().ListAccessTokens(ctx, organizationID, limit)
+}
+
+func (s *Service) CreateModelGroup(ctx context.Context, input CreateModelGroupInput) (*ModelGroup, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return nil, fmt.Errorf("%w: name is required", ErrValidation)
+	}
+	return s.catalogRepo().CreateModelGroup(ctx, input)
+}
+
+func (s *Service) ListModelGroups(ctx context.Context, organizationID *uuid.UUID, limit int) ([]ModelGroup, error) {
+	return s.catalogRepo().ListModelGroups(ctx, organizationID, limit)
+}
+
+func (s *Service) CreateModelChannelAbility(ctx context.Context, input CreateModelChannelAbilityInput) (*ModelChannelAbility, error) {
+	if input.ChannelID == uuid.Nil {
+		return nil, fmt.Errorf("%w: channel_id is required", ErrValidation)
+	}
+	return s.catalogRepo().CreateModelChannelAbility(ctx, input)
+}
+
+func (s *Service) ListModelChannelAbilities(ctx context.Context, modelGroupID *uuid.UUID, limit int) ([]ModelChannelAbility, error) {
+	return s.catalogRepo().ListModelChannelAbilities(ctx, modelGroupID, limit)
+}
+
+func (s *Service) GetGatewayBalance(ctx context.Context, organizationID uuid.UUID, currency string) (*GatewayBalance, error) {
+	if organizationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	return s.catalogRepo().GetGatewayBalance(ctx, organizationID, currencyOrDefault(currency))
+}
+
+func (s *Service) ListBalanceTransactions(ctx context.Context, organizationID uuid.UUID, limit int) ([]BalanceTransaction, error) {
+	if organizationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	return s.catalogRepo().ListBalanceTransactions(ctx, organizationID, limit)
+}
+
+func (s *Service) AdjustGatewayBalance(ctx context.Context, input AdjustGatewayBalanceInput) (*GatewayBalance, error) {
+	if input.OrganizationID == uuid.Nil {
+		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
+	}
+	if strings.TrimSpace(input.Reason) == "" {
+		return nil, fmt.Errorf("%w: reason is required", ErrValidation)
+	}
+	input.Currency = currencyOrDefault(input.Currency)
+	input.Reason = strings.TrimSpace(input.Reason)
+	return s.catalogRepo().AdjustGatewayBalance(ctx, input)
+}
+
 func (s *Service) UsageAnalysis(ctx context.Context, filter UsageAnalysisFilter) (*UsageAnalysis, error) {
 	return s.catalogRepo().UsageAnalysis(ctx, filter)
 }
@@ -755,6 +1116,20 @@ func (s *Service) EstimateCost(ctx context.Context, input EstimateCostInput) (*E
 	}
 	breakdown := CalculateCostBreakdown(input.Usage, target.Price, rate, normalizedServiceTier(input.ServiceTier))
 	return &EstimateCostOutput{Model: target.Model, CostBreakdown: breakdown, Currency: currencyOrDefault(target.Currency)}, nil
+}
+
+func (s *Service) AdapterCatalog() []AdapterDescriptor {
+	return []AdapterDescriptor{
+		{AdapterKey: ProviderOpenAI, DisplayName: "OpenAI", ProviderType: ProviderOpenAI, AdapterMode: "native", DefaultBaseURL: defaultOpenAIBaseURL, SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: ProviderAnthropic, DisplayName: "Anthropic", ProviderType: ProviderAnthropic, AdapterMode: "native", DefaultBaseURL: defaultAnthropicBaseURL, SupportedModes: []string{"chat", "stream", "tools"}, RequiresNativeIO: true},
+		{AdapterKey: ProviderGemini, DisplayName: "Gemini", ProviderType: ProviderGemini, AdapterMode: "native", DefaultBaseURL: defaultGeminiBaseURL, SupportedModes: []string{"chat", "stream", "tools"}, RequiresNativeIO: true},
+		{AdapterKey: "deepseek", DisplayName: "DeepSeek", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.deepseek.com", SupportedModels: []string{"deepseek-chat", "deepseek-reasoner"}, SupportedModes: []string{"chat", "stream"}},
+		{AdapterKey: "moonshot", DisplayName: "Moonshot", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.moonshot.cn/v1", SupportedModes: []string{"chat", "stream"}},
+		{AdapterKey: "openrouter", DisplayName: "OpenRouter", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://openrouter.ai/api/v1", SupportedModes: []string{"chat", "stream"}},
+		{AdapterKey: "doubao", DisplayName: "Doubao", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", SupportedModes: []string{"chat", "stream"}},
+		{AdapterKey: "siliconflow", DisplayName: "SiliconFlow", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.siliconflow.cn/v1", SupportedModes: []string{"chat", "stream"}},
+		{AdapterKey: "ollama", DisplayName: "Ollama", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "http://localhost:11434/v1", SupportedModes: []string{"chat", "stream", "embeddings"}},
+	}
 }
 
 func (s *Service) recordingStream(ctx context.Context, invocationID uuid.UUID, target ResolvedModel, attribution Attribution, serviceTier string, reasoningEffort string, started time.Time, events <-chan StreamEvent, trace *observability.Trace) <-chan StreamEvent {
@@ -909,6 +1284,78 @@ func (s *Service) catalogRepo() CatalogRepository {
 		panic("aigateway: catalog repository is not configured")
 	}
 	return s.catalog
+}
+
+func accessTokenAllowsModel(token AccessTokenContext, model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	patterns := append([]string{}, token.AllowedModels...)
+	patterns = append(patterns, token.AllowedModelPatterns...)
+	if len(patterns) == 0 {
+		return true
+	}
+	for _, pattern := range patterns {
+		if wildcardMatch(pattern, model) {
+			return true
+		}
+	}
+	return false
+}
+
+func estimateInvocationUsage(input InvokeInput, target ResolvedModel) TokenUsage {
+	inputTokens := 0
+	for _, message := range input.Messages {
+		inputTokens += estimateTextTokens(message.Content)
+	}
+	outputTokens := maxTokens(input.MaxTokens, target.MaxOutputTokens)
+	if outputTokens == 0 {
+		outputTokens = 1024
+	}
+	return TokenUsage{InputTokens: inputTokens, OutputTokens: outputTokens}
+}
+
+func estimateTextTokens(value string) int {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0
+	}
+	runes := len([]rune(trimmed))
+	tokens := runes / 4
+	if runes%4 != 0 {
+		tokens++
+	}
+	if tokens == 0 {
+		return 1
+	}
+	return tokens
+}
+
+func reservedAmount(reservation *BalanceReservation) float64 {
+	if reservation == nil {
+		return 0
+	}
+	return reservation.ReservedAmount
+}
+
+func accessTokenLedgerMetadata(input InvokeInput) map[string]any {
+	metadata := copyMap(input.Metadata)
+	if input.AccessTokenID != nil {
+		metadata["access_token_id"] = input.AccessTokenID.String()
+	}
+	if input.ModelGroupID != nil {
+		metadata["model_group_id"] = input.ModelGroupID.String()
+	}
+	return metadata
+}
+
+func generateAccessToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("generate ai access token: %w", err)
+	}
+	return "ak-meta-" + base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
 func validateProviderInput(input CreateProviderInput) error {

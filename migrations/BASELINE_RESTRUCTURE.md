@@ -269,6 +269,15 @@ models, model channels, agents, AI invocation and usage ledger, tool runtime,
 assistant runtime, assistant context, unified skill, skill publication, and AI
 capability platform projections.
 
+The AI gateway extension in `004` also owns organization-facing model access
+planning: `ai_model_groups`, `ai_model_channel_abilities`, `ai_access_tokens`,
+`ai_gateway_balances`, and `ai_gateway_balance_transactions`. Provider channel
+adapter metadata, model mapping, priority, health, quota, and balance columns
+belong in the same stage, as do `ai_invocations` and `ai_usage_ledger`
+references to access tokens, model groups, reserved amount, settled amount, and
+upstream routing status. These structures are platform-managed AI capability
+controls; tenant ERP/industry tables must not duplicate them.
+
 Phase 4 Verified Context + Tool Loop changes also belong to `004`: context
 change proposals include the `applied` lifecycle state plus `apply_result` and
 `applied_at`; the baseline seeds the governed tools `erp.action.execute`,

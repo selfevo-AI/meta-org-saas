@@ -2,6 +2,8 @@ package aigateway
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -473,12 +475,12 @@ func (r *PostgresRepository) CreateInvocation(ctx context.Context, input CreateI
 	inv := &Invocation{}
 	err := scanInvocationRow(r.db.QueryRow(ctx, `
 		INSERT INTO ai_invocations (
-			provider_id, model_id, channel_id, mode, status, organization_id, department_id, project_id,
+			provider_id, model_id, channel_id, access_token_id, model_group_id, mode, status, organization_id, department_id, project_id,
 			requirement_id, workflow_id, task_id, agent_id, user_id, capability_id,
 			source_surface, requested_model, upstream_model, model_mapping_chain, service_tier,
-			reasoning_effort, request_hash, estimated_input_tokens, estimated_output_tokens, metadata
+			reasoning_effort, request_hash, estimated_input_tokens, estimated_output_tokens, reserved_amount, metadata
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
 		RETURNING id, provider_id, model_id, channel_id, mode, status,
 			organization_id, department_id, project_id, requirement_id, workflow_id, task_id,
 			agent_id, user_id, capability_id, source_surface, requested_model, upstream_model,
@@ -489,10 +491,10 @@ func (r *PostgresRepository) CreateInvocation(ctx context.Context, input CreateI
 			estimated_input_tokens, estimated_output_tokens,
 			cost_amount::float8, cost_breakdown, currency, first_token_ms, duration_ms, error_type, error_message,
 			metadata, created_at, completed_at
-	`, input.ProviderID, input.ModelID, input.ChannelID, input.Mode, input.Status, input.Attribution.OrganizationID, input.Attribution.DepartmentID, input.Attribution.ProjectID,
+	`, input.ProviderID, input.ModelID, input.ChannelID, input.AccessTokenID, input.ModelGroupID, input.Mode, input.Status, input.Attribution.OrganizationID, input.Attribution.DepartmentID, input.Attribution.ProjectID,
 		input.Attribution.RequirementID, input.Attribution.WorkflowID, input.Attribution.TaskID, input.Attribution.AgentID, input.Attribution.UserID,
 		input.Attribution.CapabilityID, input.Attribution.SourceSurface, input.RequestedModel, input.UpstreamModel, input.ModelMappingChain,
-		input.ServiceTier, input.ReasoningEffort, input.RequestHash, input.EstimatedInputTokens, input.EstimatedOutputTokens, mustJSON(input.Metadata)), inv)
+		input.ServiceTier, input.ReasoningEffort, input.RequestHash, input.EstimatedInputTokens, input.EstimatedOutputTokens, input.ReservedAmount, mustJSON(input.Metadata)), inv)
 	if err != nil {
 		return nil, fmt.Errorf("create ai invocation: %w", err)
 	}
@@ -513,6 +515,7 @@ func (r *PostgresRepository) CompleteInvocation(ctx context.Context, id uuid.UUI
 			cache_creation_1h_tokens = $9,
 			image_output_tokens = $10,
 			cost_amount = $11,
+			settled_amount = $11,
 			cost_breakdown = $12,
 			currency = $13,
 			duration_ms = $14,
@@ -544,14 +547,14 @@ func (r *PostgresRepository) FailInvocation(ctx context.Context, id uuid.UUID, i
 func (r *PostgresRepository) CreateUsageLedger(ctx context.Context, input CreateUsageLedgerInput) error {
 	if _, err := r.db.Exec(ctx, `
 		INSERT INTO ai_usage_ledger (
-			invocation_id, channel_id, model_price_version_id, ledger_type, amount, actual_amount, currency,
+			invocation_id, access_token_id, model_group_id, channel_id, model_price_version_id, ledger_type, amount, actual_amount, currency,
 			input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens,
 			cache_creation_5m_tokens, cache_creation_1h_tokens, image_output_tokens,
 			input_cost, output_cost, cache_creation_cost, cache_read_cost, image_output_cost,
 			rate_multiplier, service_tier, reasoning_effort, requested_model, upstream_model, metadata, reason
 		)
-		VALUES ($1, $2, $3, $4, $5, COALESCE(NULLIF($6, 0), $5), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
-	`, input.InvocationID, input.ChannelID, input.ModelPriceVersionID, input.LedgerType, input.Amount, input.ActualAmount, currencyOrDefault(input.Currency),
+		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, 0), $7), $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+	`, input.InvocationID, input.AccessTokenID, input.ModelGroupID, input.ChannelID, input.ModelPriceVersionID, input.LedgerType, input.Amount, input.ActualAmount, currencyOrDefault(input.Currency),
 		input.Usage.InputTokens, input.Usage.OutputTokens, input.Usage.CacheCreationTokens, input.Usage.CacheReadTokens,
 		input.Usage.CacheCreation5mTokens, input.Usage.CacheCreation1hTokens, input.Usage.ImageOutputTokens,
 		input.CostBreakdown.InputCost, input.CostBreakdown.OutputCost, input.CostBreakdown.CacheCreationCost, input.CostBreakdown.CacheReadCost,
@@ -831,6 +834,207 @@ func (r *PostgresRepository) ReleaseChannel(ctx context.Context, id *uuid.UUID, 
 	return nil
 }
 
+func (r *PostgresRepository) AuthenticateAccessToken(ctx context.Context, token string) (AccessTokenContext, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return AccessTokenContext{}, fmt.Errorf("%w: bearer token is required", ErrForbidden)
+	}
+	var result AccessTokenContext
+	var modelGroupID pgtype.UUID
+	var allowedModelsJSON, allowedPatternsJSON, metaJSON []byte
+	err := r.db.QueryRow(ctx, `
+		UPDATE ai_access_tokens
+		SET last_used_at = NOW(), updated_at = NOW()
+		WHERE token_hash = $1
+		  AND status = 'active'
+		  AND (expires_at IS NULL OR expires_at > NOW())
+		RETURNING id, organization_id, model_group_id, allowed_models, allowed_model_patterns,
+			allow_channel_override, status, metadata
+	`, hashAccessToken(token)).Scan(&result.ID, &result.OrganizationID, &modelGroupID, &allowedModelsJSON, &allowedPatternsJSON,
+		&result.AllowChannelOverride, &result.Status, &metaJSON)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AccessTokenContext{}, fmt.Errorf("%w: invalid or expired ai access token", ErrForbidden)
+		}
+		return AccessTokenContext{}, fmt.Errorf("authenticate ai access token: %w", err)
+	}
+	result.ModelGroupID = uuidPointer(modelGroupID)
+	if err := json.Unmarshal(allowedModelsJSON, &result.AllowedModels); err != nil {
+		return AccessTokenContext{}, fmt.Errorf("unmarshal access token allowed models: %w", err)
+	}
+	if err := json.Unmarshal(allowedPatternsJSON, &result.AllowedModelPatterns); err != nil {
+		return AccessTokenContext{}, fmt.Errorf("unmarshal access token allowed model patterns: %w", err)
+	}
+	if err := json.Unmarshal(metaJSON, &result.Metadata); err != nil {
+		return AccessTokenContext{}, fmt.Errorf("unmarshal access token metadata: %w", err)
+	}
+	return result, nil
+}
+
+func (r *PostgresRepository) ReserveAccessTokenBalance(ctx context.Context, input ReserveBalanceInput) (BalanceReservation, error) {
+	amount := roundCost(input.EstimatedAmount)
+	if amount < 0 {
+		amount = 0
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return BalanceReservation{}, fmt.Errorf("begin reserve ai gateway balance: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	currency := currencyOrDefault(input.Currency)
+	tokenTag, err := tx.Exec(ctx, `
+		UPDATE ai_access_tokens
+		SET quota_used = quota_used + $3,
+			updated_at = NOW()
+		WHERE id = $1
+		  AND quota_currency = $2
+		  AND organization_id = $4
+		  AND status = 'active'
+		  AND (expires_at IS NULL OR expires_at > NOW())
+		  AND (quota_amount <= 0 OR quota_used + $3 <= quota_amount)
+	`, input.AccessTokenID, currency, amount, input.OrganizationID)
+	if err != nil {
+		return BalanceReservation{}, fmt.Errorf("reserve ai access token quota: %w", err)
+	}
+	if tokenTag.RowsAffected() == 0 {
+		return BalanceReservation{}, fmt.Errorf("%w: ai access token quota is insufficient", ErrForbidden)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_gateway_balances(organization_id, currency)
+		VALUES ($1, $2)
+		ON CONFLICT (organization_id, currency) DO NOTHING
+	`, input.OrganizationID, currency); err != nil {
+		return BalanceReservation{}, fmt.Errorf("ensure ai gateway balance: %w", err)
+	}
+	tag, err := tx.Exec(ctx, `
+		UPDATE ai_gateway_balances
+		SET reserved_amount = reserved_amount + $3,
+			updated_at = NOW()
+		WHERE organization_id = $1
+		  AND currency = $2
+		  AND balance_amount - reserved_amount >= $3
+	`, input.OrganizationID, currency, amount)
+	if err != nil {
+		return BalanceReservation{}, fmt.Errorf("reserve ai gateway balance: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return BalanceReservation{}, fmt.Errorf("%w: ai gateway balance is insufficient", ErrForbidden)
+	}
+	reservation := BalanceReservation{ReservedAmount: amount, Currency: currency}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ai_gateway_balance_transactions(
+			organization_id, access_token_id, model_group_id, transaction_type,
+			amount, currency, reason, metadata
+		)
+		VALUES ($1, $2, $3, 'reserve', $4, $5, $6, $7)
+		RETURNING id
+	`, input.OrganizationID, input.AccessTokenID, input.ModelGroupID, amount, currency, input.Reason, mustJSON(map[string]any{"estimated": true})).Scan(&reservation.ID); err != nil {
+		return BalanceReservation{}, fmt.Errorf("record ai gateway balance reservation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return BalanceReservation{}, fmt.Errorf("commit reserve ai gateway balance: %w", err)
+	}
+	return reservation, nil
+}
+
+func (r *PostgresRepository) SettleAccessTokenBalance(ctx context.Context, input SettleBalanceInput) error {
+	return r.finishAccessTokenReservation(ctx, input.ReservationID, "settle", input.ActualAmount, input.Reason, input.AccessTokenID)
+}
+
+func (r *PostgresRepository) RefundAccessTokenBalance(ctx context.Context, reservationID uuid.UUID, reason string) error {
+	return r.finishAccessTokenReservation(ctx, reservationID, "refund", 0, reason, uuid.Nil)
+}
+
+func (r *PostgresRepository) finishAccessTokenReservation(ctx context.Context, reservationID uuid.UUID, transactionType string, actualAmount float64, reason string, accessTokenID uuid.UUID) error {
+	if reservationID == uuid.Nil {
+		return nil
+	}
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin finish ai gateway balance reservation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID uuid.UUID
+	var tokenID, modelGroupID pgtype.UUID
+	var reservedAmount float64
+	var currency string
+	err = tx.QueryRow(ctx, `
+		SELECT organization_id, access_token_id, model_group_id, amount::float8, currency
+		FROM ai_gateway_balance_transactions
+		WHERE id = $1 AND transaction_type = 'reserve'
+		FOR UPDATE
+	`, reservationID).Scan(&orgID, &tokenID, &modelGroupID, &reservedAmount, &currency)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: balance reservation not found", ErrNotFound)
+		}
+		return fmt.Errorf("get ai gateway balance reservation: %w", err)
+	}
+	var existingFinish uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id
+		FROM ai_gateway_balance_transactions
+		WHERE reservation_id = $1
+		  AND transaction_type IN ('settle', 'refund')
+		FOR UPDATE
+	`, reservationID).Scan(&existingFinish)
+	if err == nil {
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("check ai gateway balance reservation finish: %w", err)
+	}
+	settledAmount := 0.0
+	transactionAmount := -reservedAmount
+	if transactionType == "settle" {
+		settledAmount = roundCost(actualAmount)
+		transactionAmount = settledAmount
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ai_gateway_balances
+		SET reserved_amount = GREATEST(reserved_amount - $3, 0),
+			balance_amount = balance_amount - $4,
+			updated_at = NOW()
+		WHERE organization_id = $1 AND currency = $2
+	`, orgID, currency, reservedAmount, settledAmount); err != nil {
+		return fmt.Errorf("finish ai gateway balance reservation: %w", err)
+	}
+	if !tokenID.Valid && accessTokenID != uuid.Nil {
+		copy(tokenID.Bytes[:], accessTokenID[:])
+		tokenID.Valid = true
+	}
+	if tokenID.Valid {
+		quotaDelta := -reservedAmount
+		if transactionType == "settle" {
+			quotaDelta = settledAmount - reservedAmount
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE ai_access_tokens
+			SET quota_used = GREATEST(quota_used + $2, 0),
+				updated_at = NOW()
+			WHERE id = $1
+		`, uuidPointer(tokenID), quotaDelta); err != nil {
+			return fmt.Errorf("reconcile ai access token quota: %w", err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_gateway_balance_transactions(
+			organization_id, access_token_id, model_group_id, reservation_id,
+			transaction_type, amount, currency, reason, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, orgID, uuidPointer(tokenID), uuidPointer(modelGroupID), reservationID, transactionType,
+		transactionAmount, currency, reason, mustJSON(map[string]any{"reserved_amount": reservedAmount})); err != nil {
+		return fmt.Errorf("record ai gateway balance %s: %w", transactionType, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit finish ai gateway balance reservation: %w", err)
+	}
+	return nil
+}
+
 func (r *PostgresRepository) ListRoutingRules(ctx context.Context, limit int) ([]RoutingRule, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, name, provider_id, channel_id, match_scope, match_value, model_pattern,
@@ -862,6 +1066,238 @@ func (r *PostgresRepository) CreateRoutingRule(ctx context.Context, input Create
 		return nil, fmt.Errorf("create routing rule: %w", err)
 	}
 	return rule, nil
+}
+
+func (r *PostgresRepository) CreateAccessToken(ctx context.Context, input CreateAccessTokenStoreInput) (*AccessToken, error) {
+	allowedModelsJSON, err := json.Marshal(input.AllowedModels)
+	if err != nil {
+		return nil, fmt.Errorf("marshal access token allowed models: %w", err)
+	}
+	allowedPatternsJSON, err := json.Marshal(input.AllowedModelPatterns)
+	if err != nil {
+		return nil, fmt.Errorf("marshal access token allowed model patterns: %w", err)
+	}
+	token := &AccessToken{}
+	err = scanAccessTokenRow(r.db.QueryRow(ctx, `
+		INSERT INTO ai_access_tokens(
+			organization_id, model_group_id, name, token_hash, masked_token,
+			allowed_models, allowed_model_patterns, allow_channel_override,
+			quota_amount, quota_currency, expires_at, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING id, organization_id, model_group_id, name, token_hash, masked_token, status,
+			allowed_models, allowed_model_patterns, allow_channel_override,
+			quota_amount::float8, quota_used::float8, quota_currency,
+			expires_at, last_used_at, metadata, created_at, updated_at
+	`, input.OrganizationID, input.ModelGroupID, input.Name, input.TokenHash, input.MaskedToken,
+		allowedModelsJSON, allowedPatternsJSON, input.AllowChannelOverride, input.QuotaAmount,
+		currencyOrDefault(input.QuotaCurrency), input.ExpiresAt, mustJSON(input.Metadata)), token)
+	if err != nil {
+		return nil, fmt.Errorf("create ai access token: %w", err)
+	}
+	return token, nil
+}
+
+func (r *PostgresRepository) ListAccessTokens(ctx context.Context, organizationID *uuid.UUID, limit int) ([]AccessToken, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, organization_id, model_group_id, name, token_hash, masked_token, status,
+			allowed_models, allowed_model_patterns, allow_channel_override,
+			quota_amount::float8, quota_used::float8, quota_currency,
+			expires_at, last_used_at, metadata, created_at, updated_at
+		FROM ai_access_tokens
+		WHERE $1::uuid IS NULL OR organization_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, organizationID, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list ai access tokens: %w", err)
+	}
+	defer rows.Close()
+	items := []AccessToken{}
+	for rows.Next() {
+		var item AccessToken
+		if err := scanAccessTokenRow(rows, &item); err != nil {
+			return nil, fmt.Errorf("scan ai access token: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *PostgresRepository) CreateModelGroup(ctx context.Context, input CreateModelGroupInput) (*ModelGroup, error) {
+	group := &ModelGroup{}
+	err := scanModelGroupRow(r.db.QueryRow(ctx, `
+		INSERT INTO ai_model_groups(
+			organization_id, department_id, project_id, agent_id, name, group_key,
+			status, rate_multiplier, metadata
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, COALESCE(NULLIF($7, ''), 'active'), COALESCE(NULLIF($8, 0), 1), $9)
+		RETURNING id, organization_id, department_id, project_id, agent_id, name, group_key,
+			status, rate_multiplier::float8, metadata, created_at, updated_at
+	`, input.OrganizationID, input.DepartmentID, input.ProjectID, input.AgentID, input.Name, input.GroupKey,
+		input.Status, input.RateMultiplier, mustJSON(input.Metadata)), group)
+	if err != nil {
+		return nil, fmt.Errorf("create ai model group: %w", err)
+	}
+	return group, nil
+}
+
+func (r *PostgresRepository) ListModelGroups(ctx context.Context, organizationID *uuid.UUID, limit int) ([]ModelGroup, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, organization_id, department_id, project_id, agent_id, name, group_key,
+			status, rate_multiplier::float8, metadata, created_at, updated_at
+		FROM ai_model_groups
+		WHERE $1::uuid IS NULL OR organization_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, organizationID, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list ai model groups: %w", err)
+	}
+	defer rows.Close()
+	items := []ModelGroup{}
+	for rows.Next() {
+		var item ModelGroup
+		if err := scanModelGroupRow(rows, &item); err != nil {
+			return nil, fmt.Errorf("scan ai model group: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *PostgresRepository) CreateModelChannelAbility(ctx context.Context, input CreateModelChannelAbilityInput) (*ModelChannelAbility, error) {
+	enabled := true
+	if input.Enabled != nil {
+		enabled = *input.Enabled
+	}
+	ability := &ModelChannelAbility{}
+	err := scanModelChannelAbilityRow(r.db.QueryRow(ctx, `
+		INSERT INTO ai_model_channel_abilities(
+			model_group_id, channel_id, requested_model, model_pattern,
+			upstream_model, priority, enabled, metadata
+		)
+		VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), '*'), $5, COALESCE(NULLIF($6, 0), 100), $7, $8)
+		RETURNING id, model_group_id, channel_id, requested_model, model_pattern,
+			upstream_model, priority, enabled, metadata, created_at, updated_at
+	`, input.ModelGroupID, input.ChannelID, input.RequestedModel, input.ModelPattern, input.UpstreamModel,
+		input.Priority, enabled, mustJSON(input.Metadata)), ability)
+	if err != nil {
+		return nil, fmt.Errorf("create ai model channel ability: %w", err)
+	}
+	return ability, nil
+}
+
+func (r *PostgresRepository) ListModelChannelAbilities(ctx context.Context, modelGroupID *uuid.UUID, limit int) ([]ModelChannelAbility, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, model_group_id, channel_id, requested_model, model_pattern,
+			upstream_model, priority, enabled, metadata, created_at, updated_at
+		FROM ai_model_channel_abilities
+		WHERE $1::uuid IS NULL OR model_group_id = $1
+		ORDER BY priority ASC, created_at DESC
+		LIMIT $2
+	`, modelGroupID, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list ai model channel abilities: %w", err)
+	}
+	defer rows.Close()
+	items := []ModelChannelAbility{}
+	for rows.Next() {
+		var item ModelChannelAbility
+		if err := scanModelChannelAbilityRow(rows, &item); err != nil {
+			return nil, fmt.Errorf("scan ai model channel ability: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *PostgresRepository) GetGatewayBalance(ctx context.Context, organizationID uuid.UUID, currency string) (*GatewayBalance, error) {
+	balance := &GatewayBalance{}
+	err := scanGatewayBalanceRow(r.db.QueryRow(ctx, `
+		SELECT id, organization_id, balance_amount::float8, reserved_amount::float8,
+			currency, metadata, created_at, updated_at
+		FROM ai_gateway_balances
+		WHERE organization_id = $1 AND currency = $2
+	`, organizationID, currencyOrDefault(currency)), balance)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return &GatewayBalance{OrganizationID: organizationID, Currency: currencyOrDefault(currency), Metadata: map[string]any{}}, nil
+		}
+		return nil, fmt.Errorf("get ai gateway balance: %w", err)
+	}
+	return balance, nil
+}
+
+func (r *PostgresRepository) ListBalanceTransactions(ctx context.Context, organizationID uuid.UUID, limit int) ([]BalanceTransaction, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, organization_id, access_token_id, model_group_id, invocation_id, reservation_id,
+			transaction_type, amount::float8, currency, reason, metadata, created_at
+		FROM ai_gateway_balance_transactions
+		WHERE organization_id = $1
+		ORDER BY created_at DESC
+		LIMIT $2
+	`, organizationID, normalizeLimit(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list ai gateway balance transactions: %w", err)
+	}
+	defer rows.Close()
+	items := []BalanceTransaction{}
+	for rows.Next() {
+		var item BalanceTransaction
+		if err := scanBalanceTransactionRow(rows, &item); err != nil {
+			return nil, fmt.Errorf("scan ai gateway balance transaction: %w", err)
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *PostgresRepository) AdjustGatewayBalance(ctx context.Context, input AdjustGatewayBalanceInput) (*GatewayBalance, error) {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin adjust ai gateway balance: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	currency := currencyOrDefault(input.Currency)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_gateway_balances(organization_id, currency)
+		VALUES ($1, $2)
+		ON CONFLICT (organization_id, currency) DO NOTHING
+	`, input.OrganizationID, currency); err != nil {
+		return nil, fmt.Errorf("ensure ai gateway balance: %w", err)
+	}
+	balance := &GatewayBalance{}
+	err = scanGatewayBalanceRow(tx.QueryRow(ctx, `
+		UPDATE ai_gateway_balances
+		SET balance_amount = balance_amount + $3,
+			metadata = metadata || $4::jsonb,
+			updated_at = NOW()
+		WHERE organization_id = $1
+		  AND currency = $2
+		  AND balance_amount + $3 >= reserved_amount
+		RETURNING id, organization_id, balance_amount::float8, reserved_amount::float8,
+			currency, metadata, created_at, updated_at
+	`, input.OrganizationID, currency, roundCost(input.Amount), mustJSON(input.Metadata)), balance)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("%w: ai gateway balance adjustment would fall below reserved amount", ErrForbidden)
+		}
+		return nil, fmt.Errorf("adjust ai gateway balance: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ai_gateway_balance_transactions(
+			organization_id, transaction_type, amount, currency, reason, metadata
+		)
+		VALUES ($1, 'adjustment', $2, $3, $4, $5)
+	`, input.OrganizationID, roundCost(input.Amount), currency, input.Reason, mustJSON(input.Metadata)); err != nil {
+		return nil, fmt.Errorf("record ai gateway balance adjustment: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit adjust ai gateway balance: %w", err)
+	}
+	return balance, nil
 }
 
 func (r *PostgresRepository) UsageAnalysis(ctx context.Context, filter UsageAnalysisFilter) (*UsageAnalysis, error) {
@@ -1044,20 +1480,28 @@ func nullableUUID(id *uuid.UUID) any {
 
 func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput, target *ResolvedModel) error {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, name, COALESCE(NULLIF(base_url, ''), $2), encrypted_api_key,
-			rate_multiplier::float8, supported_model_patterns, model_mapping
-		FROM model_provider_channels
-		WHERE provider_id = $1
-		  AND status = 'active'
-		  AND ($3::uuid IS NULL OR id = $3)
-		  AND (quota_amount <= 0 OR quota_used < quota_amount)
-		  AND (concurrency_limit <= 0 OR inflight_requests < concurrency_limit)
-		ORDER BY priority ASC,
-			(inflight_requests::float8 / GREATEST(load_factor, 1)) ASC,
-			last_used_at ASC NULLS FIRST,
-			created_at ASC
+		SELECT c.id, c.name, COALESCE(NULLIF(c.base_url, ''), $2), c.encrypted_api_key,
+			c.rate_multiplier::float8, c.supported_model_patterns, c.model_mapping,
+			COALESCE(a.priority, c.priority) AS ability_priority,
+			COALESCE(a.requested_model, ''), COALESCE(a.model_pattern, ''), COALESCE(a.upstream_model, '')
+		FROM model_provider_channels c
+		LEFT JOIN ai_model_channel_abilities a
+		  ON $4::uuid IS NOT NULL
+		 AND a.channel_id = c.id
+		 AND a.enabled = TRUE
+		 AND (a.model_group_id = $4 OR a.model_group_id IS NULL)
+		WHERE c.provider_id = $1
+		  AND c.status = 'active'
+		  AND ($3::uuid IS NULL OR c.id = $3)
+		  AND ($4::uuid IS NULL OR a.id IS NOT NULL)
+		  AND (c.quota_amount <= 0 OR c.quota_used < c.quota_amount)
+		  AND (c.concurrency_limit <= 0 OR c.inflight_requests < c.concurrency_limit)
+		ORDER BY ability_priority ASC,
+			(c.inflight_requests::float8 / GREATEST(c.load_factor, 1)) ASC,
+			c.last_used_at ASC NULLS FIRST,
+			c.created_at ASC
 		LIMIT 50
-	`, target.ProviderID, target.BaseURL, input.PreferredChannelID)
+	`, target.ProviderID, target.BaseURL, input.PreferredChannelID, input.ModelGroupID)
 	if err != nil {
 		return fmt.Errorf("query provider channels: %w", err)
 	}
@@ -1067,8 +1511,19 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 		var name, baseURL, encrypted string
 		var rateMultiplier float64
 		var patternsJSON, mappingJSON []byte
-		if err := rows.Scan(&id, &name, &baseURL, &encrypted, &rateMultiplier, &patternsJSON, &mappingJSON); err != nil {
+		var abilityPriority int
+		var abilityRequestedModel, abilityPattern, abilityUpstreamModel string
+		if err := rows.Scan(&id, &name, &baseURL, &encrypted, &rateMultiplier, &patternsJSON, &mappingJSON,
+			&abilityPriority, &abilityRequestedModel, &abilityPattern, &abilityUpstreamModel); err != nil {
 			return fmt.Errorf("scan provider channel candidate: %w", err)
+		}
+		if input.ModelGroupID != nil {
+			if abilityRequestedModel != "" && !strings.EqualFold(abilityRequestedModel, target.RequestedModel) {
+				continue
+			}
+			if !modelSupported([]string{firstNonEmpty(abilityPattern, "*")}, target.RequestedModel) {
+				continue
+			}
 		}
 		patterns, mapping, err := parseChannelRouting(patternsJSON, mappingJSON)
 		if err != nil {
@@ -1078,6 +1533,10 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 			continue
 		}
 		upstreamModel, mapped := resolveMappedModel(mapping, target.RequestedModel)
+		if strings.TrimSpace(abilityUpstreamModel) != "" {
+			upstreamModel = strings.TrimSpace(abilityUpstreamModel)
+			mapped = !strings.EqualFold(upstreamModel, target.RequestedModel)
+		}
 		apiKey, err := r.box.Decrypt(encrypted)
 		if err != nil {
 			return fmt.Errorf("decrypt channel api key: %w", err)
@@ -1106,6 +1565,9 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 	}
 	if input.PreferredChannelID != nil {
 		return fmt.Errorf("%w: preferred channel is not available", ErrNotFound)
+	}
+	if input.ModelGroupID != nil {
+		return fmt.Errorf("%w: no active channel ability matches model group", ErrUnavailable)
 	}
 	return nil
 }
@@ -1308,6 +1770,96 @@ func scanRoutingRuleRow(row scanner, rule *RoutingRule) error {
 	rule.ChannelID = uuidPointer(channelID)
 	if err := json.Unmarshal(metaJSON, &rule.Metadata); err != nil {
 		return fmt.Errorf("unmarshal routing rule metadata: %w", err)
+	}
+	return nil
+}
+
+func scanAccessTokenRow(row scanner, token *AccessToken) error {
+	var groupID pgtype.UUID
+	var allowedModelsJSON, allowedPatternsJSON, metaJSON []byte
+	var expiresAt, lastUsedAt pgtype.Timestamptz
+	if err := row.Scan(&token.ID, &token.OrganizationID, &groupID, &token.Name, &token.TokenHash, &token.MaskedToken, &token.Status,
+		&allowedModelsJSON, &allowedPatternsJSON, &token.AllowChannelOverride, &token.QuotaAmount, &token.QuotaUsed, &token.QuotaCurrency,
+		&expiresAt, &lastUsedAt, &metaJSON, &token.CreatedAt, &token.UpdatedAt); err != nil {
+		return err
+	}
+	token.ModelGroupID = uuidPointer(groupID)
+	if expiresAt.Valid {
+		t := expiresAt.Time
+		token.ExpiresAt = &t
+	}
+	if lastUsedAt.Valid {
+		t := lastUsedAt.Time
+		token.LastUsedAt = &t
+	}
+	if err := json.Unmarshal(allowedModelsJSON, &token.AllowedModels); err != nil {
+		return fmt.Errorf("unmarshal access token allowed models: %w", err)
+	}
+	if err := json.Unmarshal(allowedPatternsJSON, &token.AllowedModelPatterns); err != nil {
+		return fmt.Errorf("unmarshal access token allowed model patterns: %w", err)
+	}
+	if err := json.Unmarshal(metaJSON, &token.Metadata); err != nil {
+		return fmt.Errorf("unmarshal access token metadata: %w", err)
+	}
+	return nil
+}
+
+func scanModelGroupRow(row scanner, group *ModelGroup) error {
+	var orgID, departmentID, projectID, agentID pgtype.UUID
+	var metaJSON []byte
+	if err := row.Scan(&group.ID, &orgID, &departmentID, &projectID, &agentID, &group.Name, &group.GroupKey,
+		&group.Status, &group.RateMultiplier, &metaJSON, &group.CreatedAt, &group.UpdatedAt); err != nil {
+		return err
+	}
+	group.OrganizationID = uuidPointer(orgID)
+	group.DepartmentID = uuidPointer(departmentID)
+	group.ProjectID = uuidPointer(projectID)
+	group.AgentID = uuidPointer(agentID)
+	if err := json.Unmarshal(metaJSON, &group.Metadata); err != nil {
+		return fmt.Errorf("unmarshal model group metadata: %w", err)
+	}
+	return nil
+}
+
+func scanModelChannelAbilityRow(row scanner, ability *ModelChannelAbility) error {
+	var modelGroupID pgtype.UUID
+	var metaJSON []byte
+	if err := row.Scan(&ability.ID, &modelGroupID, &ability.ChannelID, &ability.RequestedModel, &ability.ModelPattern,
+		&ability.UpstreamModel, &ability.Priority, &ability.Enabled, &metaJSON, &ability.CreatedAt, &ability.UpdatedAt); err != nil {
+		return err
+	}
+	ability.ModelGroupID = uuidPointer(modelGroupID)
+	if err := json.Unmarshal(metaJSON, &ability.Metadata); err != nil {
+		return fmt.Errorf("unmarshal model channel ability metadata: %w", err)
+	}
+	return nil
+}
+
+func scanGatewayBalanceRow(row scanner, balance *GatewayBalance) error {
+	var metaJSON []byte
+	if err := row.Scan(&balance.ID, &balance.OrganizationID, &balance.BalanceAmount, &balance.ReservedAmount,
+		&balance.Currency, &metaJSON, &balance.CreatedAt, &balance.UpdatedAt); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(metaJSON, &balance.Metadata); err != nil {
+		return fmt.Errorf("unmarshal gateway balance metadata: %w", err)
+	}
+	return nil
+}
+
+func scanBalanceTransactionRow(row scanner, tx *BalanceTransaction) error {
+	var accessTokenID, modelGroupID, invocationID, reservationID pgtype.UUID
+	var metaJSON []byte
+	if err := row.Scan(&tx.ID, &tx.OrganizationID, &accessTokenID, &modelGroupID, &invocationID, &reservationID,
+		&tx.TransactionType, &tx.Amount, &tx.Currency, &tx.Reason, &metaJSON, &tx.CreatedAt); err != nil {
+		return err
+	}
+	tx.AccessTokenID = uuidPointer(accessTokenID)
+	tx.ModelGroupID = uuidPointer(modelGroupID)
+	tx.InvocationID = uuidPointer(invocationID)
+	tx.ReservationID = uuidPointer(reservationID)
+	if err := json.Unmarshal(metaJSON, &tx.Metadata); err != nil {
+		return fmt.Errorf("unmarshal balance transaction metadata: %w", err)
 	}
 	return nil
 }
@@ -1566,4 +2118,9 @@ func maskSecret(secret string) string {
 		return "****"
 	}
 	return secret[:4] + "****" + secret[len(secret)-4:]
+}
+
+func hashAccessToken(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
 }

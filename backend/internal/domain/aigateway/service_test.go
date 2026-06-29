@@ -21,6 +21,15 @@ type fakeGatewayRepo struct {
 	ledgerCount     int
 	lastLedger      CreateUsageLedgerInput
 	lastComplete    CompleteInvocationInput
+	accessToken     AccessTokenContext
+	reserved        bool
+	settled         bool
+	refunded        bool
+	reservation     BalanceReservation
+	lastReserve     ReserveBalanceInput
+	lastSettle      SettleBalanceInput
+	lastTokenStore  CreateAccessTokenStoreInput
+	lastAdjustment  AdjustGatewayBalanceInput
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -33,6 +42,111 @@ func newFakeGatewayRepo() *fakeGatewayRepo {
 		Currency:       "CNY",
 		RateMultiplier: 1,
 	}}
+}
+
+func TestServiceInvokeWithAccessTokenReservesAndSettlesBalance(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	orgID := uuid.New()
+	tokenID := uuid.New()
+	groupID := uuid.New()
+	repo.accessToken = AccessTokenContext{
+		ID:             tokenID,
+		OrganizationID: orgID,
+		ModelGroupID:   &groupID,
+		AllowedModels:  []string{"gpt-*"},
+		Status:         "active",
+	}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.0013, Currency: "CNY"}
+	adapter := fakeAdapter{resp: ProviderResponse{Content: "ok", Usage: TokenUsage{InputTokens: 10, OutputTokens: 20}}}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: adapter})
+
+	resp, err := svc.InvokeWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "hi"}},
+		MaxTokens:    32,
+	})
+	if err != nil {
+		t.Fatalf("InvokeWithAccessToken returned error: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Fatalf("content = %q, want ok", resp.Content)
+	}
+	if !repo.reserved {
+		t.Fatalf("balance was not reserved")
+	}
+	if !repo.settled {
+		t.Fatalf("balance was not settled")
+	}
+	if repo.refunded {
+		t.Fatalf("balance was refunded for successful invocation")
+	}
+	if repo.lastReserve.AccessTokenID != tokenID || repo.lastReserve.OrganizationID != orgID {
+		t.Fatalf("reserve attribution = %#v, want token/org ids", repo.lastReserve)
+	}
+	if repo.lastSettle.ActualAmount != repo.lastLedger.Amount {
+		t.Fatalf("settled amount = %.8f, want ledger amount %.8f", repo.lastSettle.ActualAmount, repo.lastLedger.Amount)
+	}
+	if repo.lastLedger.Metadata["access_token_id"] != tokenID.String() {
+		t.Fatalf("ledger access_token_id metadata = %#v, want %s", repo.lastLedger.Metadata["access_token_id"], tokenID)
+	}
+}
+
+func TestServiceInvokeWithAccessTokenRejectsDisallowedModelBeforeReserve(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		AllowedModels:  []string{"claude-*"},
+		Status:         "active",
+	}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{}})
+
+	_, err := svc.InvokeWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("InvokeWithAccessToken error = %v, want ErrForbidden", err)
+	}
+	if repo.reserved {
+		t.Fatalf("balance was reserved for disallowed model")
+	}
+	if repo.recorded {
+		t.Fatalf("invocation was recorded for disallowed model")
+	}
+}
+
+func TestServiceInvokeWithAccessTokenRefundsReservationWhenProviderFails(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		AllowedModels:  []string{"gpt-test"},
+		Status:         "active",
+	}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.0013, Currency: "CNY"}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{err: errors.New("provider down")}})
+
+	_, err := svc.InvokeWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "hi"}},
+		MaxTokens:    32,
+	})
+	if err == nil {
+		t.Fatalf("InvokeWithAccessToken returned nil error")
+	}
+	if !repo.reserved {
+		t.Fatalf("balance was not reserved")
+	}
+	if !repo.refunded {
+		t.Fatalf("balance was not refunded after provider failure")
+	}
+	if repo.settled {
+		t.Fatalf("balance was settled after provider failure")
+	}
 }
 
 func TestServiceInvokeRecordsUsage(t *testing.T) {
@@ -194,6 +308,95 @@ func TestServiceEstimateCostUsesPricingTarget(t *testing.T) {
 	}
 }
 
+func TestServiceCreateAccessTokenGeneratesHashAndOneTimePlainToken(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	orgID := uuid.New()
+	svc := NewService(repo, nil)
+
+	result, err := svc.CreateAccessToken(context.Background(), CreateAccessTokenInput{
+		OrganizationID: orgID,
+		Name:           "ERP integration",
+		AllowedModels:  []string{"gpt-*"},
+	})
+	if err != nil {
+		t.Fatalf("CreateAccessToken returned error: %v", err)
+	}
+	if result.PlainToken == "" {
+		t.Fatalf("PlainToken is empty")
+	}
+	if result.TokenHash == "" || result.TokenHash == result.PlainToken {
+		t.Fatalf("TokenHash = %q, PlainToken = %q, want non-empty hash distinct from token", result.TokenHash, result.PlainToken)
+	}
+	if repo.lastTokenStore.TokenHash != result.TokenHash {
+		t.Fatalf("stored token hash = %q, want %q", repo.lastTokenStore.TokenHash, result.TokenHash)
+	}
+	if repo.lastTokenStore.OrganizationID != orgID {
+		t.Fatalf("stored organization id = %s, want %s", repo.lastTokenStore.OrganizationID, orgID)
+	}
+	if repo.lastTokenStore.MaskedToken == "" || repo.lastTokenStore.MaskedToken == result.PlainToken {
+		t.Fatalf("masked token = %q, want masked value", repo.lastTokenStore.MaskedToken)
+	}
+}
+
+func TestServiceAdjustGatewayBalanceRequiresOrganizationAndRecordsAdjustment(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	orgID := uuid.New()
+	svc := NewService(repo, nil)
+
+	result, err := svc.AdjustGatewayBalance(context.Background(), AdjustGatewayBalanceInput{
+		OrganizationID: orgID,
+		Amount:         120.5,
+		Currency:       "CNY",
+		Reason:         "manual_top_up",
+	})
+	if err != nil {
+		t.Fatalf("AdjustGatewayBalance returned error: %v", err)
+	}
+	if result.BalanceAmount != 120.5 {
+		t.Fatalf("balance amount = %.4f, want 120.5", result.BalanceAmount)
+	}
+	if repo.lastAdjustment.OrganizationID != orgID || repo.lastAdjustment.Reason != "manual_top_up" {
+		t.Fatalf("adjustment input = %#v, want org and reason", repo.lastAdjustment)
+	}
+}
+
+func TestServiceAdjustGatewayBalanceRejectsMissingReason(t *testing.T) {
+	svc := NewService(newFakeGatewayRepo(), nil)
+
+	_, err := svc.AdjustGatewayBalance(context.Background(), AdjustGatewayBalanceInput{
+		OrganizationID: uuid.New(),
+		Amount:         10,
+	})
+	if !errors.Is(err, ErrValidation) {
+		t.Fatalf("AdjustGatewayBalance error = %v, want ErrValidation", err)
+	}
+}
+
+func TestServiceAdapterCatalogIncludesOpenAICompatibleMatrix(t *testing.T) {
+	svc := NewService(newFakeGatewayRepo(), nil)
+
+	adapters := svc.AdapterCatalog()
+
+	if len(adapters) < 4 {
+		t.Fatalf("adapter count = %d, want OpenAI-compatible matrix and native adapters", len(adapters))
+	}
+	if !adapterCatalogHas(adapters, "deepseek", "openai_compatible") {
+		t.Fatalf("adapter catalog = %#v, want deepseek as openai_compatible", adapters)
+	}
+	if !adapterCatalogHas(adapters, "anthropic", "native") {
+		t.Fatalf("adapter catalog = %#v, want anthropic native adapter", adapters)
+	}
+}
+
+func adapterCatalogHas(items []AdapterDescriptor, key string, mode string) bool {
+	for _, item := range items {
+		if item.AdapterKey == key && item.AdapterMode == mode {
+			return true
+		}
+	}
+	return false
+}
+
 func (f *fakeGatewayRepo) ResolveInvocationTarget(context.Context, InvokeInput) (ResolvedModel, error) {
 	return f.target, nil
 }
@@ -226,6 +429,33 @@ func (f *fakeGatewayRepo) CreateUsageLedger(_ context.Context, input CreateUsage
 }
 
 func (f *fakeGatewayRepo) ReleaseChannel(context.Context, *uuid.UUID, float64) error {
+	return nil
+}
+
+func (f *fakeGatewayRepo) AuthenticateAccessToken(context.Context, string) (AccessTokenContext, error) {
+	if f.accessToken.ID == uuid.Nil {
+		return AccessTokenContext{}, ErrForbidden
+	}
+	return f.accessToken, nil
+}
+
+func (f *fakeGatewayRepo) ReserveAccessTokenBalance(_ context.Context, input ReserveBalanceInput) (BalanceReservation, error) {
+	f.reserved = true
+	f.lastReserve = input
+	if f.reservation.ID == uuid.Nil {
+		f.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: input.EstimatedAmount, Currency: input.Currency}
+	}
+	return f.reservation, nil
+}
+
+func (f *fakeGatewayRepo) SettleAccessTokenBalance(_ context.Context, input SettleBalanceInput) error {
+	f.settled = true
+	f.lastSettle = input
+	return nil
+}
+
+func (f *fakeGatewayRepo) RefundAccessTokenBalance(context.Context, uuid.UUID, string) error {
+	f.refunded = true
 	return nil
 }
 
@@ -311,6 +541,59 @@ func (f *fakeGatewayRepo) CreateRoutingRule(context.Context, CreateRoutingRuleIn
 
 func (f *fakeGatewayRepo) UsageAnalysis(context.Context, UsageAnalysisFilter) (*UsageAnalysis, error) {
 	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) CreateAccessToken(_ context.Context, input CreateAccessTokenStoreInput) (*AccessToken, error) {
+	f.lastTokenStore = input
+	return &AccessToken{
+		ID:             uuid.New(),
+		OrganizationID: input.OrganizationID,
+		ModelGroupID:   input.ModelGroupID,
+		Name:           input.Name,
+		TokenHash:      input.TokenHash,
+		MaskedToken:    input.MaskedToken,
+		Status:         "active",
+		AllowedModels:  input.AllowedModels,
+	}, nil
+}
+
+func (f *fakeGatewayRepo) ListAccessTokens(context.Context, *uuid.UUID, int) ([]AccessToken, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) ListModelGroups(context.Context, *uuid.UUID, int) ([]ModelGroup, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) CreateModelGroup(context.Context, CreateModelGroupInput) (*ModelGroup, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) CreateModelChannelAbility(context.Context, CreateModelChannelAbilityInput) (*ModelChannelAbility, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) ListModelChannelAbilities(context.Context, *uuid.UUID, int) ([]ModelChannelAbility, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) GetGatewayBalance(context.Context, uuid.UUID, string) (*GatewayBalance, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) ListBalanceTransactions(context.Context, uuid.UUID, int) ([]BalanceTransaction, error) {
+	return nil, errors.New("unexpected catalog call")
+}
+
+func (f *fakeGatewayRepo) AdjustGatewayBalance(_ context.Context, input AdjustGatewayBalanceInput) (*GatewayBalance, error) {
+	f.lastAdjustment = input
+	return &GatewayBalance{
+		ID:             uuid.New(),
+		OrganizationID: input.OrganizationID,
+		BalanceAmount:  input.Amount,
+		Currency:       currencyOrDefault(input.Currency),
+		Metadata:       map[string]any{},
+	}, nil
 }
 
 type fakeAdapter struct {

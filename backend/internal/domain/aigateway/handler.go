@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -42,6 +44,16 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/ai-gateway/stream", h.streamPost)
 	r.Get("/ai-gateway/routing-rules", h.listRoutingRules)
 	r.Post("/ai-gateway/routing-rules", h.createRoutingRule)
+	r.Get("/ai-gateway/model-groups", h.listModelGroups)
+	r.Post("/ai-gateway/model-groups", h.createModelGroup)
+	r.Get("/ai-gateway/model-channel-abilities", h.listModelChannelAbilities)
+	r.Post("/ai-gateway/model-channel-abilities", h.createModelChannelAbility)
+	r.Get("/ai-gateway/access-tokens", h.listAccessTokens)
+	r.Post("/ai-gateway/access-tokens", h.createAccessToken)
+	r.Get("/ai-gateway/adapters", h.adapterCatalog)
+	r.Get("/ai-gateway/balance", h.getGatewayBalance)
+	r.Post("/ai-gateway/balance-adjustments", h.adjustGatewayBalance)
+	r.Get("/ai-gateway/balance-transactions", h.listBalanceTransactions)
 	r.Get("/ai-gateway/usage-analysis", h.usageAnalysis)
 	r.Post("/ai-gateway/estimate-cost", h.estimateCost)
 	r.Get("/ai-gateway/invocations", h.listInvocations)
@@ -60,6 +72,15 @@ func (h *Handler) RegisterTenantRoutes(r chi.Router) {
 	r.Get("/ai-gateway/cost-summary", h.costSummary)
 }
 
+func (h *Handler) RegisterCompatibleRoutes(r chi.Router) {
+	r.Get("/v1/models", h.compatibleListModels)
+	r.Post("/v1/chat/completions", h.compatibleChatCompletions)
+	r.Post("/v1/embeddings", h.compatibleUnsupportedOperation("embeddings"))
+	r.Post("/v1/images/generations", h.compatibleUnsupportedOperation("images"))
+	r.Post("/v1/audio/transcriptions", h.compatibleUnsupportedOperation("audio"))
+	r.Post("/v1/moderations", h.compatibleUnsupportedOperation("moderations"))
+}
+
 func (h *Handler) createProvider(w http.ResponseWriter, r *http.Request) {
 	var input CreateProviderInput
 	if !decodeJSON(w, r, &input) {
@@ -67,6 +88,132 @@ func (h *Handler) createProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.service.CreateProvider(r.Context(), input)
 	writeResult(w, http.StatusCreated, result, err)
+}
+
+type compatibleChatCompletionRequest struct {
+	Model       string     `json:"model"`
+	Messages    []Message  `json:"messages"`
+	Temperature *float64   `json:"temperature,omitempty"`
+	MaxTokens   int        `json:"max_tokens,omitempty"`
+	Stream      bool       `json:"stream,omitempty"`
+	Tools       []ToolSpec `json:"tools,omitempty"`
+}
+
+type compatibleChatCompletionResponse struct {
+	ID      string                 `json:"id"`
+	Object  string                 `json:"object"`
+	Created int64                  `json:"created"`
+	Model   string                 `json:"model"`
+	Choices []compatibleChatChoice `json:"choices"`
+	Usage   compatibleChatUsage    `json:"usage"`
+}
+
+type compatibleChatChoice struct {
+	Index        int     `json:"index"`
+	Message      Message `json:"message"`
+	FinishReason string  `json:"finish_reason"`
+}
+
+type compatibleChatUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+func (h *Handler) compatibleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	token, ok := bearerToken(w, r)
+	if !ok {
+		return
+	}
+	var input compatibleChatCompletionRequest
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	tools := make([]ToolDefinition, 0, len(input.Tools))
+	for _, tool := range input.Tools {
+		tools = append(tools, ToolDefinition{Name: tool.Name, Description: tool.Description, Schema: tool.Schema})
+	}
+	result, err := h.service.InvokeWithAccessToken(r.Context(), token, InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        input.Model,
+		Messages:     input.Messages,
+		Temperature:  input.Temperature,
+		MaxTokens:    input.MaxTokens,
+		Tools:        tools,
+		Attribution:  Attribution{SourceSurface: "openai_compatible_api"},
+	})
+	if err != nil {
+		writeJSON(w, statusFromError(err), map[string]any{"error": map[string]string{"message": err.Error(), "type": "ai_gateway_error"}})
+		return
+	}
+	responseID := result.ProviderRequestID
+	if responseID == "" {
+		responseID = result.InvocationID.String()
+	}
+	writeJSON(w, http.StatusOK, compatibleChatCompletionResponse{
+		ID:      responseID,
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   result.Model,
+		Choices: []compatibleChatChoice{{
+			Index:        0,
+			Message:      Message{Role: "assistant", Content: result.Content},
+			FinishReason: "stop",
+		}},
+		Usage: compatibleChatUsage{
+			PromptTokens:     result.Usage.InputTokens,
+			CompletionTokens: result.Usage.OutputTokens,
+			TotalTokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
+		},
+	})
+}
+
+func (h *Handler) compatibleListModels(w http.ResponseWriter, r *http.Request) {
+	if _, ok := bearerToken(w, r); !ok {
+		return
+	}
+	models, err := h.service.ListModels(r.Context(), nil, queryLimit(r))
+	if err != nil {
+		writeJSON(w, statusFromError(err), map[string]any{"error": map[string]string{"message": err.Error(), "type": "ai_gateway_error"}})
+		return
+	}
+	data := make([]map[string]any, 0, len(models))
+	for _, model := range models {
+		data = append(data, map[string]any{
+			"id":       model.ModelKey,
+			"object":   "model",
+			"owned_by": model.ProviderID.String(),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+}
+
+func bearerToken(w http.ResponseWriter, r *http.Request) (string, bool) {
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if !strings.HasPrefix(strings.ToLower(header), "bearer ") {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"message": "bearer token is required", "type": "authentication_error"}})
+		return "", false
+	}
+	token := strings.TrimSpace(header[len("Bearer "):])
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]string{"message": "bearer token is required", "type": "authentication_error"}})
+		return "", false
+	}
+	return token, true
+}
+
+func (h *Handler) compatibleUnsupportedOperation(operation string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := bearerToken(w, r); !ok {
+			return
+		}
+		writeJSON(w, http.StatusNotImplemented, map[string]any{
+			"error": map[string]string{
+				"message": operation + " is not enabled for this AI gateway adapter",
+				"type":    "unsupported_operation",
+			},
+		})
+	}
 }
 
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
@@ -299,6 +446,91 @@ func (h *Handler) createRoutingRule(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, http.StatusCreated, result, err)
 }
 
+func (h *Handler) createAccessToken(w http.ResponseWriter, r *http.Request) {
+	var input CreateAccessTokenInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.CreateAccessToken(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listAccessTokens(w http.ResponseWriter, r *http.Request) {
+	organizationID, ok := optionalQueryUUID(w, r, "organization_id")
+	if !ok {
+		return
+	}
+	result, err := h.service.ListAccessTokens(r.Context(), organizationID, queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createModelGroup(w http.ResponseWriter, r *http.Request) {
+	var input CreateModelGroupInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.CreateModelGroup(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listModelGroups(w http.ResponseWriter, r *http.Request) {
+	organizationID, ok := optionalQueryUUID(w, r, "organization_id")
+	if !ok {
+		return
+	}
+	result, err := h.service.ListModelGroups(r.Context(), organizationID, queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) createModelChannelAbility(w http.ResponseWriter, r *http.Request) {
+	var input CreateModelChannelAbilityInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.CreateModelChannelAbility(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listModelChannelAbilities(w http.ResponseWriter, r *http.Request) {
+	modelGroupID, ok := optionalQueryUUID(w, r, "model_group_id")
+	if !ok {
+		return
+	}
+	result, err := h.service.ListModelChannelAbilities(r.Context(), modelGroupID, queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) getGatewayBalance(w http.ResponseWriter, r *http.Request) {
+	organizationID, ok := requiredQueryUUID(w, r, "organization_id")
+	if !ok {
+		return
+	}
+	result, err := h.service.GetGatewayBalance(r.Context(), organizationID, r.URL.Query().Get("currency"))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) adjustGatewayBalance(w http.ResponseWriter, r *http.Request) {
+	var input AdjustGatewayBalanceInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	result, err := h.service.AdjustGatewayBalance(r.Context(), input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) listBalanceTransactions(w http.ResponseWriter, r *http.Request) {
+	organizationID, ok := requiredQueryUUID(w, r, "organization_id")
+	if !ok {
+		return
+	}
+	result, err := h.service.ListBalanceTransactions(r.Context(), organizationID, queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) adapterCatalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.service.AdapterCatalog())
+}
+
 func (h *Handler) usageAnalysis(w http.ResponseWriter, r *http.Request) {
 	result, err := h.service.UsageAnalysis(r.Context(), UsageAnalysisFilter{Limit: queryLimit(r)})
 	writeResult(w, http.StatusOK, result, err)
@@ -412,6 +644,31 @@ func queryLimit(r *http.Request) int {
 	return limit
 }
 
+func optionalQueryUUID(w http.ResponseWriter, r *http.Request, name string) (*uuid.UUID, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return nil, true
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid " + name})
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func requiredQueryUUID(w http.ResponseWriter, r *http.Request, name string) (uuid.UUID, bool) {
+	parsed, ok := optionalQueryUUID(w, r, name)
+	if !ok {
+		return uuid.Nil, false
+	}
+	if parsed == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": name + " is required"})
+		return uuid.Nil, false
+	}
+	return *parsed, true
+}
+
 func writeResult(w http.ResponseWriter, successStatus int, payload any, err error) {
 	if err != nil {
 		writeJSON(w, statusFromError(err), map[string]string{"error": err.Error()})
@@ -427,6 +684,8 @@ func statusFromError(err error) int {
 		return http.StatusBadGateway
 	case errors.Is(err, ErrValidation):
 		return http.StatusBadRequest
+	case errors.Is(err, ErrForbidden):
+		return http.StatusForbidden
 	case errors.Is(err, ErrUnavailable):
 		return http.StatusServiceUnavailable
 	case dberrors.IsUniqueViolation(err):
