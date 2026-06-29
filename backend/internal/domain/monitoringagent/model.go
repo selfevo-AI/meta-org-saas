@@ -19,17 +19,17 @@ const (
 	SeverityMedium   = "medium"
 	SeverityLow      = "low"
 
-	SignalAIFailure                   = "ai_invocation_failure"
-	SignalAIStreamDisconnect          = "ai_stream_disconnect"
-	SignalToolFailure                 = "tool_execution_failure"
-	SignalToolApprovalBacklog         = "tool_approval_backlog"
-	SignalContextBuildFailure         = "context_build_failure"
-	SignalContextRuleGap              = "context_rule_gap"
-	SignalSchemaChangeFailure         = "schema_change_failure"
-	SignalFinanceCallbackFailure      = "finance_callback_failure"
-	SignalERPActionFailure            = "erp_action_failure"
-	SignalCostWithoutBusinessProgress = "cost_without_business_progress"
-	SignalStaleProposal               = "stale_proposal"
+	SignalAIFailure                     = "ai_invocation_failure"
+	SignalAIStreamDisconnect            = "ai_stream_disconnect"
+	SignalToolFailure                   = "tool_execution_failure"
+	SignalToolApprovalBacklog           = "tool_approval_backlog"
+	SignalContextBuildFailure           = "context_build_failure"
+	SignalContextRuleGap                = "context_rule_gap"
+	SignalIndustrySolutionChangeFailure = "industry_solution_change_failure"
+	SignalFinanceCallbackFailure        = "finance_callback_failure"
+	SignalERPActionFailure              = "erp_action_failure"
+	SignalCostWithoutBusinessProgress   = "cost_without_business_progress"
+	SignalStaleProposal                 = "stale_proposal"
 )
 
 type MonitoringAgentRun struct {

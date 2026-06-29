@@ -312,23 +312,23 @@ func runSystemAdminSmoke(base string, orgID string, stamp string) {
 	admin.token = stringField(login, "token")
 	must(admin.token != "", "missing platform admin token")
 
-	targets := admin.get("/platform/admin/schema-targets")
-	must(asList(targets["items"]) != nil, "schema targets did not return a list")
+	targets := admin.get("/platform/admin/industry-solution-targets")
+	must(asList(targets["items"]) != nil, "industry solution targets did not return a list")
 	masters := admin.get("/platform/admin/modules/data_catalog/masters")
 	must(len(asList(masters["items"])) > 0, "missing data catalog platform masters")
-	exported := admin.get("/platform/admin/organizations/" + orgID + "/schema/export")
-	must(stringField(exported, "format_version") != "", "missing exported schema package")
-	change := admin.post("/platform/admin/organizations/"+orgID+"/schema/change-requests", responseMap{
-		"request_type":   "smoke_schema_validation",
-		"reason":         "smoke schema validation " + stamp,
-		"schema_package": exported,
+	exported := admin.get("/platform/admin/organizations/" + orgID + "/industry-solution-manifest/export")
+	must(stringField(exported, "format_version") != "", "missing exported industry solution manifest")
+	change := admin.post("/platform/admin/organizations/"+orgID+"/industry-solution-change-requests", responseMap{
+		"request_type":      "smoke_solution_validation",
+		"reason":            "smoke industry solution validation " + stamp,
+		"solution_manifest": exported,
 	})
 	changeID := stringField(change, "id")
-	must(changeID != "", "missing schema change request id")
-	change = admin.post("/platform/admin/schema-change-requests/"+changeID+"/approve", responseMap{"reason": "smoke approval"})
-	must(stringField(change, "status") == "approved", "schema change was not approved")
-	job := admin.post("/platform/admin/schema-change-requests/"+changeID+"/apply", responseMap{})
-	must(stringField(job, "status") == "applied", "schema change was not applied")
+	must(changeID != "", "missing industry solution change request id")
+	change = admin.post("/platform/admin/industry-solution-change-requests/"+changeID+"/approve", responseMap{"reason": "smoke approval"})
+	must(stringField(change, "status") == "approved", "industry solution change was not approved")
+	job := admin.post("/platform/admin/industry-solution-change-requests/"+changeID+"/apply", responseMap{})
+	must(stringField(job, "status") == "applied", "industry solution change was not applied")
 }
 
 func smokeDate(daysFromNow int) string {
@@ -366,7 +366,7 @@ func expectsCreated(path string) bool {
 		path == "/costing/rate-cards" ||
 		path == "/costing/ledger-entries" ||
 		path == "/costing/budgets" ||
-		(strings.HasPrefix(path, "/platform/admin/organizations/") && strings.HasSuffix(path, "/schema/change-requests")) ||
+		(strings.HasPrefix(path, "/platform/admin/organizations/") && strings.HasSuffix(path, "/industry-solution-change-requests")) ||
 		(strings.HasPrefix(path, "/organizations/") && strings.HasSuffix(path, "/departments"))
 }
 

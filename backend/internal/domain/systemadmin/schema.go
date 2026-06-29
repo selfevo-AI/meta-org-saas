@@ -8,31 +8,31 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
-const SchemaPackageFormatVersion = "meta-org.schema.v1"
+const IndustrySolutionManifestFormatVersion = "meta-org.industry-solution-manifest.v1"
 
 const (
-	SchemaRiskSafe        = "safe"
-	SchemaRiskDestructive = "destructive"
+	IndustrySolutionRiskSafe        = "safe"
+	IndustrySolutionRiskDestructive = "destructive"
 )
 
-type SchemaPackage struct {
-	FormatVersion string                  `json:"format_version"`
-	ModuleKey     string                  `json:"module_key"`
-	Tables        []SchemaTableDefinition `json:"tables"`
-	Metadata      map[string]any          `json:"metadata,omitempty"`
+type IndustrySolutionManifest struct {
+	FormatVersion string                            `json:"format_version"`
+	ModuleKey     string                            `json:"module_key"`
+	Tables        []IndustrySolutionTableDefinition `json:"tables"`
+	Metadata      map[string]any                    `json:"metadata,omitempty"`
 }
 
-type SchemaTableDefinition struct {
-	Name         string                  `json:"name"`
-	PreviousName string                  `json:"previous_name,omitempty"`
-	Fields       []SchemaFieldDefinition `json:"fields"`
-	Indexes      []SchemaIndexDefinition `json:"indexes,omitempty"`
-	Constraints  []string                `json:"constraints,omitempty"`
-	Seeds        []map[string]any        `json:"seeds,omitempty"`
-	Metadata     map[string]any          `json:"metadata,omitempty"`
+type IndustrySolutionTableDefinition struct {
+	Name         string                            `json:"name"`
+	PreviousName string                            `json:"previous_name,omitempty"`
+	Fields       []IndustrySolutionFieldDefinition `json:"fields"`
+	Indexes      []IndustrySolutionIndexDefinition `json:"indexes,omitempty"`
+	Constraints  []string                          `json:"constraints,omitempty"`
+	Seeds        []map[string]any                  `json:"seeds,omitempty"`
+	Metadata     map[string]any                    `json:"metadata,omitempty"`
 }
 
-type SchemaFieldDefinition struct {
+type IndustrySolutionFieldDefinition struct {
 	Name         string `json:"name"`
 	PreviousName string `json:"previous_name,omitempty"`
 	DataType     string `json:"data_type"`
@@ -41,7 +41,7 @@ type SchemaFieldDefinition struct {
 	Default      string `json:"default,omitempty"`
 }
 
-type SchemaIndexDefinition struct {
+type IndustrySolutionIndexDefinition struct {
 	Name    string   `json:"name"`
 	Fields  []string `json:"fields"`
 	Unique  bool     `json:"unique,omitempty"`
@@ -49,7 +49,7 @@ type SchemaIndexDefinition struct {
 	Comment string   `json:"comment,omitempty"`
 }
 
-type SchemaDiff struct {
+type IndustrySolutionDiff struct {
 	Action string `json:"action"`
 	Table  string `json:"table,omitempty"`
 	Field  string `json:"field,omitempty"`
@@ -58,47 +58,47 @@ type SchemaDiff struct {
 	Risk   string `json:"risk"`
 }
 
-type SchemaMigrationPlan struct {
-	Statements []string     `json:"statements"`
-	RiskLevel  string       `json:"risk_level"`
-	Diff       []SchemaDiff `json:"diff"`
+type IndustrySolutionMigrationPlan struct {
+	Statements []string               `json:"statements"`
+	RiskLevel  string                 `json:"risk_level"`
+	Diff       []IndustrySolutionDiff `json:"diff"`
 }
 
-func ValidateSchemaPackage(pkg SchemaPackage) error {
-	if pkg.FormatVersion != SchemaPackageFormatVersion {
-		return fmt.Errorf("unsupported schema package format %q", pkg.FormatVersion)
+func ValidateIndustrySolutionManifest(solution IndustrySolutionManifest) error {
+	if solution.FormatVersion != IndustrySolutionManifestFormatVersion {
+		return fmt.Errorf("unsupported industry solution manifest format %q", solution.FormatVersion)
 	}
-	if _, err := tenantdb.QuoteIdentifier(pkg.ModuleKey); err != nil {
+	if _, err := tenantdb.QuoteIdentifier(solution.ModuleKey); err != nil {
 		return fmt.Errorf("invalid module_key: %w", err)
 	}
 	seenTables := map[string]bool{}
-	for _, table := range pkg.Tables {
+	for _, table := range solution.Tables {
 		if err := validateTable(table); err != nil {
 			return err
 		}
 		seenTables[table.Name] = true
 	}
-	if pkg.ModuleKey == "organization" {
+	if solution.ModuleKey == "organization" {
 		if !seenTables["organization_masters"] {
-			return fmt.Errorf("schema package requires organization_masters")
+			return fmt.Errorf("industry solution manifest requires organization_masters")
 		}
 		if !seenTables["organization_details"] {
-			return fmt.Errorf("schema package requires organization_details")
+			return fmt.Errorf("industry solution manifest requires organization_details")
 		}
 	}
 	return nil
 }
 
-func BuildCreateTableStatements(schemaName string, pkg SchemaPackage) ([]string, error) {
-	if err := ValidateSchemaPackage(pkg); err != nil {
+func BuildIndustrySolutionTableStatements(schemaName string, solution IndustrySolutionManifest) ([]string, error) {
+	if err := ValidateIndustrySolutionManifest(solution); err != nil {
 		return nil, err
 	}
 	quotedSchema, err := tenantdb.QuoteIdentifier(schemaName)
 	if err != nil {
 		return nil, err
 	}
-	statements := make([]string, 0, len(pkg.Tables))
-	for _, table := range pkg.Tables {
+	statements := make([]string, 0, len(solution.Tables))
+	for _, table := range solution.Tables {
 		statement, err := buildCreateTableStatement(quotedSchema, table)
 		if err != nil {
 			return nil, err
@@ -108,19 +108,19 @@ func BuildCreateTableStatements(schemaName string, pkg SchemaPackage) ([]string,
 	return statements, nil
 }
 
-func BuildSchemaMigrationPlan(schemaName string, current SchemaPackage, desired SchemaPackage) (*SchemaMigrationPlan, error) {
-	if err := ValidateSchemaPackage(current); err != nil {
+func BuildIndustrySolutionMigrationPlan(schemaName string, current IndustrySolutionManifest, desired IndustrySolutionManifest) (*IndustrySolutionMigrationPlan, error) {
+	if err := ValidateIndustrySolutionManifest(current); err != nil {
 		return nil, err
 	}
-	if err := ValidateSchemaPackage(desired); err != nil {
+	if err := ValidateIndustrySolutionManifest(desired); err != nil {
 		return nil, err
 	}
 	quotedSchema, err := tenantdb.QuoteIdentifier(schemaName)
 	if err != nil {
 		return nil, err
 	}
-	plan := &SchemaMigrationPlan{RiskLevel: SchemaRiskSafe}
-	currentTables := map[string]SchemaTableDefinition{}
+	plan := &IndustrySolutionMigrationPlan{RiskLevel: IndustrySolutionRiskSafe}
+	currentTables := map[string]IndustrySolutionTableDefinition{}
 	desiredTableNames := map[string]bool{}
 	renamedTables := map[string]bool{}
 	for _, table := range current.Tables {
@@ -137,7 +137,7 @@ func BuildSchemaMigrationPlan(schemaName string, current SchemaPackage, desired 
 				if err != nil {
 					return nil, err
 				}
-				plan.add(stmt, SchemaDiff{Action: "rename_table", Table: table.Name, From: table.PreviousName, To: table.Name, Risk: SchemaRiskDestructive})
+				plan.add(stmt, IndustrySolutionDiff{Action: "rename_table", Table: table.Name, From: table.PreviousName, To: table.Name, Risk: IndustrySolutionRiskDestructive})
 			}
 		}
 		currentTable, exists := currentTables[sourceName]
@@ -146,7 +146,7 @@ func BuildSchemaMigrationPlan(schemaName string, current SchemaPackage, desired 
 			if err != nil {
 				return nil, err
 			}
-			plan.add(stmt, SchemaDiff{Action: "create_table", Table: table.Name, Risk: SchemaRiskSafe})
+			plan.add(stmt, IndustrySolutionDiff{Action: "create_table", Table: table.Name, Risk: IndustrySolutionRiskSafe})
 			plan.addIndexStatements(quotedSchema, table, map[string]bool{})
 			continue
 		}
@@ -162,21 +162,21 @@ func BuildSchemaMigrationPlan(schemaName string, current SchemaPackage, desired 
 		if err != nil {
 			return nil, err
 		}
-		plan.add(stmt, SchemaDiff{Action: "drop_table", Table: table.Name, Risk: SchemaRiskDestructive})
+		plan.add(stmt, IndustrySolutionDiff{Action: "drop_table", Table: table.Name, Risk: IndustrySolutionRiskDestructive})
 	}
 	return plan, nil
 }
 
-func (p *SchemaMigrationPlan) add(statement string, diff SchemaDiff) {
+func (p *IndustrySolutionMigrationPlan) add(statement string, diff IndustrySolutionDiff) {
 	p.Statements = append(p.Statements, statement)
 	p.Diff = append(p.Diff, diff)
-	if diff.Risk == SchemaRiskDestructive {
-		p.RiskLevel = SchemaRiskDestructive
+	if diff.Risk == IndustrySolutionRiskDestructive {
+		p.RiskLevel = IndustrySolutionRiskDestructive
 	}
 }
 
-func (p *SchemaMigrationPlan) addColumnMigrationStatements(quotedSchema string, currentTable SchemaTableDefinition, desiredTable SchemaTableDefinition) error {
-	currentFields := map[string]SchemaFieldDefinition{}
+func (p *IndustrySolutionMigrationPlan) addColumnMigrationStatements(quotedSchema string, currentTable IndustrySolutionTableDefinition, desiredTable IndustrySolutionTableDefinition) error {
+	currentFields := map[string]IndustrySolutionFieldDefinition{}
 	desiredFieldNames := map[string]bool{}
 	renamedFields := map[string]bool{}
 	for _, field := range currentTable.Fields {
@@ -197,7 +197,7 @@ func (p *SchemaMigrationPlan) addColumnMigrationStatements(quotedSchema string, 
 				if err != nil {
 					return err
 				}
-				p.add(stmt, SchemaDiff{Action: "rename_field", Table: desiredTable.Name, Field: field.Name, From: field.PreviousName, To: field.Name, Risk: SchemaRiskDestructive})
+				p.add(stmt, IndustrySolutionDiff{Action: "rename_field", Table: desiredTable.Name, Field: field.Name, From: field.PreviousName, To: field.Name, Risk: IndustrySolutionRiskDestructive})
 			}
 		}
 		currentField, exists := currentFields[sourceName]
@@ -206,7 +206,7 @@ func (p *SchemaMigrationPlan) addColumnMigrationStatements(quotedSchema string, 
 			if err != nil {
 				return err
 			}
-			p.add(stmt, SchemaDiff{Action: "add_field", Table: desiredTable.Name, Field: field.Name, Risk: SchemaRiskSafe})
+			p.add(stmt, IndustrySolutionDiff{Action: "add_field", Table: desiredTable.Name, Field: field.Name, Risk: IndustrySolutionRiskSafe})
 			continue
 		}
 		if err := p.addAlterColumnStatements(quotedSchema, quotedTable, desiredTable.Name, currentField, field); err != nil {
@@ -221,7 +221,7 @@ func (p *SchemaMigrationPlan) addColumnMigrationStatements(quotedSchema string, 
 		if err != nil {
 			return err
 		}
-		p.add(stmt, SchemaDiff{Action: "drop_field", Table: desiredTable.Name, Field: field.Name, Risk: SchemaRiskDestructive})
+		p.add(stmt, IndustrySolutionDiff{Action: "drop_field", Table: desiredTable.Name, Field: field.Name, Risk: IndustrySolutionRiskDestructive})
 	}
 	currentIndexes := map[string]bool{}
 	for _, index := range currentTable.Indexes {
@@ -230,14 +230,14 @@ func (p *SchemaMigrationPlan) addColumnMigrationStatements(quotedSchema string, 
 	return p.addIndexStatements(quotedSchema, desiredTable, currentIndexes)
 }
 
-func (p *SchemaMigrationPlan) addAlterColumnStatements(quotedSchema string, quotedTable string, tableName string, current SchemaFieldDefinition, desired SchemaFieldDefinition) error {
+func (p *IndustrySolutionMigrationPlan) addAlterColumnStatements(quotedSchema string, quotedTable string, tableName string, current IndustrySolutionFieldDefinition, desired IndustrySolutionFieldDefinition) error {
 	quotedField, err := tenantdb.QuoteIdentifier(desired.Name)
 	if err != nil {
 		return err
 	}
 	if normalizeType(current.DataType) != normalizeType(desired.DataType) {
 		stmt := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s TYPE %s", quotedSchema, quotedTable, quotedField, normalizeType(desired.DataType))
-		p.add(stmt, SchemaDiff{Action: "alter_field_type", Table: tableName, Field: desired.Name, From: current.DataType, To: desired.DataType, Risk: SchemaRiskDestructive})
+		p.add(stmt, IndustrySolutionDiff{Action: "alter_field_type", Table: tableName, Field: desired.Name, From: current.DataType, To: desired.DataType, Risk: IndustrySolutionRiskDestructive})
 	}
 	if current.Nullable != desired.Nullable {
 		action := "DROP NOT NULL"
@@ -245,19 +245,19 @@ func (p *SchemaMigrationPlan) addAlterColumnStatements(quotedSchema string, quot
 			action = "SET NOT NULL"
 		}
 		stmt := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s %s", quotedSchema, quotedTable, quotedField, action)
-		p.add(stmt, SchemaDiff{Action: "alter_field_nullable", Table: tableName, Field: desired.Name, From: fmt.Sprint(current.Nullable), To: fmt.Sprint(desired.Nullable), Risk: SchemaRiskDestructive})
+		p.add(stmt, IndustrySolutionDiff{Action: "alter_field_nullable", Table: tableName, Field: desired.Name, From: fmt.Sprint(current.Nullable), To: fmt.Sprint(desired.Nullable), Risk: IndustrySolutionRiskDestructive})
 	}
 	if strings.TrimSpace(current.Default) != strings.TrimSpace(desired.Default) {
 		stmt := fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s DROP DEFAULT", quotedSchema, quotedTable, quotedField)
 		if desired.Default != "" {
 			stmt = fmt.Sprintf("ALTER TABLE %s.%s ALTER COLUMN %s SET DEFAULT %s", quotedSchema, quotedTable, quotedField, desired.Default)
 		}
-		p.add(stmt, SchemaDiff{Action: "alter_field_default", Table: tableName, Field: desired.Name, From: current.Default, To: desired.Default, Risk: SchemaRiskSafe})
+		p.add(stmt, IndustrySolutionDiff{Action: "alter_field_default", Table: tableName, Field: desired.Name, From: current.Default, To: desired.Default, Risk: IndustrySolutionRiskSafe})
 	}
 	return nil
 }
 
-func (p *SchemaMigrationPlan) addIndexStatements(quotedSchema string, table SchemaTableDefinition, currentIndexes map[string]bool) error {
+func (p *IndustrySolutionMigrationPlan) addIndexStatements(quotedSchema string, table IndustrySolutionTableDefinition, currentIndexes map[string]bool) error {
 	quotedTable, err := tenantdb.QuoteIdentifier(table.Name)
 	if err != nil {
 		return err
@@ -286,12 +286,12 @@ func (p *SchemaMigrationPlan) addIndexStatements(quotedSchema string, table Sche
 		if strings.TrimSpace(index.Where) != "" {
 			stmt += " WHERE " + index.Where
 		}
-		p.add(stmt, SchemaDiff{Action: "create_index", Table: table.Name, Field: strings.Join(index.Fields, ","), To: index.Name, Risk: SchemaRiskSafe})
+		p.add(stmt, IndustrySolutionDiff{Action: "create_index", Table: table.Name, Field: strings.Join(index.Fields, ","), To: index.Name, Risk: IndustrySolutionRiskSafe})
 	}
 	return nil
 }
 
-func buildCreateTableStatement(quotedSchema string, table SchemaTableDefinition) (string, error) {
+func buildCreateTableStatement(quotedSchema string, table IndustrySolutionTableDefinition) (string, error) {
 	quotedTable, err := tenantdb.QuoteIdentifier(table.Name)
 	if err != nil {
 		return "", err
@@ -318,7 +318,7 @@ func buildCreateTableStatement(quotedSchema string, table SchemaTableDefinition)
 	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (%s)", quotedSchema, quotedTable, strings.Join(columnDefs, ", ")), nil
 }
 
-func columnDefinition(field SchemaFieldDefinition) (string, error) {
+func columnDefinition(field IndustrySolutionFieldDefinition) (string, error) {
 	quotedField, err := tenantdb.QuoteIdentifier(field.Name)
 	if err != nil {
 		return "", err
@@ -365,7 +365,7 @@ func renameColumnStatement(quotedSchema string, quotedTable string, previousName
 	return fmt.Sprintf("ALTER TABLE %s.%s RENAME COLUMN %s TO %s", quotedSchema, quotedTable, quotedPrevious, quotedNext), nil
 }
 
-func addColumnStatement(quotedSchema string, quotedTable string, field SchemaFieldDefinition) (string, error) {
+func addColumnStatement(quotedSchema string, quotedTable string, field IndustrySolutionFieldDefinition) (string, error) {
 	def, err := columnDefinition(field)
 	if err != nil {
 		return "", err
@@ -381,7 +381,7 @@ func dropColumnStatement(quotedSchema string, quotedTable string, fieldName stri
 	return fmt.Sprintf("ALTER TABLE %s.%s DROP COLUMN %s", quotedSchema, quotedTable, quotedField), nil
 }
 
-func validateTable(table SchemaTableDefinition) error {
+func validateTable(table IndustrySolutionTableDefinition) error {
 	if _, err := tenantdb.QuoteIdentifier(table.Name); err != nil {
 		return fmt.Errorf("invalid table name %q: %w", table.Name, err)
 	}

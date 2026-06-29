@@ -72,12 +72,12 @@ func TestERPActionExecuteToolForwardsExecutionMetadata(t *testing.T) {
 	}
 }
 
-func TestSchemaChangePreviewToolRunsVerifier(t *testing.T) {
+func TestIndustrySolutionChangePreviewToolRunsVerifier(t *testing.T) {
 	requestID := uuid.New()
-	verifier := &fakeSchemaVerifier{}
-	tools := InternalToolsWithPlatform(nil, nil, nil, PlatformToolServices{SchemaVerifier: verifier})
+	verifier := &fakeIndustrySolutionChangeVerifier{}
+	tools := InternalToolsWithPlatform(nil, nil, nil, PlatformToolServices{IndustrySolutionVerifier: verifier})
 
-	result, err := tools["schema.change.preview"](context.Background(), ExecuteToolInput{
+	result, err := tools["industry.solution.change.preview"](context.Background(), ExecuteToolInput{
 		ActorID:   uuid.New(),
 		ActorType: "internal_human",
 		Arguments: map[string]any{"request_id": requestID.String()},
@@ -146,13 +146,13 @@ func (f *fakeERPActionService) RunAction(_ context.Context, tableCode string, ke
 	return &erp.ActionResult{TableCode: tableCode, Key: key, Action: action, Status: "approved", Record: &erp.Record{TableCode: tableCode, Key: key, Data: input.Data}}, nil
 }
 
-type fakeSchemaVerifier struct {
+type fakeIndustrySolutionChangeVerifier struct {
 	requestID uuid.UUID
 }
 
-func (f *fakeSchemaVerifier) VerifySchemaChange(_ context.Context, _ uuid.UUID, requestID uuid.UUID) (*systemadmin.SchemaVerificationReport, error) {
+func (f *fakeIndustrySolutionChangeVerifier) VerifyIndustrySolutionChange(_ context.Context, _ uuid.UUID, requestID uuid.UUID) (*systemadmin.IndustrySolutionVerificationReport, error) {
 	f.requestID = requestID
-	return &systemadmin.SchemaVerificationReport{ChangeRequestID: requestID, Status: "passed", CanApply: true}, nil
+	return &systemadmin.IndustrySolutionVerificationReport{ChangeRequestID: requestID, Status: "passed", CanApply: true}, nil
 }
 
 type fakeRuntimeOperationService struct {

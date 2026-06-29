@@ -82,12 +82,12 @@ func ValidatePackage(pkg Package) error {
 
 func validateAsset(asset PackageAsset) error {
 	switch asset.AssetType {
-	case AssetTypeSchemaPackage:
-		var pkg systemadmin.SchemaPackage
-		if err := decodePayload(asset.Payload, &pkg); err != nil {
-			return fmt.Errorf("%w: invalid schema package payload", ErrValidation)
+	case AssetTypeSolutionManifest:
+		var manifest systemadmin.IndustrySolutionManifest
+		if err := decodePayload(asset.Payload, &manifest); err != nil {
+			return fmt.Errorf("%w: invalid solution manifest payload", ErrValidation)
 		}
-		if err := systemadmin.ValidateSchemaPackage(pkg); err != nil {
+		if err := systemadmin.ValidateIndustrySolutionManifest(manifest); err != nil {
 			return fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 	case AssetTypeModule:
@@ -136,7 +136,7 @@ func (s *Service) ListPackages(ctx context.Context, industryKey string, limit in
 }
 
 func (s *Service) CreatePackage(ctx context.Context, actorID uuid.UUID, input CreatePackageInput) (*Package, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionManage); err != nil {
 		return nil, err
 	}
 	input.IndustryKey = normalizeKey(input.IndustryKey)
@@ -224,7 +224,7 @@ func (s *Service) UpdatePackage(ctx context.Context, actorID uuid.UUID, packageI
 }
 
 func (s *Service) ActivatePackage(ctx context.Context, actorID uuid.UUID, packageID uuid.UUID) (*Package, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApprove); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionApprove); err != nil {
 		return nil, err
 	}
 	return s.repo.ActivatePackage(ctx, packageID, actorID)
@@ -351,7 +351,7 @@ func (s *Service) ListPublicationRequests(ctx context.Context, actorID uuid.UUID
 }
 
 func (s *Service) ReviewPublicationRequest(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID, status string, reason string) (*PublicationRequest, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApprove); err != nil {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionApprove); err != nil {
 		return nil, err
 	}
 	if status != PublicationApproved && status != PublicationRejected {

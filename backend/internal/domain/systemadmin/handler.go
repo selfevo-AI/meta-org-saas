@@ -39,18 +39,17 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/database-maintenance/jobs/{id}/reject", h.rejectDatabaseMaintenanceJob)
 	r.Get("/platform/admin/modules/{moduleKey}/masters", h.listPlatformMasters)
 	r.Get("/platform/admin/masters/{masterKey}/details", h.listPlatformDetails)
-	r.Get("/platform/admin/schema-targets", h.listSchemaTargets)
+	r.Get("/platform/admin/industry-solution-targets", h.listIndustrySolutionTargets)
 	r.Post("/platform/admin/organizations/{id}/private-deployment-exports", h.createPrivateDeploymentExport)
-	r.Get("/platform/admin/organizations/{id}/schema/export", h.exportOrganizationSchema)
-	r.Post("/platform/admin/organizations/{id}/schema/import", h.createOrganizationSchemaChange)
-	r.Post("/platform/admin/organizations/{id}/schema/change-requests", h.createOrganizationSchemaChange)
-	r.Post("/platform/admin/organizations/{id}/industry-solution-schema/change-requests", h.createIndustrySolutionSchemaChange)
+	r.Get("/platform/admin/organizations/{id}/industry-solution-manifest/export", h.exportOrganizationIndustrySolutionManifest)
+	r.Post("/platform/admin/organizations/{id}/industry-solution-change-requests", h.createIndustrySolutionChange)
+	r.Post("/platform/admin/organizations/{id}/industry-solution-table-fields/change-requests", h.createIndustrySolutionTableFieldChange)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/erp-standard", h.createERPSolutionFlow)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/retail-distribution", h.createRetailDistributionSolutionFlow)
-	r.Post("/platform/admin/schema-change-requests/{id}/approve", h.approveSchemaChange)
-	r.Post("/platform/admin/schema-change-requests/{id}/verify", h.verifySchemaChange)
-	r.Post("/platform/admin/schema-change-requests/{id}/apply", h.applySchemaChange)
-	r.Get("/platform/admin/schema-change-requests/{id}/package-diff", h.getSchemaChangePackageDiff)
+	r.Post("/platform/admin/industry-solution-change-requests/{id}/approve", h.approveIndustrySolutionChange)
+	r.Post("/platform/admin/industry-solution-change-requests/{id}/verify", h.verifyIndustrySolutionChange)
+	r.Post("/platform/admin/industry-solution-change-requests/{id}/apply", h.applyIndustrySolutionChange)
+	r.Get("/platform/admin/industry-solution-change-requests/{id}/asset-diff", h.getIndustrySolutionChangeAssetDiff)
 }
 
 func (h *Handler) getPermissionProfile(w http.ResponseWriter, r *http.Request) {
@@ -241,21 +240,21 @@ func (h *Handler) reviewDatabaseMaintenanceJob(w http.ResponseWriter, r *http.Re
 	writeResult(w, http.StatusOK, result, err)
 }
 
-func (h *Handler) listSchemaTargets(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) listIndustrySolutionTargets(w http.ResponseWriter, r *http.Request) {
 	actorID, ok := authenticatedHumanID(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.service.ListSchemaTargets(r.Context(), actorID, queryLimit(r, 100))
+	result, err := h.service.ListIndustrySolutionTargets(r.Context(), actorID, queryLimit(r, 100))
 	writeResult(w, http.StatusOK, result, err)
 }
 
-func (h *Handler) exportOrganizationSchema(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) exportOrganizationIndustrySolutionManifest(w http.ResponseWriter, r *http.Request) {
 	actorID, orgID, ok := h.actorAndOrganization(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.service.ExportOrganizationSchema(r.Context(), actorID, orgID)
+	result, err := h.service.ExportOrganizationIndustrySolutionManifest(r.Context(), actorID, orgID)
 	writeResult(w, http.StatusOK, result, err)
 }
 
@@ -268,20 +267,20 @@ func (h *Handler) createPrivateDeploymentExport(w http.ResponseWriter, r *http.R
 	writeResult(w, http.StatusCreated, result, err)
 }
 
-func (h *Handler) createOrganizationSchemaChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createIndustrySolutionChange(w http.ResponseWriter, r *http.Request) {
 	actorID, orgID, ok := h.actorAndOrganization(w, r)
 	if !ok {
 		return
 	}
-	var input CreateSchemaChangeRequestInput
+	var input CreateIndustrySolutionChangeRequestInput
 	if !decodeJSON(w, r, &input) {
 		return
 	}
 	input.OrganizationID = orgID
-	if input.SchemaPackage.FormatVersion == "" {
-		input.SchemaPackage = DefaultOrganizationSchemaPackage()
+	if input.SolutionManifest.FormatVersion == "" {
+		input.SolutionManifest = DefaultOrganizationIndustrySolutionManifest()
 	}
-	result, err := h.service.CreateSchemaChangeRequest(r.Context(), actorID, input)
+	result, err := h.service.CreateIndustrySolutionChangeRequest(r.Context(), actorID, input)
 	writeResult(w, http.StatusCreated, result, err)
 }
 
@@ -315,21 +314,21 @@ func (h *Handler) createRetailDistributionSolutionFlow(w http.ResponseWriter, r 
 	writeResult(w, http.StatusCreated, result, err)
 }
 
-func (h *Handler) createIndustrySolutionSchemaChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) createIndustrySolutionTableFieldChange(w http.ResponseWriter, r *http.Request) {
 	actorID, orgID, ok := h.actorAndOrganization(w, r)
 	if !ok {
 		return
 	}
-	var input CreateIndustrySolutionSchemaChangeInput
+	var input CreateIndustrySolutionTableFieldChangeInput
 	if !decodeJSON(w, r, &input) {
 		return
 	}
 	input.OrganizationID = orgID
-	result, err := h.service.CreateIndustrySolutionSchemaChange(r.Context(), actorID, input)
+	result, err := h.service.CreateIndustrySolutionTableFieldChange(r.Context(), actorID, input)
 	writeResult(w, http.StatusCreated, result, err)
 }
 
-func (h *Handler) approveSchemaChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) approveIndustrySolutionChange(w http.ResponseWriter, r *http.Request) {
 	actorID, requestID, ok := h.actorAndRequest(w, r)
 	if !ok {
 		return
@@ -340,34 +339,34 @@ func (h *Handler) approveSchemaChange(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input)
 	}
-	result, err := h.service.ApproveSchemaChange(r.Context(), actorID, requestID, input.Reason)
+	result, err := h.service.ApproveIndustrySolutionChange(r.Context(), actorID, requestID, input.Reason)
 	writeResult(w, http.StatusOK, result, err)
 }
 
-func (h *Handler) verifySchemaChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) verifyIndustrySolutionChange(w http.ResponseWriter, r *http.Request) {
 	actorID, requestID, ok := h.actorAndRequest(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.service.VerifySchemaChange(r.Context(), actorID, requestID)
+	result, err := h.service.VerifyIndustrySolutionChange(r.Context(), actorID, requestID)
 	writeResult(w, http.StatusOK, result, err)
 }
 
-func (h *Handler) applySchemaChange(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) applyIndustrySolutionChange(w http.ResponseWriter, r *http.Request) {
 	actorID, requestID, ok := h.actorAndRequest(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.service.ApplySchemaChange(r.Context(), actorID, requestID)
+	result, err := h.service.ApplyIndustrySolutionChange(r.Context(), actorID, requestID)
 	writeResult(w, http.StatusOK, result, err)
 }
 
-func (h *Handler) getSchemaChangePackageDiff(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) getIndustrySolutionChangeAssetDiff(w http.ResponseWriter, r *http.Request) {
 	actorID, requestID, ok := h.actorAndRequest(w, r)
 	if !ok {
 		return
 	}
-	result, err := h.service.GetSchemaChangePackageDiff(r.Context(), actorID, requestID)
+	result, err := h.service.GetIndustrySolutionChangeAssetDiff(r.Context(), actorID, requestID)
 	writeResult(w, http.StatusOK, map[string]any{"diff": result}, err)
 }
 
@@ -391,7 +390,7 @@ func (h *Handler) actorAndRequest(w http.ResponseWriter, r *http.Request) (uuid.
 	}
 	requestID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid schema change request id"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid industry solution change request id"})
 		return uuid.Nil, uuid.Nil, false
 	}
 	return actorID, requestID, true

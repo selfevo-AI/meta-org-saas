@@ -137,7 +137,7 @@ func (r *PostgresRepository) CollectFindings(ctx context.Context, window ScanWin
 		toolApprovalBacklogQuery,
 		contextRuleGapQuery,
 		contextBuildFailureQuery,
-		schemaChangeFailureQuery,
+		industrySolutionChangeFailureQuery,
 		financeExportFailureQuery,
 		financeWebhookFailureQuery,
 		financeImportFailureQuery,
@@ -310,19 +310,19 @@ FROM (
 		AND ($1::uuid IS NULL OR cp.organization_id IS NOT DISTINCT FROM $1)
 ) findings`
 
-const schemaChangeFailureQuery = `
+const industrySolutionChangeFailureQuery = `
 SELECT ` + commonFindingColumns + `
 FROM (
-	SELECT '` + SignalSchemaChangeFailure + `' AS category,
+	SELECT '` + SignalIndustrySolutionChangeFailure + `' AS category,
 		organization_id,
-		'schema_change_request' AS entity_type,
+		'industry_solution_change_request' AS entity_type,
 		id::text AS entity_id,
 		COALESCE(NULLIF(review_reason, ''), status) AS reason,
 		'` + SeverityHigh + `' AS severity,
 		COALESCE(applied_at, reviewed_at, created_at) AS occurred_at,
-		jsonb_build_object('schema_name', schema_name, 'request_type', request_type, 'status', status) AS data,
+		jsonb_build_object('target_schema_name', target_schema_name, 'request_type', request_type, 'status', status) AS data,
 		'{}'::jsonb AS proposal_payload
-	FROM platform.schema_change_requests
+	FROM platform.industry_solution_change_requests
 	WHERE status = 'failed'
 		AND created_at >= $2 AND created_at <= $3
 		AND ($1::uuid IS NULL OR organization_id IS NOT DISTINCT FROM $1)

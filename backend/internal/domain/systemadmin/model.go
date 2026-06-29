@@ -7,11 +7,11 @@ import (
 )
 
 const (
-	SchemaChangePending  = "pending"
-	SchemaChangeApproved = "approved"
-	SchemaChangeRejected = "rejected"
-	SchemaChangeApplied  = "applied"
-	SchemaChangeFailed   = "failed"
+	IndustrySolutionChangePending  = "pending"
+	IndustrySolutionChangeApproved = "approved"
+	IndustrySolutionChangeRejected = "rejected"
+	IndustrySolutionChangeApplied  = "applied"
+	IndustrySolutionChangeFailed   = "failed"
 )
 
 type PlatformMaster struct {
@@ -228,18 +228,18 @@ type IndustrySolutionFieldInput struct {
 	Default      string `json:"default,omitempty"`
 }
 
-type CreateIndustrySolutionSchemaChangeInput struct {
-	OrganizationID       uuid.UUID                  `json:"organization_id"`
-	IndustryKey          string                     `json:"industry_key"`
-	PackageKey           string                     `json:"package_key"`
-	Table                IndustrySolutionTableInput `json:"table"`
-	CurrentSchemaPackage *SchemaPackage             `json:"current_schema_package,omitempty"`
-	Reason               string                     `json:"reason,omitempty"`
+type CreateIndustrySolutionTableFieldChangeInput struct {
+	OrganizationID          uuid.UUID                  `json:"organization_id"`
+	IndustryKey             string                     `json:"industry_key"`
+	PackageKey              string                     `json:"package_key"`
+	Table                   IndustrySolutionTableInput `json:"table"`
+	CurrentSolutionManifest *IndustrySolutionManifest  `json:"current_solution_manifest,omitempty"`
+	Reason                  string                     `json:"reason,omitempty"`
 }
 
-type OrganizationSchemaTarget struct {
+type OrganizationIndustrySolutionTarget struct {
 	OrganizationID               uuid.UUID      `json:"organization_id"`
-	SchemaName                   string         `json:"schema_name"`
+	TargetSchemaName             string         `json:"target_schema_name"`
 	TemplateVersion              string         `json:"template_version"`
 	Status                       string         `json:"status"`
 	LastChangeRequestID          *uuid.UUID     `json:"last_change_request_id,omitempty"`
@@ -253,32 +253,32 @@ type OrganizationSchemaTarget struct {
 	UpdatedAt                    time.Time      `json:"updated_at"`
 }
 
-type SchemaChangeRequest struct {
-	ID             uuid.UUID     `json:"id"`
-	OrganizationID uuid.UUID     `json:"organization_id"`
-	SchemaName     string        `json:"schema_name"`
-	RequestType    string        `json:"request_type"`
-	Status         string        `json:"status"`
-	Reason         string        `json:"reason"`
-	SchemaPackage  SchemaPackage `json:"schema_package"`
-	Statements     []string      `json:"statements"`
-	RiskLevel      string        `json:"risk_level"`
-	Diff           []SchemaDiff  `json:"diff"`
-	RequestedBy    *uuid.UUID    `json:"requested_by,omitempty"`
-	ReviewedBy     *uuid.UUID    `json:"reviewed_by,omitempty"`
-	AppliedBy      *uuid.UUID    `json:"applied_by,omitempty"`
-	ReviewReason   string        `json:"review_reason,omitempty"`
-	CreatedAt      time.Time     `json:"created_at"`
-	ReviewedAt     *time.Time    `json:"reviewed_at,omitempty"`
-	AppliedAt      *time.Time    `json:"applied_at,omitempty"`
-	UpdatedAt      time.Time     `json:"updated_at"`
+type IndustrySolutionChangeRequest struct {
+	ID               uuid.UUID                `json:"id"`
+	OrganizationID   uuid.UUID                `json:"organization_id"`
+	TargetSchemaName string                   `json:"target_schema_name"`
+	RequestType      string                   `json:"request_type"`
+	Status           string                   `json:"status"`
+	Reason           string                   `json:"reason"`
+	SolutionManifest IndustrySolutionManifest `json:"solution_manifest"`
+	Statements       []string                 `json:"statements"`
+	RiskLevel        string                   `json:"risk_level"`
+	Diff             []IndustrySolutionDiff   `json:"diff"`
+	RequestedBy      *uuid.UUID               `json:"requested_by,omitempty"`
+	ReviewedBy       *uuid.UUID               `json:"reviewed_by,omitempty"`
+	AppliedBy        *uuid.UUID               `json:"applied_by,omitempty"`
+	ReviewReason     string                   `json:"review_reason,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+	ReviewedAt       *time.Time               `json:"reviewed_at,omitempty"`
+	AppliedAt        *time.Time               `json:"applied_at,omitempty"`
+	UpdatedAt        time.Time                `json:"updated_at"`
 }
 
-func (r *SchemaChangeRequest) SchemaPackageHas(key string) bool {
-	if r == nil || r.SchemaPackage.Metadata == nil {
+func (r *IndustrySolutionChangeRequest) SolutionManifestHas(key string) bool {
+	if r == nil || r.SolutionManifest.Metadata == nil {
 		return false
 	}
-	value, ok := r.SchemaPackage.Metadata[key]
+	value, ok := r.SolutionManifest.Metadata[key]
 	if !ok || value == nil {
 		return false
 	}
@@ -294,40 +294,40 @@ func (r *SchemaChangeRequest) SchemaPackageHas(key string) bool {
 	}
 }
 
-type SchemaApplyJob struct {
-	ID              uuid.UUID      `json:"id"`
-	ChangeRequestID uuid.UUID      `json:"change_request_id"`
-	OrganizationID  uuid.UUID      `json:"organization_id"`
-	SchemaName      string         `json:"schema_name"`
-	Status          string         `json:"status"`
-	Statements      []string       `json:"statements"`
-	ErrorMessage    string         `json:"error_message,omitempty"`
-	Metadata        map[string]any `json:"metadata"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+type IndustrySolutionApplyJob struct {
+	ID               uuid.UUID      `json:"id"`
+	ChangeRequestID  uuid.UUID      `json:"change_request_id"`
+	OrganizationID   uuid.UUID      `json:"organization_id"`
+	TargetSchemaName string         `json:"target_schema_name"`
+	Status           string         `json:"status"`
+	Statements       []string       `json:"statements"`
+	ErrorMessage     string         `json:"error_message,omitempty"`
+	Metadata         map[string]any `json:"metadata"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-type SchemaVerificationReport struct {
-	ChangeRequestID uuid.UUID                 `json:"change_request_id"`
-	OrganizationID  uuid.UUID                 `json:"organization_id"`
-	SchemaName      string                    `json:"schema_name"`
-	RequestStatus   string                    `json:"request_status"`
-	Status          string                    `json:"status"`
-	RiskLevel       string                    `json:"risk_level"`
-	StatementCount  int                       `json:"statement_count"`
-	BlockingIssues  int                       `json:"blocking_issues"`
-	CanApply        bool                      `json:"can_apply"`
-	Checks          []SchemaVerificationCheck `json:"checks"`
+type IndustrySolutionVerificationReport struct {
+	ChangeRequestID  uuid.UUID                           `json:"change_request_id"`
+	OrganizationID   uuid.UUID                           `json:"organization_id"`
+	TargetSchemaName string                              `json:"target_schema_name"`
+	RequestStatus    string                              `json:"request_status"`
+	Status           string                              `json:"status"`
+	RiskLevel        string                              `json:"risk_level"`
+	StatementCount   int                                 `json:"statement_count"`
+	BlockingIssues   int                                 `json:"blocking_issues"`
+	CanApply         bool                                `json:"can_apply"`
+	Checks           []IndustrySolutionVerificationCheck `json:"checks"`
 }
 
-type SchemaVerificationCheck struct {
+type IndustrySolutionVerificationCheck struct {
 	Key      string         `json:"key"`
 	Status   string         `json:"status"`
 	Message  string         `json:"message"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-type PackageAssetDiff struct {
+type IndustrySolutionAssetDiff struct {
 	AssetType      string   `json:"asset_type"`
 	AssetKey       string   `json:"asset_key"`
 	Action         string   `json:"action"`
@@ -339,7 +339,7 @@ type PackageAssetDiff struct {
 	DependsOn      []string `json:"depends_on,omitempty"`
 }
 
-type SchemaApplyAssetResult struct {
+type IndustrySolutionApplyAssetResult struct {
 	AssetKey     string         `json:"asset_key"`
 	AssetType    string         `json:"asset_type"`
 	Status       string         `json:"status"`
@@ -348,31 +348,31 @@ type SchemaApplyAssetResult struct {
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
 
-type CreateSchemaChangeRequestInput struct {
-	OrganizationID       uuid.UUID      `json:"organization_id"`
-	RequestType          string         `json:"request_type"`
-	Reason               string         `json:"reason,omitempty"`
-	SchemaPackage        SchemaPackage  `json:"schema_package"`
-	CurrentSchemaPackage *SchemaPackage `json:"current_schema_package,omitempty"`
+type CreateIndustrySolutionChangeRequestInput struct {
+	OrganizationID          uuid.UUID                 `json:"organization_id"`
+	RequestType             string                    `json:"request_type"`
+	Reason                  string                    `json:"reason,omitempty"`
+	SolutionManifest        IndustrySolutionManifest  `json:"solution_manifest"`
+	CurrentSolutionManifest *IndustrySolutionManifest `json:"current_solution_manifest,omitempty"`
 }
 
 type ERPSolutionFlowRequest struct {
-	OrganizationID  uuid.UUID      `json:"organization_id"`
-	IndustryKey     string         `json:"industry_key"`
-	PackageKey      string         `json:"package_key"`
-	Name            string         `json:"name"`
-	EnabledModules  []string       `json:"enabled_modules"`
-	CurrentTemplate *SchemaPackage `json:"current_template,omitempty"`
+	OrganizationID  uuid.UUID                 `json:"organization_id"`
+	IndustryKey     string                    `json:"industry_key"`
+	PackageKey      string                    `json:"package_key"`
+	Name            string                    `json:"name"`
+	EnabledModules  []string                  `json:"enabled_modules"`
+	CurrentTemplate *IndustrySolutionManifest `json:"current_template,omitempty"`
 }
 
-type CreateSchemaChangeRequestRecord struct {
-	OrganizationID uuid.UUID
-	SchemaName     string
-	RequestType    string
-	Reason         string
-	SchemaPackage  SchemaPackage
-	Statements     []string
-	RiskLevel      string
-	Diff           []SchemaDiff
-	RequestedBy    uuid.UUID
+type CreateIndustrySolutionChangeRequestRecord struct {
+	OrganizationID   uuid.UUID
+	TargetSchemaName string
+	RequestType      string
+	Reason           string
+	SolutionManifest IndustrySolutionManifest
+	Statements       []string
+	RiskLevel        string
+	Diff             []IndustrySolutionDiff
+	RequestedBy      uuid.UUID
 }

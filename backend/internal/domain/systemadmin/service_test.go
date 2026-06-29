@@ -11,77 +11,77 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func TestDefaultOrganizationSchemaPackageIsValid(t *testing.T) {
-	pkg := DefaultOrganizationSchemaPackage()
+func TestDefaultOrganizationIndustrySolutionManifestIsValid(t *testing.T) {
+	pkg := DefaultOrganizationIndustrySolutionManifest()
 
-	if err := ValidateSchemaPackage(pkg); err != nil {
-		t.Fatalf("DefaultOrganizationSchemaPackage() invalid: %v", err)
+	if err := ValidateIndustrySolutionManifest(pkg); err != nil {
+		t.Fatalf("DefaultOrganizationIndustrySolutionManifest() invalid: %v", err)
 	}
 }
 
-func TestApplySchemaChangeRejectsPendingRequest(t *testing.T) {
+func TestApplyIndustrySolutionChangeRejectsPendingRequest(t *testing.T) {
 	repo := &fakeRepository{
 		role: "system_owner",
-		request: &SchemaChangeRequest{
-			ID:             uuid.New(),
-			OrganizationID: uuid.New(),
-			Status:         SchemaChangePending,
-			SchemaPackage:  DefaultOrganizationSchemaPackage(),
+		request: &IndustrySolutionChangeRequest{
+			ID:               uuid.New(),
+			OrganizationID:   uuid.New(),
+			Status:           IndustrySolutionChangePending,
+			SolutionManifest: DefaultOrganizationIndustrySolutionManifest(),
 		},
 	}
 	service := NewService(repo)
 
-	_, err := service.ApplySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	_, err := service.ApplyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if err == nil {
-		t.Fatal("ApplySchemaChange() succeeded, want error")
+		t.Fatal("ApplyIndustrySolutionChange() succeeded, want error")
 	}
 	if err != ErrInvalidTransition {
-		t.Fatalf("ApplySchemaChange() error = %v, want ErrInvalidTransition", err)
+		t.Fatalf("ApplyIndustrySolutionChange() error = %v, want ErrInvalidTransition", err)
 	}
 	if repo.applied {
-		t.Fatal("ApplySchemaChange() applied pending request")
+		t.Fatal("ApplyIndustrySolutionChange() applied pending request")
 	}
 }
 
-func TestApplySchemaChangeRejectsAuditorRole(t *testing.T) {
+func TestApplyIndustrySolutionChangeRejectsAuditorRole(t *testing.T) {
 	repo := &fakeRepository{
 		role: "auditor",
-		request: &SchemaChangeRequest{
-			ID:             uuid.New(),
-			OrganizationID: uuid.New(),
-			Status:         SchemaChangeApproved,
-			SchemaPackage:  DefaultOrganizationSchemaPackage(),
+		request: &IndustrySolutionChangeRequest{
+			ID:               uuid.New(),
+			OrganizationID:   uuid.New(),
+			Status:           IndustrySolutionChangeApproved,
+			SolutionManifest: DefaultOrganizationIndustrySolutionManifest(),
 		},
 	}
 	service := NewService(repo)
 
-	_, err := service.ApplySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	_, err := service.ApplyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 
 	if !errors.Is(err, ErrForbidden) {
-		t.Fatalf("ApplySchemaChange error = %v, want ErrForbidden", err)
+		t.Fatalf("ApplyIndustrySolutionChange error = %v, want ErrForbidden", err)
 	}
 	if repo.applied {
-		t.Fatal("ApplySchemaChange applied schema for auditor role")
+		t.Fatal("ApplyIndustrySolutionChange applied schema for auditor role")
 	}
 }
 
-func TestVerifySchemaChangeReportsChecksWithoutApplying(t *testing.T) {
+func TestVerifyIndustrySolutionChangeReportsChecksWithoutApplying(t *testing.T) {
 	repo := &fakeRepository{
 		role: "system_owner",
-		request: &SchemaChangeRequest{
-			ID:             uuid.New(),
-			OrganizationID: uuid.New(),
-			SchemaName:     "org_123e4567e89b12d3a456426614174000",
-			Status:         SchemaChangeApproved,
-			SchemaPackage:  DefaultOrganizationSchemaPackage(),
-			RiskLevel:      SchemaRiskSafe,
+		request: &IndustrySolutionChangeRequest{
+			ID:               uuid.New(),
+			OrganizationID:   uuid.New(),
+			TargetSchemaName: "org_123e4567e89b12d3a456426614174000",
+			Status:           IndustrySolutionChangeApproved,
+			SolutionManifest: DefaultOrganizationIndustrySolutionManifest(),
+			RiskLevel:        IndustrySolutionRiskSafe,
 		},
 	}
 	service := NewService(repo)
 
-	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	report, err := service.VerifyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if err != nil {
-		t.Fatalf("VerifySchemaChange() error = %v", err)
+		t.Fatalf("VerifyIndustrySolutionChange() error = %v", err)
 	}
 	if report.ChangeRequestID != repo.request.ID {
 		t.Fatalf("ChangeRequestID = %s, want %s", report.ChangeRequestID, repo.request.ID)
@@ -96,12 +96,12 @@ func TestVerifySchemaChangeReportsChecksWithoutApplying(t *testing.T) {
 		t.Fatalf("report blocking/can_apply = %d/%v, want 0/true", report.BlockingIssues, report.CanApply)
 	}
 	if repo.applied {
-		t.Fatal("VerifySchemaChange() applied schema change")
+		t.Fatal("VerifyIndustrySolutionChange() applied industry solution change")
 	}
 }
 
-func TestVerifySchemaChangeReportsIndustryFactoryCoverage(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{
+func TestVerifyIndustrySolutionChangeReportsIndustryFactoryCoverage(t *testing.T) {
+	pkg := BuildERPSolutionManifest(ERPSolutionFlowRequest{
 		IndustryKey:    "professional_services",
 		PackageKey:     "erp_standard",
 		Name:           "ERP Standard",
@@ -109,21 +109,21 @@ func TestVerifySchemaChangeReportsIndustryFactoryCoverage(t *testing.T) {
 	})
 	repo := &fakeRepository{
 		role: "system_owner",
-		request: &SchemaChangeRequest{
-			ID:             uuid.New(),
-			OrganizationID: uuid.New(),
-			SchemaName:     "org_123e4567e89b12d3a456426614174000",
-			RequestType:    "erp_solution_flow",
-			Status:         SchemaChangeApproved,
-			SchemaPackage:  pkg,
-			RiskLevel:      SchemaRiskSafe,
+		request: &IndustrySolutionChangeRequest{
+			ID:               uuid.New(),
+			OrganizationID:   uuid.New(),
+			TargetSchemaName: "org_123e4567e89b12d3a456426614174000",
+			RequestType:      "erp_solution_flow",
+			Status:           IndustrySolutionChangeApproved,
+			SolutionManifest: pkg,
+			RiskLevel:        IndustrySolutionRiskSafe,
 		},
 	}
 	service := NewService(repo)
 
-	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	report, err := service.VerifyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if err != nil {
-		t.Fatalf("VerifySchemaChange() error = %v", err)
+		t.Fatalf("VerifyIndustrySolutionChange() error = %v", err)
 	}
 
 	for _, key := range []string{
@@ -148,7 +148,7 @@ func TestVerifySchemaChangeReportsIndustryFactoryCoverage(t *testing.T) {
 		t.Fatalf("report status/blocking/can_apply = %s/%d/%v, want passed/0/true", report.Status, report.BlockingIssues, report.CanApply)
 	}
 	if repo.applied {
-		t.Fatal("VerifySchemaChange() applied schema change")
+		t.Fatal("VerifyIndustrySolutionChange() applied industry solution change")
 	}
 }
 
@@ -379,7 +379,7 @@ func TestCreatePrivateDeploymentExportJobCreatesTenantBackupMetadataOnlyTask(t *
 	}
 }
 
-func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalSchemaPackage(t *testing.T) {
+func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalIndustrySolutionManifest(t *testing.T) {
 	actorID := uuid.New()
 	orgID := uuid.New()
 	repo := &fakeRepository{
@@ -388,13 +388,13 @@ func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalSchemaPackage(t *te
 			"solution_admin": {
 				platformauth.PermissionPlatformRead,
 				platformauth.PermissionIndustrySolutionManage,
-				platformauth.PermissionSchemaManage,
+				platformauth.PermissionIndustrySolutionExport,
 			},
 		},
 	}
 	service := NewService(repo)
 
-	request, err := service.CreateIndustrySolutionSchemaChange(context.Background(), actorID, CreateIndustrySolutionSchemaChangeInput{
+	request, err := service.CreateIndustrySolutionTableFieldChange(context.Background(), actorID, CreateIndustrySolutionTableFieldChangeInput{
 		OrganizationID: orgID,
 		IndustryKey:    "manufacturing",
 		PackageKey:     "manufacturing-supply-chain",
@@ -409,28 +409,28 @@ func TestCreateIndustrySolutionTableFieldChangeBuildsPhysicalSchemaPackage(t *te
 		Reason: "add quality inspection table for selected tenant",
 	})
 	if err != nil {
-		t.Fatalf("CreateIndustrySolutionSchemaChange() error = %v", err)
+		t.Fatalf("CreateIndustrySolutionTableFieldChange() error = %v", err)
 	}
 	if request.RequestType != "industry_solution_table_field_change" {
 		t.Fatalf("RequestType = %q, want industry_solution_table_field_change", request.RequestType)
 	}
 	if repo.createdRecord == nil {
-		t.Fatal("schema change record was not created")
+		t.Fatal("industry solution change record was not created")
 	}
-	if len(repo.createdRecord.SchemaPackage.Tables) != 1 {
-		t.Fatalf("tables = %#v, want one table", repo.createdRecord.SchemaPackage.Tables)
+	if len(repo.createdRecord.SolutionManifest.Tables) != 1 {
+		t.Fatalf("tables = %#v, want one table", repo.createdRecord.SolutionManifest.Tables)
 	}
-	table := repo.createdRecord.SchemaPackage.Tables[0]
+	table := repo.createdRecord.SolutionManifest.Tables[0]
 	if table.Name != "tenant_quality_inspections" || len(table.Fields) != 3 {
 		t.Fatalf("table = %#v, want physical table with id plus two fields", table)
 	}
-	if repo.createdRecord.SchemaPackage.Metadata["industry_key"] != "manufacturing" {
-		t.Fatalf("metadata = %#v, want industry_key", repo.createdRecord.SchemaPackage.Metadata)
+	if repo.createdRecord.SolutionManifest.Metadata["industry_key"] != "manufacturing" {
+		t.Fatalf("metadata = %#v, want industry_key", repo.createdRecord.SolutionManifest.Metadata)
 	}
 }
 
-func TestVerifySchemaChangeWarnsWhenIndustryFactoryCoverageIsIncomplete(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{
+func TestVerifyIndustrySolutionChangeWarnsWhenIndustryFactoryCoverageIsIncomplete(t *testing.T) {
+	pkg := BuildERPSolutionManifest(ERPSolutionFlowRequest{
 		IndustryKey:    "professional_services",
 		PackageKey:     "erp_standard",
 		Name:           "ERP Standard",
@@ -439,21 +439,21 @@ func TestVerifySchemaChangeWarnsWhenIndustryFactoryCoverageIsIncomplete(t *testi
 	delete(pkg.Metadata, "verification_scenarios")
 	repo := &fakeRepository{
 		role: "system_owner",
-		request: &SchemaChangeRequest{
-			ID:             uuid.New(),
-			OrganizationID: uuid.New(),
-			SchemaName:     "org_123e4567e89b12d3a456426614174000",
-			RequestType:    "erp_solution_flow",
-			Status:         SchemaChangeApproved,
-			SchemaPackage:  pkg,
-			RiskLevel:      SchemaRiskSafe,
+		request: &IndustrySolutionChangeRequest{
+			ID:               uuid.New(),
+			OrganizationID:   uuid.New(),
+			TargetSchemaName: "org_123e4567e89b12d3a456426614174000",
+			RequestType:      "erp_solution_flow",
+			Status:           IndustrySolutionChangeApproved,
+			SolutionManifest: pkg,
+			RiskLevel:        IndustrySolutionRiskSafe,
 		},
 	}
 	service := NewService(repo)
 
-	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	report, err := service.VerifyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if err != nil {
-		t.Fatalf("VerifySchemaChange() error = %v", err)
+		t.Fatalf("VerifyIndustrySolutionChange() error = %v", err)
 	}
 
 	check := verificationCheckByKey(report, "verification_scenarios")
@@ -467,15 +467,15 @@ func TestVerifySchemaChangeWarnsWhenIndustryFactoryCoverageIsIncomplete(t *testi
 		t.Fatalf("report status/blocking/can_apply = %s/%d/%v, want warning/0/true", report.Status, report.BlockingIssues, report.CanApply)
 	}
 	if repo.applied {
-		t.Fatal("VerifySchemaChange() applied schema change")
+		t.Fatal("VerifyIndustrySolutionChange() applied industry solution change")
 	}
 }
 
-func TestVerifySchemaChangeBlocksApplyForDuplicateRuntimeOperations(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
-	manifest, err := ManifestFromSchemaPackage(pkg)
+func TestVerifyIndustrySolutionChangeBlocksApplyForDuplicateRuntimeOperations(t *testing.T) {
+	pkg := BuildERPSolutionManifest(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := AssetManifestFromSolutionManifest(pkg)
 	if err != nil {
-		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
 	}
 	manifest.Assets = append(manifest.Assets, IndustrySolutionAsset{
 		AssetKey:  "runtime_operation.duplicate",
@@ -484,22 +484,22 @@ func TestVerifySchemaChangeBlocksApplyForDuplicateRuntimeOperations(t *testing.T
 		RiskLevel: "medium",
 		Payload:   map[string]any{"path": "/erp/catalog"},
 	})
-	setIndustryManifest(&pkg, manifest)
+	setIndustryAssetManifest(&pkg, manifest)
 
-	repo := &fakeRepository{role: "system_owner", request: &SchemaChangeRequest{
-		ID:             uuid.New(),
-		OrganizationID: uuid.New(),
-		SchemaName:     "org_123e4567e89b12d3a456426614174000",
-		RequestType:    "erp_solution_flow",
-		Status:         SchemaChangeApproved,
-		SchemaPackage:  pkg,
-		RiskLevel:      SchemaRiskSafe,
+	repo := &fakeRepository{role: "system_owner", request: &IndustrySolutionChangeRequest{
+		ID:               uuid.New(),
+		OrganizationID:   uuid.New(),
+		TargetSchemaName: "org_123e4567e89b12d3a456426614174000",
+		RequestType:      "erp_solution_flow",
+		Status:           IndustrySolutionChangeApproved,
+		SolutionManifest: pkg,
+		RiskLevel:        IndustrySolutionRiskSafe,
 	}}
 	service := NewService(repo)
 
-	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	report, err := service.VerifyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if err != nil {
-		t.Fatalf("VerifySchemaChange error = %v", err)
+		t.Fatalf("VerifyIndustrySolutionChange error = %v", err)
 	}
 	check := verificationCheckByKey(report, "runtime_operations")
 	if check == nil || check.Status != "failed" {
@@ -510,11 +510,11 @@ func TestVerifySchemaChangeBlocksApplyForDuplicateRuntimeOperations(t *testing.T
 	}
 }
 
-func TestVerifySchemaChangeBlocksActiveContextRules(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
-	manifest, err := ManifestFromSchemaPackage(pkg)
+func TestVerifyIndustrySolutionChangeBlocksActiveContextRules(t *testing.T) {
+	pkg := BuildERPSolutionManifest(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := AssetManifestFromSolutionManifest(pkg)
 	if err != nil {
-		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
 	}
 	for i := range manifest.Assets {
 		if manifest.Assets[i].AssetType == AssetTypeContextRule {
@@ -522,22 +522,22 @@ func TestVerifySchemaChangeBlocksActiveContextRules(t *testing.T) {
 			break
 		}
 	}
-	setIndustryManifest(&pkg, manifest)
+	setIndustryAssetManifest(&pkg, manifest)
 
-	repo := &fakeRepository{role: "system_owner", request: &SchemaChangeRequest{
-		ID:             uuid.New(),
-		OrganizationID: uuid.New(),
-		SchemaName:     "org_123e4567e89b12d3a456426614174000",
-		RequestType:    "erp_solution_flow",
-		Status:         SchemaChangeApproved,
-		SchemaPackage:  pkg,
-		RiskLevel:      SchemaRiskSafe,
+	repo := &fakeRepository{role: "system_owner", request: &IndustrySolutionChangeRequest{
+		ID:               uuid.New(),
+		OrganizationID:   uuid.New(),
+		TargetSchemaName: "org_123e4567e89b12d3a456426614174000",
+		RequestType:      "erp_solution_flow",
+		Status:           IndustrySolutionChangeApproved,
+		SolutionManifest: pkg,
+		RiskLevel:        IndustrySolutionRiskSafe,
 	}}
 	service := NewService(repo)
 
-	report, err := service.VerifySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	report, err := service.VerifyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if err != nil {
-		t.Fatalf("VerifySchemaChange error = %v", err)
+		t.Fatalf("VerifyIndustrySolutionChange error = %v", err)
 	}
 	check := verificationCheckByKey(report, "assistant_context")
 	if check == nil || check.Status != "failed" {
@@ -548,11 +548,11 @@ func TestVerifySchemaChangeBlocksActiveContextRules(t *testing.T) {
 	}
 }
 
-func TestApplySchemaChangeRejectsManifestBlockingIssues(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
-	manifest, err := ManifestFromSchemaPackage(pkg)
+func TestApplyIndustrySolutionChangeRejectsManifestBlockingIssues(t *testing.T) {
+	pkg := BuildERPSolutionManifest(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	manifest, err := AssetManifestFromSolutionManifest(pkg)
 	if err != nil {
-		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
 	}
 	for i := range manifest.Assets {
 		if manifest.Assets[i].AssetType == AssetTypeContextRule {
@@ -560,29 +560,29 @@ func TestApplySchemaChangeRejectsManifestBlockingIssues(t *testing.T) {
 			break
 		}
 	}
-	setIndustryManifest(&pkg, manifest)
+	setIndustryAssetManifest(&pkg, manifest)
 
-	repo := &fakeRepository{role: "system_owner", request: &SchemaChangeRequest{
-		ID:             uuid.New(),
-		OrganizationID: uuid.New(),
-		SchemaName:     "org_123e4567e89b12d3a456426614174000",
-		RequestType:    "erp_solution_flow",
-		Status:         SchemaChangeApproved,
-		SchemaPackage:  pkg,
-		RiskLevel:      SchemaRiskSafe,
+	repo := &fakeRepository{role: "system_owner", request: &IndustrySolutionChangeRequest{
+		ID:               uuid.New(),
+		OrganizationID:   uuid.New(),
+		TargetSchemaName: "org_123e4567e89b12d3a456426614174000",
+		RequestType:      "erp_solution_flow",
+		Status:           IndustrySolutionChangeApproved,
+		SolutionManifest: pkg,
+		RiskLevel:        IndustrySolutionRiskSafe,
 	}}
 	service := NewService(repo)
 
-	_, err = service.ApplySchemaChange(context.Background(), uuid.New(), repo.request.ID)
+	_, err = service.ApplyIndustrySolutionChange(context.Background(), uuid.New(), repo.request.ID)
 	if !errors.Is(err, ErrValidation) {
-		t.Fatalf("ApplySchemaChange error = %v, want ErrValidation", err)
+		t.Fatalf("ApplyIndustrySolutionChange error = %v, want ErrValidation", err)
 	}
 	if repo.applied {
-		t.Fatal("ApplySchemaChange applied request with blocking manifest issue")
+		t.Fatal("ApplyIndustrySolutionChange applied request with blocking manifest issue")
 	}
 }
 
-func verificationCheckByKey(report *SchemaVerificationReport, key string) *SchemaVerificationCheck {
+func verificationCheckByKey(report *IndustrySolutionVerificationReport, key string) *IndustrySolutionVerificationCheck {
 	if report == nil {
 		return nil
 	}
@@ -598,8 +598,8 @@ type fakeRepository struct {
 	role                   string
 	rolePermissions        map[string][]string
 	menuItems              []PlatformMenuItem
-	request                *SchemaChangeRequest
-	createdRecord          *CreateSchemaChangeRequestRecord
+	request                *IndustrySolutionChangeRequest
+	createdRecord          *CreateIndustrySolutionChangeRequestRecord
 	createdFeature         *CreatePlatformFeatureRecord
 	createdPlatformUser    *CreatePlatformUserRecord
 	createdMaintenanceJob  *CreateDatabaseMaintenanceJobRecord
@@ -722,40 +722,40 @@ func (f *fakeRepository) ReviewDatabaseMaintenanceJob(_ context.Context, record 
 	}, nil
 }
 
-func (f *fakeRepository) ListSchemaTargets(context.Context, int) ([]OrganizationSchemaTarget, error) {
+func (f *fakeRepository) ListIndustrySolutionTargets(context.Context, int) ([]OrganizationIndustrySolutionTarget, error) {
 	return nil, nil
 }
 
-func (f *fakeRepository) GetSchemaTarget(context.Context, uuid.UUID) (*OrganizationSchemaTarget, error) {
+func (f *fakeRepository) GetIndustrySolutionTarget(context.Context, uuid.UUID) (*OrganizationIndustrySolutionTarget, error) {
 	return nil, nil
 }
 
-func (f *fakeRepository) CreateSchemaChangeRequest(_ context.Context, record CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error) {
+func (f *fakeRepository) CreateIndustrySolutionChangeRequest(_ context.Context, record CreateIndustrySolutionChangeRequestRecord) (*IndustrySolutionChangeRequest, error) {
 	f.createdRecord = &record
-	return &SchemaChangeRequest{
-		ID:             uuid.New(),
-		OrganizationID: record.OrganizationID,
-		SchemaName:     record.SchemaName,
-		RequestType:    record.RequestType,
-		Status:         SchemaChangePending,
-		Reason:         record.Reason,
-		SchemaPackage:  record.SchemaPackage,
-		Statements:     record.Statements,
-		RiskLevel:      record.RiskLevel,
-		Diff:           record.Diff,
-		RequestedBy:    &record.RequestedBy,
+	return &IndustrySolutionChangeRequest{
+		ID:               uuid.New(),
+		OrganizationID:   record.OrganizationID,
+		TargetSchemaName: record.TargetSchemaName,
+		RequestType:      record.RequestType,
+		Status:           IndustrySolutionChangePending,
+		Reason:           record.Reason,
+		SolutionManifest: record.SolutionManifest,
+		Statements:       record.Statements,
+		RiskLevel:        record.RiskLevel,
+		Diff:             record.Diff,
+		RequestedBy:      &record.RequestedBy,
 	}, nil
 }
 
-func (f *fakeRepository) GetSchemaChangeRequest(context.Context, uuid.UUID) (*SchemaChangeRequest, error) {
+func (f *fakeRepository) GetIndustrySolutionChangeRequest(context.Context, uuid.UUID) (*IndustrySolutionChangeRequest, error) {
 	return f.request, nil
 }
 
-func (f *fakeRepository) UpdateSchemaChangeRequestStatus(context.Context, uuid.UUID, string, uuid.UUID, string) (*SchemaChangeRequest, error) {
+func (f *fakeRepository) UpdateIndustrySolutionChangeRequestStatus(context.Context, uuid.UUID, string, uuid.UUID, string) (*IndustrySolutionChangeRequest, error) {
 	return nil, nil
 }
 
-func (f *fakeRepository) ApplySchemaChange(_ context.Context, _ *SchemaChangeRequest, _ []string, assetResults []SchemaApplyAssetResult) (*SchemaApplyJob, error) {
+func (f *fakeRepository) ApplyIndustrySolutionChange(_ context.Context, _ *IndustrySolutionChangeRequest, _ []string, assetResults []IndustrySolutionApplyAssetResult) (*IndustrySolutionApplyJob, error) {
 	f.applied = true
-	return &SchemaApplyJob{Metadata: map[string]any{"asset_results": assetResults}}, nil
+	return &IndustrySolutionApplyJob{Metadata: map[string]any{"asset_results": assetResults}}, nil
 }

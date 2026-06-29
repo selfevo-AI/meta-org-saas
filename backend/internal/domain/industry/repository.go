@@ -47,7 +47,7 @@ func (r *Repository) GetOrganizationAuthority(ctx context.Context, actorID uuid.
 func (r *Repository) ListIndustries(ctx context.Context, limit int) ([]Industry, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT industry_key, name, description, status, metadata, created_by, created_at, updated_at
-		FROM platform.industries
+		FROM platform.industry_solution_categories
 		ORDER BY status = 'active' DESC, name
 		LIMIT $1
 	`, limit)
@@ -70,7 +70,7 @@ func (r *Repository) GetIndustry(ctx context.Context, key string) (*Industry, er
 	item := &Industry{}
 	err := scanIndustry(r.db.QueryRow(ctx, `
 		SELECT industry_key, name, description, status, metadata, created_by, created_at, updated_at
-		FROM platform.industries
+		FROM platform.industry_solution_categories
 		WHERE industry_key = $1
 	`, key), item)
 	if err != nil {
@@ -82,7 +82,7 @@ func (r *Repository) GetIndustry(ctx context.Context, key string) (*Industry, er
 func (r *Repository) CreateIndustry(ctx context.Context, input CreateIndustryInput, actorID uuid.UUID) (*Industry, error) {
 	item := &Industry{}
 	err := scanIndustry(r.db.QueryRow(ctx, `
-		INSERT INTO platform.industries(industry_key, name, description, status, metadata, created_by)
+		INSERT INTO platform.industry_solution_categories(industry_key, name, description, status, metadata, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (industry_key) DO UPDATE SET
 			name = EXCLUDED.name,
@@ -100,8 +100,8 @@ func (r *Repository) CreateIndustry(ctx context.Context, input CreateIndustryInp
 
 func (r *Repository) ListPackages(ctx context.Context, industryKey string, limit int) ([]Package, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
-		FROM platform.custom_packages
+		SELECT id, industry_key, solution_key, version, name, description, status, metadata, created_by, created_at, updated_at
+		FROM platform.industry_solutions
 		WHERE $1 = '' OR industry_key = $1
 		ORDER BY industry_key, version DESC, updated_at DESC
 		LIMIT $2
@@ -133,8 +133,8 @@ func (r *Repository) GetPackage(ctx context.Context, packageID uuid.UUID) (*Pack
 func (r *Repository) GetPackageByID(ctx context.Context, packageID uuid.UUID) (*Package, error) {
 	item := &Package{}
 	err := scanPackage(r.db.QueryRow(ctx, `
-		SELECT id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
-		FROM platform.custom_packages
+		SELECT id, industry_key, solution_key, version, name, description, status, metadata, created_by, created_at, updated_at
+		FROM platform.industry_solutions
 		WHERE id = $1
 	`, packageID), item)
 	if err != nil {
@@ -157,16 +157,16 @@ func (r *Repository) CreatePackage(ctx context.Context, input CreatePackageInput
 
 	item := &Package{}
 	err = scanPackage(tx.QueryRow(ctx, `
-		INSERT INTO platform.custom_packages(industry_key, package_key, version, name, description, status, metadata, created_by)
+		INSERT INTO platform.industry_solutions(industry_key, solution_key, version, name, description, status, metadata, created_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
+		RETURNING id, industry_key, solution_key, version, name, description, status, metadata, created_by, created_at, updated_at
 	`, input.IndustryKey, input.PackageKey, input.Version, input.Name, input.Description, input.Status, jsonBytes(input.Metadata), actorID), item)
 	if err != nil {
 		return nil, fmt.Errorf("create industry package: %w", err)
 	}
 	for _, asset := range input.Assets {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO platform.custom_package_assets(package_id, asset_key, asset_type, payload, metadata)
+			INSERT INTO platform.industry_solution_assets(solution_id, asset_key, asset_type, payload, metadata)
 			VALUES ($1, $2, $3, $4, $5)
 		`, item.ID, asset.AssetKey, asset.AssetType, jsonBytes(asset.Payload), jsonBytes(asset.Metadata)); err != nil {
 			return nil, fmt.Errorf("create package asset %s: %w", asset.AssetKey, err)
@@ -188,24 +188,24 @@ func (r *Repository) UpdatePackage(ctx context.Context, record UpdatePackageReco
 
 	item := &Package{}
 	err = scanPackage(tx.QueryRow(ctx, `
-		UPDATE platform.custom_packages
+		UPDATE platform.industry_solutions
 		SET name = $2,
 		    description = $3,
 		    status = $4,
 		    metadata = $5,
 		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
+		RETURNING id, industry_key, solution_key, version, name, description, status, metadata, created_by, created_at, updated_at
 	`, record.PackageID, record.Name, record.Description, record.Status, jsonBytes(record.Metadata)), item)
 	if err != nil {
 		return nil, fmt.Errorf("update industry package: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM platform.custom_package_assets WHERE package_id = $1`, record.PackageID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.industry_solution_assets WHERE solution_id = $1`, record.PackageID); err != nil {
 		return nil, fmt.Errorf("replace package assets: %w", err)
 	}
 	for _, asset := range record.Assets {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO platform.custom_package_assets(package_id, asset_key, asset_type, payload, metadata)
+			INSERT INTO platform.industry_solution_assets(solution_id, asset_key, asset_type, payload, metadata)
 			VALUES ($1, $2, $3, $4, $5)
 		`, item.ID, asset.AssetKey, asset.AssetType, jsonBytes(asset.Payload), jsonBytes(asset.Metadata)); err != nil {
 			return nil, fmt.Errorf("update package asset %s: %w", asset.AssetKey, err)
@@ -221,12 +221,12 @@ func (r *Repository) UpdatePackage(ctx context.Context, record UpdatePackageReco
 func (r *Repository) ActivatePackage(ctx context.Context, packageID uuid.UUID, actorID uuid.UUID) (*Package, error) {
 	item := &Package{}
 	err := scanPackage(r.db.QueryRow(ctx, `
-		UPDATE platform.custom_packages
+		UPDATE platform.industry_solutions
 		SET status = 'active',
 		    metadata = metadata || jsonb_build_object('activated_by', $2::text),
 		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
+		RETURNING id, industry_key, solution_key, version, name, description, status, metadata, created_by, created_at, updated_at
 	`, packageID, actorID), item)
 	if err != nil {
 		return nil, fmt.Errorf("activate industry package: %w", err)
@@ -242,12 +242,12 @@ func (r *Repository) ActivatePackage(ctx context.Context, packageID uuid.UUID, a
 func (r *Repository) ArchivePackage(ctx context.Context, packageID uuid.UUID, actorID uuid.UUID) (*Package, error) {
 	item := &Package{}
 	err := scanPackage(r.db.QueryRow(ctx, `
-		UPDATE platform.custom_packages
+		UPDATE platform.industry_solutions
 		SET status = 'archived',
 		    metadata = metadata || jsonb_build_object('archived_by', $2::text),
 		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, industry_key, package_key, version, name, description, status, metadata, created_by, created_at, updated_at
+		RETURNING id, industry_key, solution_key, version, name, description, status, metadata, created_by, created_at, updated_at
 	`, packageID, actorID), item)
 	if err != nil {
 		return nil, fmt.Errorf("archive industry package: %w", err)
@@ -270,10 +270,10 @@ func (r *Repository) DeletePackage(ctx context.Context, packageID uuid.UUID) (*P
 		return nil, fmt.Errorf("begin delete industry package: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `DELETE FROM platform.custom_package_assets WHERE package_id = $1`, packageID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.industry_solution_assets WHERE solution_id = $1`, packageID); err != nil {
 		return nil, fmt.Errorf("delete package assets: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM platform.custom_packages WHERE id = $1`, packageID); err != nil {
+	if _, err := tx.Exec(ctx, `DELETE FROM platform.industry_solutions WHERE id = $1`, packageID); err != nil {
 		return nil, fmt.Errorf("delete industry package: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -287,8 +287,8 @@ func (r *Repository) PackageHasAdoptions(ctx context.Context, packageID uuid.UUI
 	var exists bool
 	if err := r.db.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM platform.organization_industry_adoptions
-			WHERE package_id = $1 AND status <> 'archived'
+			SELECT 1 FROM platform.organization_industry_solution_adoptions
+			WHERE solution_id = $1 AND status <> 'archived'
 		)
 	`, packageID).Scan(&exists); err != nil {
 		return false, fmt.Errorf("check package adoptions: %w", err)
@@ -322,7 +322,7 @@ func (r *Repository) UpsertAdoption(ctx context.Context, input ApplyPackageInput
 				display_name = COALESCE(NULLIF(EXCLUDED.display_name, ''), saas_modules.display_name),
 				metadata = saas_modules.metadata || EXCLUDED.metadata,
 				updated_at = NOW()
-		`, moduleKey, displayName, stringFromPayload(asset.Payload, "category"), jsonBytes(map[string]any{"industry_key": pkg.IndustryKey, "package_id": pkg.ID.String()})); err != nil {
+		`, moduleKey, displayName, stringFromPayload(asset.Payload, "category"), jsonBytes(map[string]any{"industry_key": pkg.IndustryKey, "solution_id": pkg.ID.String()})); err != nil {
 			return nil, fmt.Errorf("upsert industry module %s: %w", moduleKey, err)
 		}
 	}
@@ -343,26 +343,26 @@ func (r *Repository) UpsertAdoption(ctx context.Context, input ApplyPackageInput
 				source = 'manual',
 				metadata = organization_module_entitlements.metadata || EXCLUDED.metadata,
 				updated_at = NOW()
-		`, input.OrganizationID, moduleKey, jsonBytes(map[string]any{"industry_key": pkg.IndustryKey, "package_id": input.PackageID.String()})); err != nil {
+		`, input.OrganizationID, moduleKey, jsonBytes(map[string]any{"industry_key": pkg.IndustryKey, "solution_id": input.PackageID.String()})); err != nil {
 			return nil, fmt.Errorf("enable organization industry module %s: %w", moduleKey, err)
 		}
 	}
 
 	item := &OrganizationAdoption{}
 	err = scanAdoption(tx.QueryRow(ctx, `
-		INSERT INTO platform.organization_industry_adoptions(
-			organization_id, industry_key, package_id, is_primary, enabled_modules, status, metadata
+		INSERT INTO platform.organization_industry_solution_adoptions(
+			organization_id, industry_key, solution_id, is_primary, enabled_modules, status, metadata
 		)
 		VALUES ($1, $2, $3, TRUE, $4, 'active', $5)
 		ON CONFLICT (organization_id) DO UPDATE SET
 			industry_key = EXCLUDED.industry_key,
-			package_id = EXCLUDED.package_id,
+			solution_id = EXCLUDED.solution_id,
 			is_primary = TRUE,
 			enabled_modules = EXCLUDED.enabled_modules,
 			status = 'active',
-			metadata = platform.organization_industry_adoptions.metadata || EXCLUDED.metadata,
+			metadata = platform.organization_industry_solution_adoptions.metadata || EXCLUDED.metadata,
 			updated_at = NOW()
-		RETURNING organization_id, industry_key, package_id, is_primary, enabled_modules, status, metadata, created_at, updated_at
+		RETURNING organization_id, industry_key, solution_id, is_primary, enabled_modules, status, metadata, created_at, updated_at
 	`, input.OrganizationID, pkg.IndustryKey, input.PackageID, jsonBytes(input.ModuleKeys), jsonBytes(input.Metadata)), item)
 	if err != nil {
 		return nil, fmt.Errorf("upsert organization industry adoption: %w", err)
@@ -376,7 +376,7 @@ func (r *Repository) UpsertAdoption(ctx context.Context, input ApplyPackageInput
 func (r *Repository) ListOrganizationExtensionModules(ctx context.Context, orgID uuid.UUID, industryKey string) ([]string, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT asset->'payload'->>'module_key'
-		FROM platform.organization_industry_extensions e
+		FROM platform.organization_industry_solution_extensions e
 		CROSS JOIN LATERAL jsonb_array_elements(e.assets) AS asset
 		WHERE e.organization_id = $1
 		  AND e.industry_key = $2
@@ -403,8 +403,8 @@ func (r *Repository) ListOrganizationExtensionModules(ctx context.Context, orgID
 func (r *Repository) GetAdoption(ctx context.Context, orgID uuid.UUID) (*OrganizationAdoption, error) {
 	item := &OrganizationAdoption{}
 	err := scanAdoption(r.db.QueryRow(ctx, `
-		SELECT organization_id, industry_key, package_id, is_primary, enabled_modules, status, metadata, created_at, updated_at
-		FROM platform.organization_industry_adoptions
+		SELECT organization_id, industry_key, solution_id, is_primary, enabled_modules, status, metadata, created_at, updated_at
+		FROM platform.organization_industry_solution_adoptions
 		WHERE organization_id = $1
 	`, orgID), item)
 	if err != nil {
@@ -416,11 +416,11 @@ func (r *Repository) GetAdoption(ctx context.Context, orgID uuid.UUID) (*Organiz
 func (r *Repository) CreateExtension(ctx context.Context, input CreateExtensionInput, actorID uuid.UUID) (*Extension, error) {
 	item := &Extension{}
 	err := scanExtension(r.db.QueryRow(ctx, `
-		INSERT INTO platform.organization_industry_extensions(
-			organization_id, industry_key, package_id, extension_key, name, description, status, assets, metadata, created_by
+		INSERT INTO platform.organization_industry_solution_extensions(
+			organization_id, industry_key, solution_id, extension_key, name, description, status, assets, metadata, created_by
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9)
-		RETURNING id, organization_id, industry_key, package_id, extension_key, name, description, status, assets, metadata, created_by, created_at, updated_at
+		RETURNING id, organization_id, industry_key, solution_id, extension_key, name, description, status, assets, metadata, created_by, created_at, updated_at
 	`, input.OrganizationID, input.IndustryKey, nullableUUID(input.PackageID), input.ExtensionKey, input.Name, input.Description, jsonBytes(input.Assets), jsonBytes(input.Metadata), actorID), item)
 	if err != nil {
 		return nil, fmt.Errorf("create organization industry extension: %w", err)
@@ -430,8 +430,8 @@ func (r *Repository) CreateExtension(ctx context.Context, input CreateExtensionI
 
 func (r *Repository) ListExtensions(ctx context.Context, orgID uuid.UUID, limit int) ([]Extension, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, organization_id, industry_key, package_id, extension_key, name, description, status, assets, metadata, created_by, created_at, updated_at
-		FROM platform.organization_industry_extensions
+		SELECT id, organization_id, industry_key, solution_id, extension_key, name, description, status, assets, metadata, created_by, created_at, updated_at
+		FROM platform.organization_industry_solution_extensions
 		WHERE organization_id = $1
 		ORDER BY updated_at DESC
 		LIMIT $2
@@ -454,8 +454,8 @@ func (r *Repository) ListExtensions(ctx context.Context, orgID uuid.UUID, limit 
 func (r *Repository) GetExtension(ctx context.Context, extensionID uuid.UUID) (*Extension, error) {
 	item := &Extension{}
 	err := scanExtension(r.db.QueryRow(ctx, `
-		SELECT id, organization_id, industry_key, package_id, extension_key, name, description, status, assets, metadata, created_by, created_at, updated_at
-		FROM platform.organization_industry_extensions
+		SELECT id, organization_id, industry_key, solution_id, extension_key, name, description, status, assets, metadata, created_by, created_at, updated_at
+		FROM platform.organization_industry_solution_extensions
 		WHERE id = $1
 	`, extensionID), item)
 	if err != nil {
@@ -467,7 +467,7 @@ func (r *Repository) GetExtension(ctx context.Context, extensionID uuid.UUID) (*
 func (r *Repository) CreatePublicationRequest(ctx context.Context, extension Extension, actorID uuid.UUID, reason string, metadata map[string]any) (*PublicationRequest, error) {
 	item := &PublicationRequest{}
 	err := scanPublicationRequest(r.db.QueryRow(ctx, `
-		INSERT INTO platform.custom_package_publication_requests(
+		INSERT INTO platform.industry_solution_publication_requests(
 			extension_id, source_organization_id, industry_key, status, reason, requested_by, metadata
 		)
 		VALUES ($1, $2, $3, 'pending', $4, $5, $6)
@@ -485,7 +485,7 @@ func (r *Repository) GetPublicationRequest(ctx context.Context, requestID uuid.U
 	err := scanPublicationRequest(r.db.QueryRow(ctx, `
 		SELECT id, extension_id, source_organization_id, industry_key, status, reason, review_reason,
 			requested_by, reviewed_by, metadata, created_at, updated_at, reviewed_at
-		FROM platform.custom_package_publication_requests
+		FROM platform.industry_solution_publication_requests
 		WHERE id = $1
 	`, requestID), item)
 	if err != nil {
@@ -496,7 +496,7 @@ func (r *Repository) GetPublicationRequest(ctx context.Context, requestID uuid.U
 
 func (r *Repository) UpdatePublicationRequestMetadata(ctx context.Context, requestID uuid.UUID, metadata map[string]any) error {
 	_, err := r.db.Exec(ctx, `
-		UPDATE platform.custom_package_publication_requests
+		UPDATE platform.industry_solution_publication_requests
 		SET metadata = $2::jsonb, updated_at = NOW()
 		WHERE id = $1
 	`, requestID, jsonBytes(metadata))
@@ -510,7 +510,7 @@ func (r *Repository) ListPublicationRequests(ctx context.Context, limit int) ([]
 	rows, err := r.db.Query(ctx, `
 		SELECT id, extension_id, source_organization_id, industry_key, status, reason, review_reason,
 			requested_by, reviewed_by, metadata, created_at, updated_at, reviewed_at
-		FROM platform.custom_package_publication_requests
+		FROM platform.industry_solution_publication_requests
 		ORDER BY created_at DESC
 		LIMIT $1
 	`, limit)
@@ -532,7 +532,7 @@ func (r *Repository) ListPublicationRequests(ctx context.Context, limit int) ([]
 func (r *Repository) ReviewPublicationRequest(ctx context.Context, requestID uuid.UUID, actorID uuid.UUID, status string, reason string) (*PublicationRequest, error) {
 	item := &PublicationRequest{}
 	err := scanPublicationRequest(r.db.QueryRow(ctx, `
-		UPDATE platform.custom_package_publication_requests
+		UPDATE platform.industry_solution_publication_requests
 		SET status = $2,
 		    review_reason = $3,
 		    reviewed_by = $4,
@@ -552,7 +552,7 @@ func (r *Repository) ListKnowledgeSources(ctx context.Context, industryKey strin
 	rows, err := r.db.Query(ctx, `
 		SELECT id, industry_key, organization_id, source_key, name, source_type, adapter_key, reference_uri,
 			sync_status, permission, retrieval_config, metadata, created_at, updated_at
-		FROM platform.knowledge_sources
+		FROM platform.industry_solution_knowledge_sources
 		WHERE ($1 = '' OR industry_key = $1)
 		  AND ($2::uuid IS NULL OR organization_id IS NULL OR organization_id = $2)
 		ORDER BY organization_id NULLS FIRST, name
@@ -575,9 +575,9 @@ func (r *Repository) ListKnowledgeSources(ctx context.Context, industryKey strin
 
 func (r *Repository) listPackageAssets(ctx context.Context, packageID uuid.UUID) ([]PackageAsset, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, package_id, asset_key, asset_type, payload, metadata, created_at, updated_at
-		FROM platform.custom_package_assets
-		WHERE package_id = $1
+		SELECT id, solution_id, asset_key, asset_type, payload, metadata, created_at, updated_at
+		FROM platform.industry_solution_assets
+		WHERE solution_id = $1
 		ORDER BY asset_type, asset_key
 	`, packageID)
 	if err != nil {

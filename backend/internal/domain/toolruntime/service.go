@@ -146,7 +146,7 @@ func EffectivePolicyForExecution(tool ToolDefinition, input ExecuteToolInput, go
 	switch tool.Name {
 	case "erp.action.execute", "context.proposal.apply", "finance.prepare_export_batch":
 		return PolicyApprove
-	case "schema.change.preview":
+	case "industry.solution.change.preview":
 		if policy == PolicyAuto || policy == "" {
 			return PolicyNotify
 		}

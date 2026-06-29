@@ -1,13 +1,13 @@
 package systemadmin
 
-func DefaultOrganizationSchemaPackage() SchemaPackage {
-	return SchemaPackage{
-		FormatVersion: SchemaPackageFormatVersion,
+func DefaultOrganizationIndustrySolutionManifest() IndustrySolutionManifest {
+	return IndustrySolutionManifest{
+		FormatVersion: IndustrySolutionManifestFormatVersion,
 		ModuleKey:     "organization",
-		Tables: []SchemaTableDefinition{
+		Tables: []IndustrySolutionTableDefinition{
 			{
 				Name: "organization_masters",
-				Fields: []SchemaFieldDefinition{
+				Fields: []IndustrySolutionFieldDefinition{
 					{Name: "master_key", DataType: "text", PrimaryKey: true},
 					{Name: "entity_type", DataType: "text", Nullable: false},
 					{Name: "legacy_table", DataType: "text", Nullable: false, Default: "''"},
@@ -24,7 +24,7 @@ func DefaultOrganizationSchemaPackage() SchemaPackage {
 			},
 			{
 				Name: "organization_details",
-				Fields: []SchemaFieldDefinition{
+				Fields: []IndustrySolutionFieldDefinition{
 					{Name: "detail_key", DataType: "text", PrimaryKey: true},
 					{Name: "master_key", DataType: "text", Nullable: false},
 					{Name: "detail_type", DataType: "text", Nullable: false},

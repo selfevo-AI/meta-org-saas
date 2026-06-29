@@ -243,13 +243,13 @@ func (r *Repository) CloseOrganization(ctx context.Context, orgID uuid.UUID, act
 		return nil, fmt.Errorf("close organization: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE platform.organization_schema_targets
+		UPDATE platform.organization_industry_solution_targets
 		SET status = 'archived',
 		    metadata = metadata || jsonb_build_object('closed_by', $2::text, 'closed_reason', $3),
 		    updated_at = NOW()
 		WHERE organization_id = $1
 	`, orgID, actorID, reason); err != nil {
-		return nil, fmt.Errorf("archive organization schema target: %w", err)
+		return nil, fmt.Errorf("archive organization industry solution target: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE platform.tenant_database_targets

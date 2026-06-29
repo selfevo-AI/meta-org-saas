@@ -141,26 +141,35 @@ func bootstrapBusinessClosureSample(ctx context.Context, db DB, input TenantBoot
 			('CUS-DEMO', jsonb_build_object('CardCode', 'CUS-DEMO', 'CardType', 'C', 'CardName', 'Demo Customer', 'Email', 'customer@local.test', 'organization_id', $1::uuid, 'sample_key', $2::text))
 		ON CONFLICT ("CardCode") DO UPDATE SET
 			"Payload" = "MCRD"."Payload" || EXCLUDED."Payload",
-			"UpdatedAt" = NOW();
-
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
+		return fmt.Errorf("bootstrap sample ERP business partner data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
 		INSERT INTO "MITM"("ItemCode", "Payload")
 		VALUES ('ITM-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO', 'ItemName', 'Demo Assembly Kit', 'ItemType', 'material', 'InvntryUom', 'EA', 'organization_id', $1::uuid, 'sample_key', $2::text))
 		ON CONFLICT ("ItemCode") DO UPDATE SET
 			"Payload" = "MITM"."Payload" || EXCLUDED."Payload",
-			"UpdatedAt" = NOW();
-
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
+		return fmt.Errorf("bootstrap sample ERP item data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
 		INSERT INTO "MWHS"("WhsCode", "Payload")
 		VALUES ('WHS-DEMO', jsonb_build_object('WhsCode', 'WHS-DEMO', 'WhsName', 'Demo Warehouse', 'organization_id', $1::uuid, 'department_id', $3::uuid, 'sample_key', $2::text))
 		ON CONFLICT ("WhsCode") DO UPDATE SET
 			"Payload" = "MWHS"."Payload" || EXCLUDED."Payload",
-			"UpdatedAt" = NOW();
-
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey, departmentID); err != nil {
+		return fmt.Errorf("bootstrap sample ERP warehouse data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
 		INSERT INTO "MITW"("ItemCode", "Payload")
 		VALUES ('ITM-DEMO|WHS-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO|WHS-DEMO', 'BaseItemCode', 'ITM-DEMO', 'WhsCode', 'WHS-DEMO', 'OnHand', 120, 'AvgPrice', 25, 'StockValue', 3000, 'Currency', 'CNY', 'organization_id', $1::uuid, 'sample_key', $2::text))
 		ON CONFLICT ("ItemCode") DO UPDATE SET
 			"Payload" = "MITW"."Payload" || EXCLUDED."Payload",
-			"UpdatedAt" = NOW();
-	`, input.OrganizationID, input.SampleKey, departmentID); err != nil {
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
 		return fmt.Errorf("bootstrap sample ERP code-table inventory data: %w", err)
 	}
 	return nil

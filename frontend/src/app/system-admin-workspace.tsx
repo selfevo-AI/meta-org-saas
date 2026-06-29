@@ -25,17 +25,17 @@ import { AIAssistant } from './ai-assistant'
 import { ApiWorkbench } from './api-workbench'
 import { DeveloperToolsWorkspace } from './developer-tools-workspace'
 import {
-  applySchemaChange,
+  applyIndustrySolutionChange,
   applyIndustryPackageToOrganization,
-  approveSchemaChange,
+  approveIndustrySolutionChange,
   closePlatformOrganization,
   createBusinessClosureSampleTenant,
   createERPStandardSolutionFlow,
   createRetailDistributionSolutionFlow,
   createDatabaseMaintenanceJob,
   createIndustryExtension,
-  createIndustrySolutionSchemaChange,
-  createOrganizationSchemaChange,
+  createIndustrySolutionTableFieldChange,
+  createIndustrySolutionChangeRequest,
   createOrganizationInvitation,
   createPlatformFeature,
   createPlatformUser,
@@ -45,11 +45,11 @@ import {
   getPlatformPermissionProfile,
   getPlatformAssistantContextHealth,
   getMonitoringAgentStatus,
-  exportOrganizationSchema,
+  exportOrganizationIndustrySolutionManifest,
   getOrganizationIndustry,
   getOrganizationEntitlements,
   getOrganizationSubscription,
-  getSchemaChangePackageDiff,
+  getIndustrySolutionChangeAssetDiff,
   listIndustries,
   listIndustryExtensions,
   listIndustryPackages,
@@ -57,7 +57,7 @@ import {
   listMonitoringAgentRuns,
   listOrganizationAccounts,
   listOrganizationInvitations,
-  listOrganizationSchemaTargets,
+  listOrganizationIndustrySolutionTargets,
   listDatabaseMaintenanceJobs,
   listPlatformDetails,
   listPlatformFeatures,
@@ -75,13 +75,13 @@ import {
   runMonitoringAgent,
   setPlatformRolePermissions,
   submitIndustryExtensionPublication,
-  verifySchemaChange,
+  verifyIndustrySolutionChange,
   type DatabaseMaintenanceJob,
   type Industry,
   type IndustryExtension,
   type IndustryPackage,
   type IndustryPublicationRequest,
-  type IndustrySolutionManifest,
+  type IndustrySolutionAssetManifest,
   type OrganizationIndustryAdoption,
   type OrganizationUserAccount,
   updateOrganizationModules,
@@ -89,7 +89,7 @@ import {
   updateIndustryPackage,
   type OrganizationInvitation,
   type OrganizationSubscription,
-  type OrganizationSchemaTarget,
+  type OrganizationIndustrySolutionTarget,
   type PlatformDetail,
   type PlatformFeature,
   type PlatformMaster,
@@ -102,12 +102,12 @@ import {
   type MonitoringAgentStatus,
   type PublicationGateResult,
   type SaaSModule,
-  type PackageAssetDiff,
-  type SchemaApplyAssetResult,
-  type SchemaApplyJob,
-  type SchemaChangeRequest,
-  type SchemaPackage,
-  type SchemaVerificationReport,
+  type IndustrySolutionAssetDiff,
+  type IndustrySolutionApplyAssetResult,
+  type IndustrySolutionApplyJob,
+  type IndustrySolutionChangeRequest,
+  type IndustrySolutionManifest,
+  type IndustrySolutionVerificationReport,
   type SessionOrganization,
   updatePlatformOrganizationProfile,
 } from '@/lib/api'
@@ -132,8 +132,6 @@ type TabID =
   | 'models'
   | 'runtime'
   | 'catalog'
-  | 'targets'
-  | 'schema'
 
 const tabs: Array<{ id: TabID; label: string; icon: typeof Database; permission?: string }> = [
   { id: 'assistant', label: 'systemAdmin.platformAssistant', icon: Bot, permission: 'assistant.platform.run' },
@@ -147,8 +145,6 @@ const tabs: Array<{ id: TabID; label: string; icon: typeof Database; permission?
   { id: 'models', label: 'systemAdmin.modelAndApiSettings', icon: Table2, permission: 'model.manage' },
   { id: 'runtime', label: 'systemAdmin.apiWorkbench', icon: Table2, permission: 'runtime.manage' },
   { id: 'catalog', label: 'systemAdmin.platformCatalog', icon: Layers3, permission: 'platform.read' },
-  { id: 'targets', label: 'systemAdmin.schemaTargets', icon: Database, permission: 'schema.manage' },
-  { id: 'schema', label: 'systemAdmin.schemaPackage', icon: FileJson, permission: 'schema.manage' },
 ]
 
 const moduleOptions = ['data_catalog', 'saas', 'security', 'assistant', 'organization', 'skill', 'finance', 'system']
@@ -156,9 +152,10 @@ const platformPermissionCatalog = [
   'platform.read',
   'organization.manage',
   'organization.close',
-  'schema.manage',
-  'schema.approve',
-  'schema.apply',
+  'industry.solution.manage',
+  'industry.solution.verify',
+  'industry.solution.approve',
+  'industry.solution.apply',
   'model.manage',
   'runtime.manage',
   'assistant.platform.run',
@@ -168,7 +165,6 @@ const platformPermissionCatalog = [
   'database.maintenance.manage',
   'database.maintenance.approve',
   'api.manage',
-  'industry.solution.manage',
   'industry.solution.import',
   'industry.solution.export',
   'tenant.industry_solution.apply',
@@ -225,11 +221,11 @@ function formatDateTime(value?: string): string {
   }).format(new Date(value))
 }
 
-function countFields(pkg: SchemaPackage | null): number {
+function countFields(pkg: IndustrySolutionManifest | null): number {
   return pkg?.tables.reduce((total, table) => total + table.fields.length, 0) ?? 0
 }
 
-function summarizeSchemaDiff(diff?: SchemaChangeRequest['diff']): string[] {
+function summarizeIndustrySolutionDiff(diff?: IndustrySolutionChangeRequest['diff']): string[] {
   if (!Array.isArray(diff)) return []
   return diff.map((item) =>
     [item.action, item.table, item.field, item.from && item.to ? `${item.from} -> ${item.to}` : item.to || item.from, item.risk]
@@ -251,12 +247,12 @@ function categoryEntries(summary: Record<string, unknown> | undefined): Array<[s
     .filter(([, count]) => count > 0)
 }
 
-function parseSchemaPackage(source: string): SchemaPackage {
-  const parsed = JSON.parse(source) as Partial<SchemaPackage>
+function parseIndustrySolutionManifest(source: string): IndustrySolutionManifest {
+  const parsed = JSON.parse(source) as Partial<IndustrySolutionManifest>
   if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.tables)) {
-    throw new Error('invalid schema package')
+    throw new Error('invalid industry solution manifest')
   }
-  return parsed as SchemaPackage
+  return parsed as IndustrySolutionManifest
 }
 
 const tabIDs = new Set<TabID>(tabs.map((tab) => tab.id))
@@ -327,15 +323,15 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [maintenanceDraft, setMaintenanceDraft] = useState({ jobType: 'backup', scope: 'platform', reason: '', backupRef: '' })
   const [masters, setMasters] = useState<PlatformMaster[]>([])
   const [details, setDetails] = useState<PlatformDetail[]>([])
-  const [targets, setTargets] = useState<OrganizationSchemaTarget[]>([])
+  const [targets, setTargets] = useState<OrganizationIndustrySolutionTarget[]>([])
   const [selectedMasterKey, setSelectedMasterKey] = useState('')
   const [selectedOrganizationID, setSelectedOrganizationID] = useState(currentOrganizationID || organizations[0]?.id || '')
-  const [schemaPackage, setSchemaPackage] = useState<SchemaPackage | null>(null)
-  const [schemaJson, setSchemaJson] = useState('')
-  const [changeRequest, setChangeRequest] = useState<SchemaChangeRequest | null>(null)
-  const [applyJob, setApplyJob] = useState<SchemaApplyJob | null>(null)
-  const [packageAssetDiff, setPackageAssetDiff] = useState<PackageAssetDiff[]>([])
-  const [verificationReport, setVerificationReport] = useState<SchemaVerificationReport | null>(null)
+  const [solutionManifest, setIndustrySolutionManifest] = useState<IndustrySolutionManifest | null>(null)
+  const [solutionManifestJson, setSolutionManifestJson] = useState('')
+  const [changeRequest, setChangeRequest] = useState<IndustrySolutionChangeRequest | null>(null)
+  const [applyJob, setApplyJob] = useState<IndustrySolutionApplyJob | null>(null)
+  const [solutionAssetDiff, setSolutionAssetDiff] = useState<IndustrySolutionAssetDiff[]>([])
+  const [verificationReport, setVerificationReport] = useState<IndustrySolutionVerificationReport | null>(null)
   const [contextHealth, setContextHealth] = useState<AssistantContextHealthSummary | null>(null)
   const [monitoringStatus, setMonitoringStatus] = useState<MonitoringAgentStatus | null>(null)
   const [monitoringRuns, setMonitoringRuns] = useState<MonitoringAgentRun[]>([])
@@ -375,19 +371,19 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   )
   const verificationBlocksApply =
     !!changeRequest && verificationReport?.change_request_id === changeRequest.id && verificationReport.can_apply === false
-  const schemaDiffItems = useMemo(() => summarizeSchemaDiff(changeRequest?.diff), [changeRequest?.diff])
+  const solutionDiffItems = useMemo(() => summarizeIndustrySolutionDiff(changeRequest?.diff), [changeRequest?.diff])
   const industryManifest = useMemo(() => {
-    const manifest = changeRequest?.schema_package.metadata?.industry_manifest
-    return manifest && typeof manifest === 'object' ? (manifest as IndustrySolutionManifest) : null
+    const manifest = changeRequest?.solution_manifest.metadata?.industry_manifest
+    return manifest && typeof manifest === 'object' ? (manifest as IndustrySolutionAssetManifest) : null
   }, [changeRequest])
   const packageAssetsByType = useMemo(() => {
-    const groups = new Map<string, IndustrySolutionManifest['assets']>()
+    const groups = new Map<string, IndustrySolutionAssetManifest['assets']>()
     for (const asset of industryManifest?.assets ?? []) {
       groups.set(asset.asset_type, [...(groups.get(asset.asset_type) ?? []), asset])
     }
     return Array.from(groups.entries()).map(([assetType, assets]) => ({ assetType, assets }))
   }, [industryManifest])
-  const assetResults = useMemo<SchemaApplyAssetResult[]>(() => applyJob?.metadata?.asset_results ?? [], [applyJob])
+  const assetResults = useMemo<IndustrySolutionApplyAssetResult[]>(() => applyJob?.metadata?.asset_results ?? [], [applyJob])
   const selectedIndustryPackage = useMemo(
     () => industryPackages.find((item) => item.id === selectedPackageID) ?? industryPackages[0] ?? null,
     [industryPackages, selectedPackageID],
@@ -436,15 +432,15 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     return item.metadata?.publication_gates ?? []
   }
 
-  async function refreshPackageAssetDiff(request: SchemaChangeRequest) {
-    if (!request.schema_package.metadata?.industry_manifest) {
-      setPackageAssetDiff([])
+  async function refreshIndustrySolutionAssetDiff(request: IndustrySolutionChangeRequest) {
+    if (!request.solution_manifest.metadata?.industry_manifest) {
+      setSolutionAssetDiff([])
       return
     }
     try {
-      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id))
+      setSolutionAssetDiff(await getIndustrySolutionChangeAssetDiff(token, request.id))
     } catch {
-      setPackageAssetDiff([])
+      setSolutionAssetDiff([])
     }
   }
 
@@ -674,11 +670,11 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }, [canPlatform, moduleKey, t, token])
 
   const loadTargets = useCallback(async () => {
-    if (!canPlatform('schema.manage')) return
+    if (!canPlatform('industry.solution.manage')) return
     setLoading(true)
     setError('')
     try {
-      setTargets(await listOrganizationSchemaTargets(token, 100))
+      setTargets(await listOrganizationIndustrySolutionTargets(token, 100))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
     } finally {
@@ -710,7 +706,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }, [effectiveActiveTab, loadMonitoringAgent])
 
   useEffect(() => {
-    if (!effectiveActiveTab || !['saas', 'industry', 'features', 'schema', 'targets'].includes(effectiveActiveTab)) return
+    if (!effectiveActiveTab || !['saas', 'industry', 'features'].includes(effectiveActiveTab)) return
     const timer = window.setTimeout(() => {
       void loadSaaSManagement()
     }, 0)
@@ -963,7 +959,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function createERPSolutionFlow() {
-    if (!activeOrganizationID || !canPlatform('schema.manage')) return
+    if (!activeOrganizationID || !canPlatform('industry.solution.manage')) return
     await run(async () => {
       const request = await createERPStandardSolutionFlow(token, activeOrganizationID, {
         industry_key: selectedIndustryKey || 'standard_erp',
@@ -973,31 +969,31 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       })
       setChangeRequest(request)
       setVerificationReport(null)
-      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id))
-      setSchemaPackage(request.schema_package)
-      setSchemaJson(jsonText(request.schema_package))
-      setActiveTab('schema')
+      setSolutionAssetDiff(await getIndustrySolutionChangeAssetDiff(token, request.id))
+      setIndustrySolutionManifest(request.solution_manifest)
+      setSolutionManifestJson(jsonText(request.solution_manifest))
+      setActiveTab('industry')
     }, 'systemAdmin.erpSolutionCreated')
   }
 
   async function createRetailDistributionFlow() {
-    if (!activeOrganizationID || !canPlatform('schema.manage') || !canPlatform('industry.solution.manage')) return
+    if (!activeOrganizationID || !canPlatform('industry.solution.manage')) return
     await run(async () => {
       const request = await createRetailDistributionSolutionFlow(token, activeOrganizationID)
       setChangeRequest(request)
       setVerificationReport(null)
-      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id).catch(() => []))
-      setSchemaPackage(request.schema_package)
-      setSchemaJson(jsonText(request.schema_package))
-      setActiveTab('schema')
+      setSolutionAssetDiff(await getIndustrySolutionChangeAssetDiff(token, request.id).catch(() => []))
+      setIndustrySolutionManifest(request.solution_manifest)
+      setSolutionManifestJson(jsonText(request.solution_manifest))
+      setActiveTab('industry')
     }, 'systemAdmin.retailSolutionCreated')
   }
 
   async function createIndustryTableFieldChange() {
-    if (!activeOrganizationID || !canPlatform('industry.solution.manage') || !canPlatform('schema.manage')) return
+    if (!activeOrganizationID || !canPlatform('industry.solution.manage')) return
     if (!industryTableDraft.tableName.trim() || !industryTableDraft.fieldName.trim() || !industryTableDraft.dataType.trim()) return
     await run(async () => {
-      const request = await createIndustrySolutionSchemaChange(token, activeOrganizationID, {
+      const request = await createIndustrySolutionTableFieldChange(token, activeOrganizationID, {
         industry_key: selectedIndustryKey || 'general',
         package_key: selectedIndustryPackage?.package_key || 'custom',
         reason,
@@ -1016,10 +1012,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       })
       setChangeRequest(request)
       setVerificationReport(null)
-      setPackageAssetDiff(await getSchemaChangePackageDiff(token, request.id).catch(() => []))
-      setSchemaPackage(request.schema_package)
-      setSchemaJson(jsonText(request.schema_package))
-    }, 'systemAdmin.industrySchemaChangeCreated')
+      setSolutionAssetDiff(await getIndustrySolutionChangeAssetDiff(token, request.id).catch(() => []))
+      setIndustrySolutionManifest(request.solution_manifest)
+      setSolutionManifestJson(jsonText(request.solution_manifest))
+    }, 'systemAdmin.industrySolutionChangeCreated')
   }
 
   async function createFeature() {
@@ -1208,38 +1204,38 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     }
   }
 
-  async function exportSchema() {
-    if (!activeOrganizationID || !canPlatform('schema.manage')) return
+  async function exportSolutionManifest() {
+    if (!activeOrganizationID || !canPlatform('industry.solution.manage')) return
     await run(async () => {
-      const pkg = await exportOrganizationSchema(token, activeOrganizationID)
-      setSchemaPackage(pkg)
-      setSchemaJson(jsonText(pkg))
+      const pkg = await exportOrganizationIndustrySolutionManifest(token, activeOrganizationID)
+      setIndustrySolutionManifest(pkg)
+      setSolutionManifestJson(jsonText(pkg))
       setVerificationReport(null)
-      setPackageAssetDiff([])
-    }, 'systemAdmin.schemaExported')
+      setSolutionAssetDiff([])
+    }, 'systemAdmin.solutionManifestExported')
   }
 
-  function downloadSchema() {
-    if (!schemaJson.trim()) return
-    const blob = new Blob([schemaJson], { type: 'application/json' })
+  function downloadSolutionManifest() {
+    if (!solutionManifestJson.trim()) return
+    const blob = new Blob([solutionManifestJson], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `${selectedTarget?.schema_name || 'organization-schema'}.json`
+    link.download = `${selectedTarget?.target_schema_name || 'organization-solution-manifest'}.json`
     link.click()
     URL.revokeObjectURL(url)
   }
 
-  async function importSchemaFile(event: ChangeEvent<HTMLInputElement>) {
+  async function importSolutionManifestFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
     try {
       const content = await file.text()
-      const pkg = parseSchemaPackage(content)
-      setSchemaPackage(pkg)
-      setSchemaJson(jsonText(pkg))
+      const pkg = parseIndustrySolutionManifest(content)
+      setIndustrySolutionManifest(pkg)
+      setSolutionManifestJson(jsonText(pkg))
       setVerificationReport(null)
-      setPackageAssetDiff([])
+      setSolutionAssetDiff([])
       setNotice(t('systemAdmin.jsonImported'))
       setError('')
     } catch {
@@ -1250,48 +1246,48 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function createChange() {
-    if (!activeOrganizationID || !canPlatform('schema.manage')) return
-    let pkg: SchemaPackage
+    if (!activeOrganizationID || !canPlatform('industry.solution.manage')) return
+    let pkg: IndustrySolutionManifest
     try {
-      pkg = parseSchemaPackage(schemaJson)
+      pkg = parseIndustrySolutionManifest(solutionManifestJson)
     } catch {
       setError(t('systemAdmin.invalidJson'))
       return
     }
     await run(async () => {
-      const request = await createOrganizationSchemaChange(token, activeOrganizationID, {
-        request_type: 'schema_package_update',
+      const request = await createIndustrySolutionChangeRequest(token, activeOrganizationID, {
+        request_type: 'solution_manifest_update',
         reason,
-        schema_package: pkg,
+        solution_manifest: pkg,
       })
-      setSchemaPackage(pkg)
+      setIndustrySolutionManifest(pkg)
       setChangeRequest(request)
       setApplyJob(null)
       setVerificationReport(null)
-      await refreshPackageAssetDiff(request)
+      await refreshIndustrySolutionAssetDiff(request)
     }, 'systemAdmin.changeCreated')
   }
 
   async function approveChange() {
-    if (!changeRequest || !canPlatform('schema.approve')) return
+    if (!changeRequest || !canPlatform('industry.solution.approve')) return
     await run(async () => {
-      setChangeRequest(await approveSchemaChange(token, changeRequest.id, reason))
+      setChangeRequest(await approveIndustrySolutionChange(token, changeRequest.id, reason))
       setVerificationReport(null)
     }, 'systemAdmin.changeApproved')
   }
 
   async function verifyChange() {
-    if (!changeRequest || !canPlatform('schema.manage')) return
+    if (!changeRequest || !canPlatform('industry.solution.manage')) return
     await run(async () => {
-      setVerificationReport(await verifySchemaChange(token, changeRequest.id))
-      await refreshPackageAssetDiff(changeRequest)
+      setVerificationReport(await verifyIndustrySolutionChange(token, changeRequest.id))
+      await refreshIndustrySolutionAssetDiff(changeRequest)
     }, 'systemAdmin.changeVerified')
   }
 
   async function applyChange() {
-    if (!changeRequest || verificationBlocksApply || !canPlatform('schema.apply')) return
+    if (!changeRequest || verificationBlocksApply || !canPlatform('industry.solution.apply')) return
     await run(async () => {
-      const job = await applySchemaChange(token, changeRequest.id)
+      const job = await applyIndustrySolutionChange(token, changeRequest.id)
       setApplyJob(job)
       setVerificationReport(null)
     }, 'systemAdmin.changeApplied')
@@ -2029,7 +2025,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void createERPSolutionFlow()}
-                  disabled={!activeOrganizationID || loading || !canPlatform('schema.manage') || erpSolutionModuleDraft.length === 0}
+                  disabled={!activeOrganizationID || loading || !canPlatform('industry.solution.manage') || erpSolutionModuleDraft.length === 0}
                   className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-4 text-sm font-semibold text-white transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Braces className="h-4 w-4" />
@@ -2038,7 +2034,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void createRetailDistributionFlow()}
-                  disabled={!activeOrganizationID || loading || !canPlatform('schema.manage') || !canPlatform('industry.solution.manage')}
+                  disabled={!activeOrganizationID || loading || !canPlatform('industry.solution.manage')}
                   className="mt-2 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-[#AD4714]/30 bg-white px-4 text-sm font-semibold text-[#AD4714] transition hover:bg-[#fff8f3] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Layers3 className="h-4 w-4" />
@@ -2100,11 +2096,11 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void createIndustryTableFieldChange()}
-                  disabled={!activeOrganizationID || loading || !canPlatform('industry.solution.manage') || !canPlatform('schema.manage')}
+                  disabled={!activeOrganizationID || loading || !canPlatform('industry.solution.manage')}
                   className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Braces className="h-4 w-4" />
-                  {t('systemAdmin.createSchemaChange')}
+                  {t('systemAdmin.createIndustrySolutionChange')}
                 </button>
               </div>
             </div>
@@ -2788,12 +2784,12 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </div>
       )}
 
-      {effectiveActiveTab === 'targets' && (
+      {effectiveActiveTab === 'industry' && (
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.schemaTargets')}</h2>
-              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.schemaTargetSummary')}</p>
+              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.industrySolutionTargets')}</h2>
+              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.industrySolutionTargetSummary')}</p>
             </div>
             <Database className="h-5 w-5 text-slate-500" />
           </div>
@@ -2802,7 +2798,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-2">{t('systemAdmin.organization')}</th>
-                  <th className="px-3 py-2">{t('systemAdmin.schemaName')}</th>
+                  <th className="px-3 py-2">{t('systemAdmin.targetSchemaName')}</th>
                   <th className="px-3 py-2">{t('systemAdmin.templateVersion')}</th>
                   <th className="px-3 py-2">{t('systemAdmin.status')}</th>
                   <th className="px-3 py-2">{t('systemAdmin.updated')}</th>
@@ -2813,7 +2809,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   targets.map((item) => (
                     <tr key={item.organization_id}>
                       <td className="px-3 py-3 font-medium text-slate-900">{organizationByID[item.organization_id] || item.organization_id}</td>
-                      <td className="px-3 py-3 text-slate-600">{item.schema_name}</td>
+                      <td className="px-3 py-3 text-slate-600">{item.target_schema_name}</td>
                       <td className="px-3 py-3 text-slate-600">{item.template_version}</td>
                       <td className="px-3 py-3">
                         <StatusBadge label={item.status} />
@@ -2834,28 +2830,28 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </section>
       )}
 
-      {effectiveActiveTab === 'schema' && (
+      {effectiveActiveTab === 'industry' && (
         <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
           <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.schemaPackage')}</h2>
-                <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.schemaPackageSummary')}</p>
+                <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.solutionManifest')}</h2>
+                <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.solutionManifestSummary')}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => void exportSchema()}
-                  disabled={!activeOrganizationID || loading || !canPlatform('schema.manage')}
+                  onClick={() => void exportSolutionManifest()}
+                  disabled={!activeOrganizationID || loading || !canPlatform('industry.solution.manage')}
                   className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Download className="h-4 w-4" />
-                  {t('systemAdmin.exportSchema')}
+                  {t('systemAdmin.exportSolutionManifest')}
                 </button>
                 <button
                   type="button"
-                  onClick={downloadSchema}
-                  disabled={!schemaJson.trim()}
+                  onClick={downloadSolutionManifest}
+                  disabled={!solutionManifestJson.trim()}
                   className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <FileJson className="h-4 w-4" />
@@ -2879,12 +2875,12 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   ))}
                 </select>
               </label>
-              <Metric label={t('systemAdmin.tables')} value={String(schemaPackage?.tables.length ?? 0)} />
-              <Metric label={t('systemAdmin.fields')} value={String(countFields(schemaPackage))} />
+              <Metric label={t('systemAdmin.tables')} value={String(solutionManifest?.tables.length ?? 0)} />
+              <Metric label={t('systemAdmin.fields')} value={String(countFields(solutionManifest))} />
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <input id="system-admin-json-file" type="file" accept="application/json,.json" className="sr-only" onChange={(event) => void importSchemaFile(event)} />
+              <input id="system-admin-json-file" type="file" accept="application/json,.json" className="sr-only" onChange={(event) => void importSolutionManifestFile(event)} />
               <label
                 htmlFor="system-admin-json-file"
                 className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
@@ -2901,14 +2897,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             </div>
 
             <label className="mt-4 block">
-              <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.schemaJson')}</span>
+              <span className="text-xs font-semibold text-slate-500">{t('systemAdmin.solutionManifestJson')}</span>
               <textarea
-                value={schemaJson}
+                value={solutionManifestJson}
                 onChange={(event) => {
-                  setSchemaJson(event.target.value)
-                  setSchemaPackage(null)
+                  setSolutionManifestJson(event.target.value)
+                  setIndustrySolutionManifest(null)
                 }}
-                placeholder={t('systemAdmin.schemaJsonPlaceholder')}
+                placeholder={t('systemAdmin.solutionManifestJsonPlaceholder')}
                 spellCheck={false}
                 className="mt-1 min-h-[420px] w-full resize-y rounded-lg border border-slate-300 bg-slate-950 p-4 font-mono text-xs text-slate-100 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20"
               />
@@ -2925,7 +2921,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void createChange()}
-                  disabled={!activeOrganizationID || !schemaJson.trim() || loading || !canPlatform('schema.manage')}
+                  disabled={!activeOrganizationID || !solutionManifestJson.trim() || loading || !canPlatform('industry.solution.manage')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Braces className="h-4 w-4" />
@@ -2934,7 +2930,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void approveChange()}
-                  disabled={!changeRequest || changeRequest.status !== 'pending' || loading || !canPlatform('schema.approve')}
+                  disabled={!changeRequest || changeRequest.status !== 'pending' || loading || !canPlatform('industry.solution.approve')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Check className="h-4 w-4" />
@@ -2943,7 +2939,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void verifyChange()}
-                  disabled={!changeRequest || loading || !canPlatform('schema.manage')}
+                  disabled={!changeRequest || loading || !canPlatform('industry.solution.manage')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ShieldCheck className="h-4 w-4" />
@@ -2952,7 +2948,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                 <button
                   type="button"
                   onClick={() => void applyChange()}
-                  disabled={!changeRequest || !['approved', 'applied'].includes(changeRequest.status) || verificationBlocksApply || loading || !canPlatform('schema.apply')}
+                  disabled={!changeRequest || !['approved', 'applied'].includes(changeRequest.status) || verificationBlocksApply || loading || !canPlatform('industry.solution.apply')}
                   className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play className="h-4 w-4" />
@@ -2964,7 +2960,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
             <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.currentTarget')}</h2>
               <div className="mt-4 space-y-3">
-                <Metric label={t('systemAdmin.schemaName')} value={selectedTarget?.schema_name || t('common.notSelected')} />
+                <Metric label={t('systemAdmin.targetSchemaName')} value={selectedTarget?.target_schema_name || t('common.notSelected')} />
                 <Metric label={t('systemAdmin.templateVersion')} value={selectedTarget?.template_version || t('common.notSelected')} />
                 <Metric label={t('systemAdmin.status')} value={selectedTarget?.status ? t(selectedTarget.status) : t('common.notSelected')} />
               </div>
@@ -2995,9 +2991,9 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   )}
                   <div>
                     <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.packageDiff')}</p>
-                    {schemaDiffItems.length > 0 ? (
+                    {solutionDiffItems.length > 0 ? (
                       <ul className="mt-2 space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                        {schemaDiffItems.map((item) => (
+                        {solutionDiffItems.map((item) => (
                           <li key={item}>{item}</li>
                         ))}
                       </ul>
@@ -3005,11 +3001,11 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                       <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-3 text-xs text-slate-500">{t('systemAdmin.noPackageDiff')}</p>
                     )}
                   </div>
-                  {packageAssetDiff.length > 0 && (
+                  {solutionAssetDiff.length > 0 && (
                     <div>
                       <p className="text-xs font-semibold text-slate-500">{t('systemAdmin.metadataAssets')}</p>
                       <div className="mt-2 space-y-2">
-                        {packageAssetDiff.map((item) => (
+                        {solutionAssetDiff.map((item) => (
                           <div key={`${item.asset_type}-${item.asset_key}`} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
@@ -3105,17 +3101,17 @@ function PlatformGovernanceMap({
   onOpen,
 }: {
   organizationName?: string
-  target: OrganizationSchemaTarget | null
+  target: OrganizationIndustrySolutionTarget | null
   permissionsEnabled: number
   onOpen: (tab: TabID) => void
 }) {
   const { t } = useI18n()
   const items: Array<{ key: string; label: string; detail: string; tab: TabID; icon: typeof Database }> = [
     { key: 'tenant', label: 'systemAdmin.saasOrganizations', detail: organizationName || t('common.notSelected'), tab: 'saas', icon: Users },
-    { key: 'database', label: 'systemAdmin.schemaTargets', detail: target?.schema_name || t('common.notSelected'), tab: 'targets', icon: Database },
+    { key: 'database', label: 'systemAdmin.industrySolutionTargets', detail: target?.target_schema_name || t('common.notSelected'), tab: 'industry', icon: Database },
     { key: 'permissions', label: 'systemAdmin.permissions', detail: String(permissionsEnabled), tab: 'permissions', icon: ShieldCheck },
     { key: 'runtime', label: 'systemAdmin.apiWorkbench', detail: t('workbench.api.embedded'), tab: 'runtime', icon: Braces },
-    { key: 'schema', label: 'systemAdmin.schemaPackage', detail: t('systemAdmin.erpAsset.ui_workspaces'), tab: 'schema', icon: FileJson },
+    { key: 'solution', label: 'systemAdmin.solutionManifest', detail: t('systemAdmin.erpAsset.ui_workspaces'), tab: 'industry', icon: FileJson },
   ]
 
   return (
@@ -3216,3 +3212,6 @@ function StatusBadge({ label }: { label: string }) {
 
   return <span className={`inline-flex h-7 items-center rounded-full border px-2.5 text-xs font-semibold ${tone}`}>{t(label)}</span>
 }
+
+
+

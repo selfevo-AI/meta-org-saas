@@ -470,96 +470,96 @@ func (r *Repository) ReviewDatabaseMaintenanceJob(ctx context.Context, record Re
 	`, record.JobID, record.Status, record.ReviewedBy, record.ReviewReason))
 }
 
-func (r *Repository) ListSchemaTargets(ctx context.Context, limit int) ([]OrganizationSchemaTarget, error) {
+func (r *Repository) ListIndustrySolutionTargets(ctx context.Context, limit int) ([]OrganizationIndustrySolutionTarget, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	rows, err := r.db.Query(ctx, `
-		SELECT st.organization_id, st.schema_name, st.template_version, st.status, st.last_change_request_id,
+		SELECT st.organization_id, st.target_schema_name, st.template_version, st.status, st.last_change_request_id,
 		       st.metadata, st.created_at, st.updated_at,
 		       COALESCE(tdt.deployment_mode, ''), COALESCE(tdt.cluster_key, ''), COALESCE(tdt.region, ''),
 		       COALESCE(tdt.database_name, ''), COALESCE(tdt.status, '')
-		FROM platform.organization_schema_targets st
+		FROM platform.organization_industry_solution_targets st
 		LEFT JOIN platform.tenant_database_targets tdt ON tdt.organization_id = st.organization_id
-		ORDER BY st.updated_at DESC, st.schema_name
+		ORDER BY st.updated_at DESC, st.target_schema_name
 		LIMIT $1
 	`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list schema targets: %w", err)
+		return nil, fmt.Errorf("list industry solution targets: %w", err)
 	}
 	defer rows.Close()
 
-	items := []OrganizationSchemaTarget{}
+	items := []OrganizationIndustrySolutionTarget{}
 	for rows.Next() {
-		item, err := scanSchemaTarget(rows)
+		item, err := scanIndustrySolutionTarget(rows)
 		if err != nil {
 			return nil, err
 		}
 		items = append(items, *item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list schema targets iteration: %w", err)
+		return nil, fmt.Errorf("list industry solution targets iteration: %w", err)
 	}
 	return items, nil
 }
 
-func (r *Repository) GetSchemaTarget(ctx context.Context, orgID uuid.UUID) (*OrganizationSchemaTarget, error) {
-	return scanSchemaTarget(r.db.QueryRow(ctx, `
-		SELECT st.organization_id, st.schema_name, st.template_version, st.status, st.last_change_request_id,
+func (r *Repository) GetIndustrySolutionTarget(ctx context.Context, orgID uuid.UUID) (*OrganizationIndustrySolutionTarget, error) {
+	return scanIndustrySolutionTarget(r.db.QueryRow(ctx, `
+		SELECT st.organization_id, st.target_schema_name, st.template_version, st.status, st.last_change_request_id,
 		       st.metadata, st.created_at, st.updated_at,
 		       COALESCE(tdt.deployment_mode, ''), COALESCE(tdt.cluster_key, ''), COALESCE(tdt.region, ''),
 		       COALESCE(tdt.database_name, ''), COALESCE(tdt.status, '')
-		FROM platform.organization_schema_targets st
+		FROM platform.organization_industry_solution_targets st
 		LEFT JOIN platform.tenant_database_targets tdt ON tdt.organization_id = st.organization_id
 		WHERE st.organization_id = $1
 	`, orgID))
 }
 
-func (r *Repository) CreateSchemaChangeRequest(ctx context.Context, record CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error) {
-	pkgJSON, _ := json.Marshal(record.SchemaPackage)
+func (r *Repository) CreateIndustrySolutionChangeRequest(ctx context.Context, record CreateIndustrySolutionChangeRequestRecord) (*IndustrySolutionChangeRequest, error) {
+	manifestJSON, _ := json.Marshal(record.SolutionManifest)
 	statementsJSON, _ := json.Marshal(record.Statements)
 	diffJSON, _ := json.Marshal(record.Diff)
-	return scanSchemaChangeRequest(r.db.QueryRow(ctx, `
-		INSERT INTO platform.schema_change_requests(
-		    organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff, requested_by
+	return scanIndustrySolutionChangeRequest(r.db.QueryRow(ctx, `
+		INSERT INTO platform.industry_solution_change_requests(
+		    organization_id, target_schema_name, request_type, status, reason, solution_manifest, statements, risk_level, diff, requested_by
 		)
 		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9)
-		RETURNING id, organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff,
+		RETURNING id, organization_id, target_schema_name, request_type, status, reason, solution_manifest, statements, risk_level, diff,
 		          requested_by, reviewed_by, applied_by, review_reason, created_at, reviewed_at, applied_at, updated_at
-	`, record.OrganizationID, record.SchemaName, record.RequestType, record.Reason, pkgJSON, statementsJSON, record.RiskLevel, diffJSON, record.RequestedBy))
+	`, record.OrganizationID, record.TargetSchemaName, record.RequestType, record.Reason, manifestJSON, statementsJSON, record.RiskLevel, diffJSON, record.RequestedBy))
 }
 
-func (r *Repository) GetSchemaChangeRequest(ctx context.Context, id uuid.UUID) (*SchemaChangeRequest, error) {
-	return scanSchemaChangeRequest(r.db.QueryRow(ctx, `
-		SELECT id, organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff,
+func (r *Repository) GetIndustrySolutionChangeRequest(ctx context.Context, id uuid.UUID) (*IndustrySolutionChangeRequest, error) {
+	return scanIndustrySolutionChangeRequest(r.db.QueryRow(ctx, `
+		SELECT id, organization_id, target_schema_name, request_type, status, reason, solution_manifest, statements, risk_level, diff,
 		       requested_by, reviewed_by, applied_by, review_reason, created_at, reviewed_at, applied_at, updated_at
-		FROM platform.schema_change_requests
+		FROM platform.industry_solution_change_requests
 		WHERE id = $1
 	`, id))
 }
 
-func (r *Repository) UpdateSchemaChangeRequestStatus(ctx context.Context, id uuid.UUID, status string, reviewerID uuid.UUID, reason string) (*SchemaChangeRequest, error) {
-	return scanSchemaChangeRequest(r.db.QueryRow(ctx, `
-		UPDATE platform.schema_change_requests
+func (r *Repository) UpdateIndustrySolutionChangeRequestStatus(ctx context.Context, id uuid.UUID, status string, reviewerID uuid.UUID, reason string) (*IndustrySolutionChangeRequest, error) {
+	return scanIndustrySolutionChangeRequest(r.db.QueryRow(ctx, `
+		UPDATE platform.industry_solution_change_requests
 		SET status = $2,
 		    reviewed_by = $3,
 		    review_reason = $4,
 		    reviewed_at = NOW(),
 		    updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, organization_id, schema_name, request_type, status, reason, schema_package, statements, risk_level, diff,
+		RETURNING id, organization_id, target_schema_name, request_type, status, reason, solution_manifest, statements, risk_level, diff,
 		          requested_by, reviewed_by, applied_by, review_reason, created_at, reviewed_at, applied_at, updated_at
 	`, id, status, reviewerID, reason))
 }
 
-func (r *Repository) ApplySchemaChange(ctx context.Context, request *SchemaChangeRequest, statements []string, assetResults []SchemaApplyAssetResult) (*SchemaApplyJob, error) {
+func (r *Repository) ApplyIndustrySolutionChange(ctx context.Context, request *IndustrySolutionChangeRequest, statements []string, assetResults []IndustrySolutionApplyAssetResult) (*IndustrySolutionApplyJob, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("begin apply schema change: %w", err)
+		return nil, fmt.Errorf("begin apply industry solution change: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	quotedSchema, err := tenantdb.QuoteIdentifier(request.SchemaName)
+	quotedSchema, err := tenantdb.QuoteIdentifier(request.TargetSchemaName)
 	if err != nil {
 		return nil, err
 	}
@@ -578,49 +578,49 @@ func (r *Repository) ApplySchemaChange(ctx context.Context, request *SchemaChang
 		"source":        "systemadmin",
 		"asset_results": assetResults,
 	})
-	job, err := scanSchemaApplyJob(tx.QueryRow(ctx, `
-		INSERT INTO platform.schema_apply_jobs(
-		    change_request_id, organization_id, schema_name, status, statements, metadata
+	job, err := scanIndustrySolutionApplyJob(tx.QueryRow(ctx, `
+		INSERT INTO platform.industry_solution_apply_jobs(
+		    change_request_id, organization_id, target_schema_name, status, statements, metadata
 		)
 		VALUES ($1, $2, $3, 'applied', $4, $5::jsonb)
-		RETURNING id, change_request_id, organization_id, schema_name, status, statements,
+		RETURNING id, change_request_id, organization_id, target_schema_name, status, statements,
 		          error_message, metadata, created_at, updated_at
-	`, request.ID, request.OrganizationID, request.SchemaName, statementsJSON, metadataJSON))
+	`, request.ID, request.OrganizationID, request.TargetSchemaName, statementsJSON, metadataJSON))
 	if err != nil {
 		return nil, err
 	}
 
 	if _, err := tx.Exec(ctx, `
-		UPDATE platform.schema_change_requests
+		UPDATE platform.industry_solution_change_requests
 		SET status = 'applied', applied_at = NOW(), updated_at = NOW()
 		WHERE id = $1
 	`, request.ID); err != nil {
-		return nil, fmt.Errorf("mark schema request applied: %w", err)
+		return nil, fmt.Errorf("mark industry solution request applied: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO platform.organization_schema_targets(
-		    organization_id, schema_name, template_version, status, last_change_request_id, metadata
+		INSERT INTO platform.organization_industry_solution_targets(
+		    organization_id, target_schema_name, template_version, status, last_change_request_id, metadata
 		)
-		VALUES ($1, $2, $3, 'provisioned', $4, '{"source":"schema_apply_job"}'::jsonb)
+		VALUES ($1, $2, $3, 'provisioned', $4, '{"source":"industry_solution_apply_job"}'::jsonb)
 		ON CONFLICT (organization_id) DO UPDATE SET
-		    schema_name = EXCLUDED.schema_name,
+		    target_schema_name = EXCLUDED.target_schema_name,
 		    template_version = EXCLUDED.template_version,
 		    status = 'provisioned',
 		    last_change_request_id = EXCLUDED.last_change_request_id,
-		    metadata = platform.organization_schema_targets.metadata || EXCLUDED.metadata,
+		    metadata = platform.organization_industry_solution_targets.metadata || EXCLUDED.metadata,
 		    updated_at = NOW()
-	`, request.OrganizationID, request.SchemaName, request.SchemaPackage.FormatVersion, request.ID); err != nil {
-		return nil, fmt.Errorf("upsert schema target: %w", err)
+	`, request.OrganizationID, request.TargetSchemaName, request.SolutionManifest.FormatVersion, request.ID); err != nil {
+		return nil, fmt.Errorf("upsert industry solution target: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit apply schema change: %w", err)
+		return nil, fmt.Errorf("commit apply industry solution change: %w", err)
 	}
 	return job, nil
 }
 
-func (r *Repository) applyIndustrySolutionAssets(ctx context.Context, tx pgx.Tx, request *SchemaChangeRequest, results []SchemaApplyAssetResult) []SchemaApplyAssetResult {
+func (r *Repository) applyIndustrySolutionAssets(ctx context.Context, tx pgx.Tx, request *IndustrySolutionChangeRequest, results []IndustrySolutionApplyAssetResult) []IndustrySolutionApplyAssetResult {
 	for i := range results {
 		err := r.applyIndustrySolutionAsset(ctx, tx, request, &results[i])
 		if err != nil {
@@ -633,7 +633,7 @@ func (r *Repository) applyIndustrySolutionAssets(ctx context.Context, tx pgx.Tx,
 	return results
 }
 
-func (r *Repository) applyIndustrySolutionAsset(ctx context.Context, tx pgx.Tx, request *SchemaChangeRequest, result *SchemaApplyAssetResult) error {
+func (r *Repository) applyIndustrySolutionAsset(ctx context.Context, tx pgx.Tx, request *IndustrySolutionChangeRequest, result *IndustrySolutionApplyAssetResult) error {
 	payload, _ := result.Metadata["payload"].(map[string]any)
 	switch result.AssetType {
 	case AssetTypeRuntimeOperation:
@@ -674,7 +674,7 @@ func (r *Repository) applyIndustrySolutionAsset(ctx context.Context, tx pgx.Tx, 
 	case AssetTypeToolDefinition, AssetTypeToolPolicy:
 		_, err := tx.Exec(ctx, `
 			INSERT INTO tool_definitions(name, description, source_type, default_policy, risk_level, required_level, metadata)
-			VALUES ($1, 'Generated from ERP industry solution package', 'internal_api', 'approve', 'medium', 'L2', $2::jsonb)
+			VALUES ($1, 'Generated from ERP industry solution', 'internal_api', 'approve', 'medium', 'L2', $2::jsonb)
 			ON CONFLICT (name) DO UPDATE SET
 				metadata = tool_definitions.metadata || EXCLUDED.metadata,
 				updated_at = NOW()
@@ -741,12 +741,12 @@ func scanPlatformDetail(row interface{ Scan(dest ...any) error }) (*PlatformDeta
 	return &item, nil
 }
 
-func scanSchemaTarget(row interface{ Scan(dest ...any) error }) (*OrganizationSchemaTarget, error) {
-	var item OrganizationSchemaTarget
+func scanIndustrySolutionTarget(row interface{ Scan(dest ...any) error }) (*OrganizationIndustrySolutionTarget, error) {
+	var item OrganizationIndustrySolutionTarget
 	var metadataJSON []byte
 	if err := row.Scan(
 		&item.OrganizationID,
-		&item.SchemaName,
+		&item.TargetSchemaName,
 		&item.TemplateVersion,
 		&item.Status,
 		&item.LastChangeRequestID,
@@ -759,23 +759,23 @@ func scanSchemaTarget(row interface{ Scan(dest ...any) error }) (*OrganizationSc
 		&item.TenantDatabaseName,
 		&item.TenantDatabaseStatus,
 	); err != nil {
-		return nil, fmt.Errorf("scan schema target: %w", err)
+		return nil, fmt.Errorf("scan industry solution target: %w", err)
 	}
 	item.Metadata = unmarshalMap(metadataJSON)
 	return &item, nil
 }
 
-func scanSchemaChangeRequest(row interface{ Scan(dest ...any) error }) (*SchemaChangeRequest, error) {
-	var item SchemaChangeRequest
-	var pkgJSON, statementsJSON, diffJSON []byte
+func scanIndustrySolutionChangeRequest(row interface{ Scan(dest ...any) error }) (*IndustrySolutionChangeRequest, error) {
+	var item IndustrySolutionChangeRequest
+	var manifestJSON, statementsJSON, diffJSON []byte
 	if err := row.Scan(
 		&item.ID,
 		&item.OrganizationID,
-		&item.SchemaName,
+		&item.TargetSchemaName,
 		&item.RequestType,
 		&item.Status,
 		&item.Reason,
-		&pkgJSON,
+		&manifestJSON,
 		&statementsJSON,
 		&item.RiskLevel,
 		&diffJSON,
@@ -788,25 +788,25 @@ func scanSchemaChangeRequest(row interface{ Scan(dest ...any) error }) (*SchemaC
 		&item.AppliedAt,
 		&item.UpdatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("scan schema change request: %w", err)
+		return nil, fmt.Errorf("scan industry solution change request: %w", err)
 	}
-	_ = json.Unmarshal(pkgJSON, &item.SchemaPackage)
+	_ = json.Unmarshal(manifestJSON, &item.SolutionManifest)
 	_ = json.Unmarshal(statementsJSON, &item.Statements)
 	_ = json.Unmarshal(diffJSON, &item.Diff)
 	if item.RiskLevel == "" {
-		item.RiskLevel = SchemaRiskSafe
+		item.RiskLevel = IndustrySolutionRiskSafe
 	}
 	return &item, nil
 }
 
-func scanSchemaApplyJob(row interface{ Scan(dest ...any) error }) (*SchemaApplyJob, error) {
-	var item SchemaApplyJob
+func scanIndustrySolutionApplyJob(row interface{ Scan(dest ...any) error }) (*IndustrySolutionApplyJob, error) {
+	var item IndustrySolutionApplyJob
 	var statementsJSON, metadataJSON []byte
 	if err := row.Scan(
 		&item.ID,
 		&item.ChangeRequestID,
 		&item.OrganizationID,
-		&item.SchemaName,
+		&item.TargetSchemaName,
 		&item.Status,
 		&statementsJSON,
 		&item.ErrorMessage,
@@ -814,7 +814,7 @@ func scanSchemaApplyJob(row interface{ Scan(dest ...any) error }) (*SchemaApplyJ
 		&item.CreatedAt,
 		&item.UpdatedAt,
 	); err != nil {
-		return nil, fmt.Errorf("scan schema apply job: %w", err)
+		return nil, fmt.Errorf("scan industry solution apply job: %w", err)
 	}
 	_ = json.Unmarshal(statementsJSON, &item.Statements)
 	item.Metadata = unmarshalMap(metadataJSON)

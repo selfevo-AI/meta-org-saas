@@ -10,13 +10,13 @@
 -- for industry-solution-specific ERP master/detail table setup.
 --
 -- IMPORTANT / 重要:
--- Do not insert other migrations into schema_migrations from this file. SaaS
+-- Do not insert other migrations into platform.platform_migration_runs from this file. SaaS
 -- platform management, AI Gateway, assistant/runtime workbench, governance, and
 -- security-kernel platform metadata belong to 000_saas_platform_management_baseline.sql.
 -- This ERP baseline may be adjusted for concrete industry solutions by changing
 -- ERP code-table registrations and their seeded master/detail data.
 --
--- 不要在本文件中写入其他迁移到 schema_migrations。SaaS 平台管理、
+-- 不要在本文件中写入其他迁移到 platform.platform_migration_runs。SaaS 平台管理、
 -- AI Gateway、助手/运行时工作台、治理、安全内核等平台管理元数据归属
 -- 000_saas_platform_management_baseline.sql。本 ERP 基线只承载行业解决方案
 -- 可以调整的 ERP code-table 注册和初始化数据。

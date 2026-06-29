@@ -1387,16 +1387,16 @@ VALUES
         '{"phase":"verified_context_tool_loop","quality_gate":"tool_runtime_approval"}'::jsonb
     ),
     (
-        'schema.change.preview',
-        'Verify a schema change request without applying it',
+        'industry.solution.change.preview',
+        'Verify an industry solution change request without applying it',
         'internal_api',
         'notify',
         'low',
         'L2',
         'execution_operation',
         'executor',
-        '{"type":"object","properties":{"schema_change_request_id":{"type":"string"},"context_package_id":{"type":"string"}},"required":["schema_change_request_id"]}'::jsonb,
-        '{"phase":"verified_context_tool_loop","quality_gate":"schema_verify"}'::jsonb
+        '{"type":"object","properties":{"industry_solution_change_request_id":{"type":"string"},"context_package_id":{"type":"string"}},"required":["industry_solution_change_request_id"]}'::jsonb,
+        '{"phase":"verified_context_tool_loop","quality_gate":"solution_verify"}'::jsonb
     ),
     (
         'runtime.operation.execute',

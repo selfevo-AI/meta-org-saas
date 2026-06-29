@@ -84,7 +84,7 @@ func TestPostAcceptsCreatedForBusinessCreateEndpoints(t *testing.T) {
 		"/erp/MRDR/2001/RDR1",
 		"/erp/MINV",
 		"/erp/MINV/3001/INV1",
-		"/platform/admin/organizations/55555555-5555-5555-5555-555555555555/schema/change-requests",
+		"/platform/admin/organizations/55555555-5555-5555-5555-555555555555/industry-solution-change-requests",
 	}
 
 	for _, path := range paths {

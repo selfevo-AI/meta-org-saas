@@ -232,9 +232,9 @@ func main() {
 		toolRepo,
 		govSvc,
 		toolruntime.InternalToolsWithPlatform(projectSvc, financeSvc, evoSvc, toolruntime.PlatformToolServices{
-			ERP:            erpSvc,
-			SchemaVerifier: systemAdminSvc,
-			Runtime:        runtimeSvc,
+			ERP:                      erpSvc,
+			IndustrySolutionVerifier: systemAdminSvc,
+			Runtime:                  runtimeSvc,
 		}),
 		toolruntime.WithObservability(obsSvc),
 		toolruntime.WithSecurityKernel(securityKernel),

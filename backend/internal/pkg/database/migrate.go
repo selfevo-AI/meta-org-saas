@@ -10,14 +10,39 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) error {
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS schema_migrations (
+const platformMigrationTrackingTable = "platform.platform_migration_runs"
+
+func platformMigrationTrackingSQL() string {
+	return `
+		CREATE SCHEMA IF NOT EXISTS platform;
+		CREATE TABLE IF NOT EXISTS platform.platform_migration_runs (
 			filename    VARCHAR(255) PRIMARY KEY,
 			applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)
-	`); err != nil {
+	`
+}
+
+func migrateLegacyPlatformMigrationRunsSQL() string {
+	return `
+		DO $$
+		BEGIN
+			IF to_regclass('public.schema_migrations') IS NOT NULL THEN
+				INSERT INTO platform.platform_migration_runs(filename, applied_at)
+				SELECT filename, applied_at FROM public.schema_migrations
+				ON CONFLICT (filename) DO NOTHING;
+				DROP TABLE public.schema_migrations;
+			END IF;
+		END;
+		$$;
+	`
+}
+
+func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string) error {
+	if _, err := pool.Exec(ctx, platformMigrationTrackingSQL()); err != nil {
 		return fmt.Errorf("create migration tracking table: %w", err)
+	}
+	if _, err := pool.Exec(ctx, migrateLegacyPlatformMigrationRunsSQL()); err != nil {
+		return fmt.Errorf("migrate legacy migration tracking table: %w", err)
 	}
 
 	files, err := os.ReadDir(migrationsDir)
@@ -34,12 +59,8 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 	sort.Strings(sqlFiles)
 
 	for _, f := range sqlFiles {
-		if f == "schema_migrations.sql" {
-			continue
-		}
-
 		var applied bool
-		err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE filename = $1)", f).Scan(&applied)
+		err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM platform.platform_migration_runs WHERE filename = $1)", f).Scan(&applied)
 		if err != nil {
 			return fmt.Errorf("check migration %s: %w", f, err)
 		}
@@ -63,7 +84,7 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 			return fmt.Errorf("execute migration %s: %w", f, err)
 		}
 
-		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (filename) VALUES ($1)", f); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO platform.platform_migration_runs (filename) VALUES ($1)", f); err != nil {
 			tx.Rollback(ctx)
 			return fmt.Errorf("record migration %s: %w", f, err)
 		}

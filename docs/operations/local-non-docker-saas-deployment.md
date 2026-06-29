@@ -169,7 +169,7 @@ Database checks:
 
 ```powershell
 $env:PGPASSWORD = 'postgres'
-& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT filename FROM schema_migrations ORDER BY filename;"
+& 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT filename FROM platform.platform_migration_runs ORDER BY filename;"
 & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT COUNT(*) AS not_valid_constraints FROM pg_constraint WHERE NOT convalidated;"
 & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d meta_org_saas -c "SELECT u.email, u.account_status, pa.role FROM users u JOIN platform_admins pa ON pa.user_id = u.id WHERE u.email = 'platform-admin@local.test';"
 & 'C:\Program Files\PostgreSQL\18\bin\psql.exe' -h localhost -U postgres -d postgres -c "SELECT datname FROM pg_database WHERE datname='meta_org_saas' OR datname ~ '^meta_org_[0-9a-f]{4}$' ORDER BY datname;"
@@ -177,9 +177,8 @@ $env:PGPASSWORD = 'postgres'
 
 Expected results:
 
-- `schema_migrations` contains only `000_saas_platform_management_baseline.sql`,
-  `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and
-  `004_ai_capability_baseline.sql`.
+- `platform.platform_migration_runs` contains only the staged baseline files and
+  later consolidation migrations.
 - `not_valid_constraints` is `0`.
 - Platform admin row exists with `account_status=active` and
   `role=system_owner`.
@@ -216,7 +215,7 @@ Issues found and fixes applied:
 - `relation gl_journal_entries does not exist`: manually created tenant
   databases had run the tenant SQL without expanding `tenantdb:include`.
   Recovered those tenants by applying `001_erp_code_baseline.sql` and aligning
-  `tenant_schema_migrations` to the tenant migrator checksum.
+  `tenant_migration_runs` to the tenant migrator checksum.
 
 Verification after the rebuild:
 
@@ -241,7 +240,7 @@ Verified on 2026-06-28:
 - `npm run build`: passed
 - `cargo test -p security-kernel`: passed
 - Local ports listening: `3000`, `8080`, `8090`
-- `schema_migrations`: four staged baseline files only
+- `platform.platform_migration_runs`: staged baseline and consolidation files only
 - Platform database: `meta_org_saas`
 - Tenant databases verified with `meta_org_xxxx` naming
 - Cross-stage AI/ERP foreign keys rebuilt in `004`

@@ -10,7 +10,7 @@
 -- 1. Build the SaaS management platform first.
 -- 2. The management platform owns industry-solution creation and adjustment
 --    capabilities: tables, modules, functions, runtime operations, governance,
---    permissions, security, schema-change workflow, and package metadata.
+--    permissions, security, industry-solution change workflow, and solution metadata.
 -- 3. ERP is created after that as an industry-solution baseline in
 --    001_erp_code_baseline.sql.
 -- 4. AI/model/agent/tool/assistant/skill capability tables are isolated in
@@ -18,12 +18,12 @@
 --
 -- Future database-structure changes made while implementing platform-management
 -- capabilities must update this file and BASELINE_RESTRUCTURE.md in the same
--- change. Do not insert later filenames into schema_migrations from this file.
+-- change. Do not insert later filenames into platform.platform_migration_runs from this file.
 -- Historical 001-044 migrations have been folded into the staged baselines and
 -- removed from the active migration set.
 --
 -- 000 基线原则：先有 SaaS 管理平台；行业解决方案中的表、模块、功能、
--- 运行时、治理、权限、安全和 schema 调整能力都由管理平台承载；
+-- 运行时、治理、权限、安全和行业解决方案调整能力都由管理平台承载；
 -- ERP 基线在管理平台之后由 001_erp_code_baseline.sql 承载；
 -- AI/模型/agent/工具/助手/skill 能力表归 004_ai_capability_baseline.sql。
 
@@ -32,11 +32,6 @@
 -- -----------------------------------------------------------------------------
 
 -- 001_identity.sql
-
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    filename    VARCHAR(255) PRIMARY KEY,
-    applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
 DO $$ BEGIN
     CREATE TYPE role_type AS ENUM ('planner', 'executor', 'reviewer');
@@ -1257,7 +1252,7 @@ BEGIN
         WHERE table_schema = 'public'
           AND table_type = 'BASE TABLE'
           AND table_name NOT IN (
-              'schema_migrations',
+              'platform_migration_runs',
               'data_table_catalog',
               'data_field_catalog',
               'user_field_preferences',
@@ -2356,9 +2351,6 @@ VALUES
     ('platform.read', 'Read platform administration', 'Read SaaS platform management metadata and workbench views', 'platform', 'active', '{"seed":true}'::jsonb),
     ('organization.manage', 'Manage organizations', 'Manage tenant organization profile, subscriptions, modules, and invitations', 'organization', 'active', '{"seed":true}'::jsonb),
     ('organization.close', 'Close organizations', 'Close tenant organization accounts', 'organization', 'active', '{"seed":true}'::jsonb),
-    ('schema.manage', 'Manage schema packages', 'Create and verify tenant schema change requests', 'schema', 'active', '{"seed":true}'::jsonb),
-    ('schema.approve', 'Approve schema changes', 'Approve tenant schema change requests', 'schema', 'active', '{"seed":true}'::jsonb),
-    ('schema.apply', 'Apply schema changes', 'Apply approved tenant schema change requests', 'schema', 'active', '{"seed":true}'::jsonb),
     ('model.manage', 'Manage model settings', 'Manage model providers, channels, and routing policy', 'model', 'active', '{"seed":true}'::jsonb),
     ('runtime.manage', 'Manage runtime operations', 'Manage runtime entities, views, APIs, and operations', 'runtime', 'active', '{"seed":true}'::jsonb),
     ('assistant.platform.run', 'Run platform assistant', 'Run platform-scoped assistant and tool workbench flows', 'assistant', 'active', '{"seed":true}'::jsonb),
@@ -2368,9 +2360,12 @@ VALUES
     ('database.maintenance.manage', 'Manage database maintenance jobs', 'Create database backup and restore maintenance job requests', 'database', 'active', '{"seed":true}'::jsonb),
     ('database.maintenance.approve', 'Approve database maintenance jobs', 'Approve or reject database backup and restore maintenance jobs', 'database', 'active', '{"seed":true}'::jsonb),
     ('api.manage', 'Manage platform APIs', 'Manage API access catalog and platform API operations', 'api', 'active', '{"seed":true}'::jsonb),
-    ('industry.solution.manage', 'Manage industry solutions', 'Manage industry solution packages, tables, fields, modules, and tenant adaptation changes', 'industry_solution', 'active', '{"seed":true}'::jsonb),
-    ('industry.solution.import', 'Import industry solutions', 'Import structured industry solution package JSON', 'industry_solution', 'active', '{"seed":true}'::jsonb),
-    ('industry.solution.export', 'Export industry solutions', 'Export structured industry solution package JSON', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.manage', 'Manage industry solutions', 'Manage industry solutions, tables, fields, modules, and tenant adaptation changes', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.import', 'Import industry solutions', 'Import structured industry solution manifest JSON', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.export', 'Export industry solutions', 'Export structured industry solution manifest JSON', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.verify', 'Verify industry solutions', 'Verify tenant-scoped industry solution change requests', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.approve', 'Approve industry solutions', 'Approve tenant-scoped industry solution change requests', 'industry_solution', 'active', '{"seed":true}'::jsonb),
+    ('industry.solution.apply', 'Apply industry solutions', 'Apply approved tenant-scoped industry solution change requests', 'industry_solution', 'active', '{"seed":true}'::jsonb),
     ('tenant.industry_solution.apply', 'Apply tenant industry solutions', 'Create and apply tenant-scoped industry solution adaptation requests', 'industry_solution', 'active', '{"seed":true}'::jsonb)
 ON CONFLICT (permission_key) DO UPDATE SET
     name = EXCLUDED.name,
@@ -2384,7 +2379,7 @@ INSERT INTO platform.platform_roles(role_key, name, description, status, is_syst
 VALUES
     ('owner', 'Owner', 'Full SaaS platform owner', 'active', true, '{"seed":true}'::jsonb),
     ('admin', 'Admin', 'SaaS platform administrator', 'active', true, '{"seed":true}'::jsonb),
-    ('operator', 'Operator', 'Platform operator for daily organization, runtime, schema, and industry operations', 'active', true, '{"seed":true}'::jsonb),
+    ('operator', 'Operator', 'Platform operator for daily organization, runtime, and industry solution operations', 'active', true, '{"seed":true}'::jsonb),
     ('auditor', 'Auditor', 'Read-only platform auditor', 'active', true, '{"seed":true}'::jsonb)
 ON CONFLICT (role_key) DO UPDATE SET
     name = EXCLUDED.name,
@@ -2402,9 +2397,10 @@ WITH role_permission_matrix(role_key, permission_key) AS (
     UNION ALL
     SELECT 'operator', permission_key FROM platform.platform_permissions
     WHERE permission_key IN (
-        'platform.read', 'organization.manage', 'schema.manage', 'model.manage',
+        'platform.read', 'organization.manage', 'model.manage',
         'runtime.manage', 'assistant.platform.run', 'database.maintenance.manage',
         'industry.solution.manage', 'industry.solution.import', 'industry.solution.export',
+        'industry.solution.verify',
         'tenant.industry_solution.apply'
     )
     UNION ALL
@@ -2438,16 +2434,14 @@ VALUES
     ('platform.assistant', '', 'platform_admin', 'assistant', 'Platform assistant', 'Platform-scoped assistant operations and health checks', 'active', 10, '["assistant.platform.run"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.monitoring', '', 'platform_admin', 'observability', 'Monitoring agent', 'Platform monitoring agent status and runs', 'active', 20, '["platform.read"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.saas.organizations', '', 'platform_admin', 'organization', 'SaaS organizations', 'Tenant organization, subscription, module, and invitation management', 'active', 30, '["platform.read","organization.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
-    ('platform.industry.solutions', '', 'platform_admin', 'industry_solution', 'Industry solutions', 'Industry solution packages, table and field changes, import, export, and tenant adaptation', 'active', 40, '["industry.solution.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
+    ('platform.industry.solutions', '', 'platform_admin', 'industry_solution', 'Industry solutions', 'Industry solution manifests, table and field changes, import, export, verification, approval, apply, and tenant adaptation', 'active', 40, '["industry.solution.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.feature.catalog', '', 'platform_admin', 'platform', 'Platform features', 'Metadata-only feature catalog and future function registration', 'active', 50, '["platform.feature.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.rbac', '', 'platform_admin', 'identity', 'Platform RBAC', 'Platform role and permission management', 'active', 60, '["platform.rbac.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.user.management', '', 'platform_admin', 'identity', 'Platform users', 'Platform user create, disable, reset, and role assignment', 'active', 70, '["platform.user.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.database.maintenance', '', 'platform_admin', 'database', 'Database maintenance', 'Database backup and restore maintenance job governance', 'active', 80, '["database.maintenance.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.model.settings', '', 'platform_admin', 'model', 'AI models and API access', 'Platform AI model catalog, provider access, and API integration entry', 'active', 90, '["model.manage","api.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
     ('platform.runtime.operations', '', 'platform_admin', 'runtime', 'Runtime operations', 'Runtime APIs, entities, views, and operation catalog', 'active', 100, '["runtime.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
-    ('platform.catalog', '', 'platform_admin', 'catalog', 'Platform catalog', 'Platform master/detail catalog', 'active', 110, '["platform.read"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
-    ('platform.schema.targets', '', 'platform_admin', 'schema', 'Schema targets', 'Tenant schema targets and provisioning state', 'active', 120, '["schema.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb),
-    ('platform.schema.package', '', 'platform_admin', 'schema', 'Schema package', 'Tenant schema import, export, verify, approve, and apply workflow', 'active', 130, '["schema.manage"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb)
+    ('platform.catalog', '', 'platform_admin', 'catalog', 'Platform catalog', 'Platform master/detail catalog', 'active', 110, '["platform.read"]'::jsonb, '{"seed":true,"extension_mode":"metadata_only"}'::jsonb)
 ON CONFLICT (feature_key) DO UPDATE SET
     parent_key = EXCLUDED.parent_key,
     module_key = EXCLUDED.module_key,
@@ -2474,9 +2468,7 @@ VALUES
     ('database', '', 'platform.database.maintenance', 'systemAdmin.databaseMaintenance', 'database', 'platform:database', '["database.maintenance.manage"]'::jsonb, 'active', 80, '{"seed":true}'::jsonb),
     ('models', '', 'platform.model.settings', 'systemAdmin.feature.modelSettings', 'sliders', 'platform:models', '["model.manage","api.manage"]'::jsonb, 'active', 90, '{"seed":true}'::jsonb),
     ('runtime', '', 'platform.runtime.operations', 'systemAdmin.apiWorkbench', 'table', 'platform:runtime', '["runtime.manage"]'::jsonb, 'active', 100, '{"seed":true}'::jsonb),
-    ('catalog', '', 'platform.catalog', 'systemAdmin.platformCatalog', 'layers', 'platform:catalog', '["platform.read"]'::jsonb, 'active', 110, '{"seed":true}'::jsonb),
-    ('targets', '', 'platform.schema.targets', 'systemAdmin.schemaTargets', 'database', 'platform:targets', '["schema.manage"]'::jsonb, 'active', 120, '{"seed":true}'::jsonb),
-    ('schema', '', 'platform.schema.package', 'systemAdmin.schemaPackage', 'file-json', 'platform:schema', '["schema.manage"]'::jsonb, 'active', 130, '{"seed":true}'::jsonb)
+    ('catalog', '', 'platform.catalog', 'systemAdmin.platformCatalog', 'layers', 'platform:catalog', '["platform.read"]'::jsonb, 'active', 110, '{"seed":true}'::jsonb)
 ON CONFLICT (menu_key) DO UPDATE SET
     parent_key = EXCLUDED.parent_key,
     feature_key = EXCLUDED.feature_key,
@@ -2489,28 +2481,28 @@ ON CONFLICT (menu_key) DO UPDATE SET
     metadata = platform.platform_menu_items.metadata || EXCLUDED.metadata,
     updated_at = NOW();
 
-CREATE TABLE IF NOT EXISTS platform.schema_template_masters (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_template_masters (
     master_key     TEXT PRIMARY KEY DEFAULT ('STM-' || UPPER(SUBSTR(REPLACE(gen_random_uuid()::TEXT, '-', ''), 1, 24))),
     template_key   TEXT NOT NULL,
     module_key     TEXT NOT NULL,
     template_scope TEXT NOT NULL DEFAULT 'platform'
         CHECK (template_scope IN ('platform', 'organization', 'deployment')),
-    version_key    TEXT NOT NULL DEFAULT 'meta-org.schema.v1',
+    version_key    TEXT NOT NULL DEFAULT 'meta-org.industry-solution-manifest.v1',
     status         TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('draft', 'active', 'archived')),
     title          TEXT NOT NULL DEFAULT '',
-    package_json   JSONB NOT NULL DEFAULT '{}',
+    manifest_json  JSONB NOT NULL DEFAULT '{}',
     metadata       JSONB NOT NULL DEFAULT '{}',
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_schema_template_masters_key
-    ON platform.schema_template_masters(template_key, version_key);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_industry_solution_template_masters_key
+    ON platform.industry_solution_template_masters(template_key, version_key);
 
-CREATE TABLE IF NOT EXISTS platform.schema_template_details (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_template_details (
     detail_key  TEXT PRIMARY KEY DEFAULT ('STD-' || UPPER(SUBSTR(REPLACE(gen_random_uuid()::TEXT, '-', ''), 1, 24))),
-    master_key  TEXT NOT NULL REFERENCES platform.schema_template_masters(master_key) ON DELETE CASCADE,
+    master_key  TEXT NOT NULL REFERENCES platform.industry_solution_template_masters(master_key) ON DELETE CASCADE,
     detail_type TEXT NOT NULL,
     field_key   TEXT NOT NULL DEFAULT '',
     line_no     INT NOT NULL DEFAULT 0,
@@ -2520,16 +2512,16 @@ CREATE TABLE IF NOT EXISTS platform.schema_template_details (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_schema_template_details_master
-    ON platform.schema_template_details(master_key, detail_type, line_no);
+CREATE INDEX IF NOT EXISTS idx_industry_solution_template_details_master
+    ON platform.industry_solution_template_details(master_key, detail_type, line_no);
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_schema_template_details_natural
-    ON platform.schema_template_details(master_key, detail_type, field_key, line_no);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_industry_solution_template_details_natural
+    ON platform.industry_solution_template_details(master_key, detail_type, field_key, line_no);
 
-CREATE TABLE IF NOT EXISTS platform.organization_schema_targets (
+CREATE TABLE IF NOT EXISTS platform.organization_industry_solution_targets (
     organization_id        UUID PRIMARY KEY REFERENCES public.organizations(id) ON DELETE CASCADE,
-    schema_name            TEXT NOT NULL UNIQUE,
-    template_version       TEXT NOT NULL DEFAULT 'meta-org.schema.v1',
+    target_schema_name     TEXT NOT NULL UNIQUE,
+    template_version       TEXT NOT NULL DEFAULT 'meta-org.industry-solution-manifest.v1',
     status                 TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'provisioned', 'applying', 'error', 'archived')),
     last_change_request_id UUID,
@@ -2538,15 +2530,15 @@ CREATE TABLE IF NOT EXISTS platform.organization_schema_targets (
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS platform.schema_change_requests (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_change_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
-    schema_name     TEXT NOT NULL,
-    request_type    TEXT NOT NULL DEFAULT 'import_schema_package',
+    target_schema_name TEXT NOT NULL,
+    request_type    TEXT NOT NULL DEFAULT 'industry_solution_manifest_import',
     status          TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'approved', 'rejected', 'applied', 'failed', 'cancelled')),
     reason          TEXT NOT NULL DEFAULT '',
-    schema_package  JSONB NOT NULL DEFAULT '{}',
+    solution_manifest JSONB NOT NULL DEFAULT '{}',
     statements      JSONB NOT NULL DEFAULT '[]',
     requested_by    UUID REFERENCES public.users(id) ON DELETE SET NULL,
     reviewed_by     UUID REFERENCES public.users(id) ON DELETE SET NULL,
@@ -2556,18 +2548,18 @@ CREATE TABLE IF NOT EXISTS platform.schema_change_requests (
     applied_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (jsonb_typeof(schema_package) = 'object'),
+    CHECK (jsonb_typeof(solution_manifest) = 'object'),
     CHECK (jsonb_typeof(statements) = 'array')
 );
 
-CREATE INDEX IF NOT EXISTS idx_schema_change_requests_org
-    ON platform.schema_change_requests(organization_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_industry_solution_change_requests_org
+    ON platform.industry_solution_change_requests(organization_id, status, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS platform.schema_apply_jobs (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_apply_jobs (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    change_request_id UUID NOT NULL REFERENCES platform.schema_change_requests(id) ON DELETE CASCADE,
+    change_request_id UUID NOT NULL REFERENCES platform.industry_solution_change_requests(id) ON DELETE CASCADE,
     organization_id   UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
-    schema_name       TEXT NOT NULL,
+    target_schema_name TEXT NOT NULL,
     status            TEXT NOT NULL DEFAULT 'running'
         CHECK (status IN ('running', 'applied', 'failed')),
     statements        JSONB NOT NULL DEFAULT '[]',
@@ -2578,11 +2570,11 @@ CREATE TABLE IF NOT EXISTS platform.schema_apply_jobs (
     CHECK (jsonb_typeof(statements) = 'array')
 );
 
-COMMENT ON TABLE platform.schema_apply_jobs IS
-    'Schema apply execution log. Phase 2 industry solution factory stores per-asset apply results in metadata.asset_results.';
+COMMENT ON TABLE platform.industry_solution_apply_jobs IS
+    'Industry solution apply execution log. Stores per-asset apply results in metadata.asset_results.';
 
-CREATE INDEX IF NOT EXISTS idx_schema_apply_jobs_request
-    ON platform.schema_apply_jobs(change_request_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_industry_solution_apply_jobs_request
+    ON platform.industry_solution_apply_jobs(change_request_id, status, created_at DESC);
 
 CREATE OR REPLACE FUNCTION platform.organization_schema_name(p_organization_id UUID)
 RETURNS TEXT
@@ -2683,28 +2675,28 @@ BEGIN
     EXECUTE FORMAT('CREATE INDEX IF NOT EXISTS %I ON %I.%I(entity_type, status)', 'idx_' || v_schema_name || '_org_masters_entity', v_schema_name, 'organization_masters');
     EXECUTE FORMAT('CREATE INDEX IF NOT EXISTS %I ON %I.%I(master_key, detail_type, line_no)', 'idx_' || v_schema_name || '_org_details_master', v_schema_name, 'organization_details');
 
-    INSERT INTO platform.organization_schema_targets(
-        organization_id, schema_name, template_version, status, metadata
+    INSERT INTO platform.organization_industry_solution_targets(
+        organization_id, target_schema_name, template_version, status, metadata
     )
     VALUES (
-        p_organization_id, v_schema_name, 'meta-org.schema.v1', 'provisioned',
+        p_organization_id, v_schema_name, 'meta-org.industry-solution-manifest.v1', 'provisioned',
         '{"source":"migration_041_system_admin_master_detail"}'::JSONB
     )
     ON CONFLICT (organization_id) DO UPDATE SET
-        schema_name = EXCLUDED.schema_name,
+        target_schema_name = EXCLUDED.target_schema_name,
         status = CASE
-            WHEN platform.organization_schema_targets.status = 'archived' THEN 'archived'
+            WHEN platform.organization_industry_solution_targets.status = 'archived' THEN 'archived'
             ELSE 'provisioned'
         END,
-        metadata = platform.organization_schema_targets.metadata || EXCLUDED.metadata,
+        metadata = platform.organization_industry_solution_targets.metadata || EXCLUDED.metadata,
         updated_at = NOW();
 
     RETURN v_schema_name;
 END;
 $$;
 
-INSERT INTO platform.organization_schema_targets(organization_id, schema_name, template_version, status, metadata)
-SELECT id, platform.organization_schema_name(id), 'meta-org.schema.v1', 'pending', '{"source":"existing_organizations"}'::JSONB
+INSERT INTO platform.organization_industry_solution_targets(organization_id, target_schema_name, template_version, status, metadata)
+SELECT id, platform.organization_schema_name(id), 'meta-org.industry-solution-manifest.v1', 'pending', '{"source":"existing_organizations"}'::JSONB
 FROM public.organizations
 ON CONFLICT (organization_id) DO NOTHING;
 
@@ -2740,16 +2732,16 @@ BEGIN
 END;
 $$;
 
-INSERT INTO platform.schema_template_masters(template_key, module_key, template_scope, version_key, status, title, package_json, metadata)
+INSERT INTO platform.industry_solution_template_masters(template_key, module_key, template_scope, version_key, status, title, manifest_json, metadata)
 VALUES (
     'organization.default',
     'organization',
     'platform',
-    'meta-org.schema.v1',
+    'meta-org.industry-solution-manifest.v1',
     'active',
-    'Default organization master/detail schema',
+    'Default organization master/detail industry solution manifest',
     '{
-        "format_version": "meta-org.schema.v1",
+        "format_version": "meta-org.industry-solution-manifest.v1",
         "module_key": "organization",
         "tables": [
             {"name":"organization_masters","fields":[
@@ -2782,9 +2774,9 @@ VALUES (
     '{"source":"migration_041_system_admin_master_detail"}'::JSONB
 )
 ON CONFLICT (template_key, version_key) DO UPDATE SET
-    package_json = EXCLUDED.package_json,
+    manifest_json = EXCLUDED.manifest_json,
     status = EXCLUDED.status,
-    metadata = platform.schema_template_masters.metadata || EXCLUDED.metadata,
+    metadata = platform.industry_solution_template_masters.metadata || EXCLUDED.metadata,
     updated_at = NOW();
 
 INSERT INTO platform.platform_masters(module_key, entity_type, source_table, source_pk, title, status, organization_id, payload, metadata)
@@ -3033,8 +3025,8 @@ BEGIN
         );
     END LOOP;
 
-    INSERT INTO platform.organization_schema_targets(
-        organization_id, schema_name, template_version, status, metadata
+    INSERT INTO platform.organization_industry_solution_targets(
+        organization_id, target_schema_name, template_version, status, metadata
     )
     VALUES (
         p_organization_id,
@@ -3044,10 +3036,10 @@ BEGIN
         '{"source":"runtime_kernel"}'::jsonb
     )
     ON CONFLICT (organization_id) DO UPDATE SET
-        schema_name = EXCLUDED.schema_name,
+        target_schema_name = EXCLUDED.target_schema_name,
         template_version = EXCLUDED.template_version,
         status = 'provisioned',
-        metadata = platform.organization_schema_targets.metadata || EXCLUDED.metadata,
+        metadata = platform.organization_industry_solution_targets.metadata || EXCLUDED.metadata,
         updated_at = NOW();
 END;
 $$;
@@ -3070,7 +3062,7 @@ ALTER TABLE organizations
 CREATE INDEX IF NOT EXISTS idx_organizations_status
     ON organizations(status, updated_at DESC);
 
-ALTER TABLE platform.schema_change_requests
+ALTER TABLE platform.industry_solution_change_requests
     ADD COLUMN IF NOT EXISTS risk_level TEXT NOT NULL DEFAULT 'safe'
         CHECK (risk_level IN ('safe', 'destructive')),
     ADD COLUMN IF NOT EXISTS diff JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -3082,7 +3074,7 @@ ALTER TABLE platform.schema_change_requests
 
 CREATE SCHEMA IF NOT EXISTS platform;
 
-CREATE TABLE IF NOT EXISTS platform.industries (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_categories (
     industry_key TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
@@ -3095,10 +3087,10 @@ CREATE TABLE IF NOT EXISTS platform.industries (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS platform.custom_packages (
+CREATE TABLE IF NOT EXISTS platform.industry_solutions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    industry_key TEXT NOT NULL REFERENCES platform.industries(industry_key) ON DELETE CASCADE,
-    package_key  TEXT NOT NULL,
+    industry_key TEXT NOT NULL REFERENCES platform.industry_solution_categories(industry_key) ON DELETE CASCADE,
+    solution_key TEXT NOT NULL,
     version      INT NOT NULL DEFAULT 1,
     name         TEXT NOT NULL,
     description  TEXT NOT NULL DEFAULT '',
@@ -3109,19 +3101,19 @@ CREATE TABLE IF NOT EXISTS platform.custom_packages (
     created_by   UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (industry_key, package_key, version)
+    UNIQUE (industry_key, solution_key, version)
 );
 
-CREATE INDEX IF NOT EXISTS idx_custom_packages_industry
-    ON platform.custom_packages(industry_key, status, version DESC);
+CREATE INDEX IF NOT EXISTS idx_industry_solutions_industry
+    ON platform.industry_solutions(industry_key, status, version DESC);
 
-CREATE TABLE IF NOT EXISTS platform.custom_package_assets (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_assets (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    package_id UUID NOT NULL REFERENCES platform.custom_packages(id) ON DELETE CASCADE,
+    solution_id UUID NOT NULL REFERENCES platform.industry_solutions(id) ON DELETE CASCADE,
     asset_key  TEXT NOT NULL,
     asset_type TEXT NOT NULL
         CHECK (asset_type IN (
-            'schema_package', 'solution_table', 'solution_field', 'module', 'runtime_entity', 'runtime_operation',
+            'solution_manifest', 'database_table', 'database_field', 'module', 'runtime_entity', 'runtime_operation',
             'skill_structure', 'skill', 'knowledge_source', 'model_policy', 'i18n'
         )),
     payload    JSONB NOT NULL DEFAULT '{}',
@@ -3129,16 +3121,16 @@ CREATE TABLE IF NOT EXISTS platform.custom_package_assets (
         CHECK (jsonb_typeof(metadata) = 'object'),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (package_id, asset_key)
+    UNIQUE (solution_id, asset_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_custom_package_assets_type
-    ON platform.custom_package_assets(package_id, asset_type, asset_key);
+CREATE INDEX IF NOT EXISTS idx_industry_solution_assets_type
+    ON platform.industry_solution_assets(solution_id, asset_type, asset_key);
 
-CREATE TABLE IF NOT EXISTS platform.organization_industry_adoptions (
+CREATE TABLE IF NOT EXISTS platform.organization_industry_solution_adoptions (
     organization_id UUID PRIMARY KEY REFERENCES public.organizations(id) ON DELETE CASCADE,
-    industry_key    TEXT NOT NULL REFERENCES platform.industries(industry_key) ON DELETE RESTRICT,
-    package_id      UUID NOT NULL REFERENCES platform.custom_packages(id) ON DELETE RESTRICT,
+    industry_key    TEXT NOT NULL REFERENCES platform.industry_solution_categories(industry_key) ON DELETE RESTRICT,
+    solution_id     UUID NOT NULL REFERENCES platform.industry_solutions(id) ON DELETE RESTRICT,
     is_primary      BOOLEAN NOT NULL DEFAULT TRUE,
     enabled_modules JSONB NOT NULL DEFAULT '[]'
         CHECK (jsonb_typeof(enabled_modules) = 'array'),
@@ -3150,14 +3142,14 @@ CREATE TABLE IF NOT EXISTS platform.organization_industry_adoptions (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_organization_industry_adoptions_industry
-    ON platform.organization_industry_adoptions(industry_key, status);
+CREATE INDEX IF NOT EXISTS idx_organization_industry_solution_adoptions_industry
+    ON platform.organization_industry_solution_adoptions(industry_key, status);
 
-CREATE TABLE IF NOT EXISTS platform.organization_industry_extensions (
+CREATE TABLE IF NOT EXISTS platform.organization_industry_solution_extensions (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
-    industry_key    TEXT NOT NULL REFERENCES platform.industries(industry_key) ON DELETE RESTRICT,
-    package_id      UUID REFERENCES platform.custom_packages(id) ON DELETE SET NULL,
+    industry_key    TEXT NOT NULL REFERENCES platform.industry_solution_categories(industry_key) ON DELETE RESTRICT,
+    solution_id     UUID REFERENCES platform.industry_solutions(id) ON DELETE SET NULL,
     extension_key   TEXT NOT NULL,
     name            TEXT NOT NULL,
     description     TEXT NOT NULL DEFAULT '',
@@ -3173,14 +3165,14 @@ CREATE TABLE IF NOT EXISTS platform.organization_industry_extensions (
     UNIQUE (organization_id, extension_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_organization_industry_extensions_lookup
-    ON platform.organization_industry_extensions(organization_id, industry_key, status);
+CREATE INDEX IF NOT EXISTS idx_organization_industry_solution_extensions_lookup
+    ON platform.organization_industry_solution_extensions(organization_id, industry_key, status);
 
-CREATE TABLE IF NOT EXISTS platform.custom_package_publication_requests (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_publication_requests (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    extension_id           UUID NOT NULL REFERENCES platform.organization_industry_extensions(id) ON DELETE CASCADE,
+    extension_id           UUID NOT NULL REFERENCES platform.organization_industry_solution_extensions(id) ON DELETE CASCADE,
     source_organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
-    industry_key            TEXT NOT NULL REFERENCES platform.industries(industry_key) ON DELETE RESTRICT,
+    industry_key            TEXT NOT NULL REFERENCES platform.industry_solution_categories(industry_key) ON DELETE RESTRICT,
     status                  TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'approved', 'rejected')),
     reason                  TEXT NOT NULL DEFAULT '',
@@ -3194,12 +3186,12 @@ CREATE TABLE IF NOT EXISTS platform.custom_package_publication_requests (
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_custom_package_publication_requests_status
-    ON platform.custom_package_publication_requests(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_industry_solution_publication_requests_status
+    ON platform.industry_solution_publication_requests(status, created_at DESC);
 
-CREATE TABLE IF NOT EXISTS platform.knowledge_sources (
+CREATE TABLE IF NOT EXISTS platform.industry_solution_knowledge_sources (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    industry_key      TEXT NOT NULL REFERENCES platform.industries(industry_key) ON DELETE CASCADE,
+    industry_key      TEXT NOT NULL REFERENCES platform.industry_solution_categories(industry_key) ON DELETE CASCADE,
     organization_id   UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
     source_key        TEXT NOT NULL,
     name              TEXT NOT NULL,
@@ -3219,10 +3211,10 @@ CREATE TABLE IF NOT EXISTS platform.knowledge_sources (
     UNIQUE (industry_key, organization_id, source_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_knowledge_sources_scope
-    ON platform.knowledge_sources(industry_key, organization_id, sync_status);
+CREATE INDEX IF NOT EXISTS idx_industry_solution_knowledge_sources_scope
+    ON platform.industry_solution_knowledge_sources(industry_key, organization_id, sync_status);
 
-INSERT INTO platform.industries(industry_key, name, description, status, metadata)
+INSERT INTO platform.industry_solution_categories(industry_key, name, description, status, metadata)
 VALUES
     ('general', 'General Business', 'Default cross-industry SaaS management baseline', 'active', '{"seed":true}'::jsonb),
     ('manufacturing', 'Manufacturing', 'Manufacturing and supply-chain operating baseline', 'active', '{"seed":true}'::jsonb)
@@ -3230,29 +3222,29 @@ ON CONFLICT (industry_key) DO UPDATE SET
     name = EXCLUDED.name,
     description = EXCLUDED.description,
     status = EXCLUDED.status,
-    metadata = platform.industries.metadata || EXCLUDED.metadata,
+    metadata = platform.industry_solution_categories.metadata || EXCLUDED.metadata,
     updated_at = NOW();
 
 WITH foundation_package AS (
-    INSERT INTO platform.custom_packages(industry_key, package_key, version, name, description, status, metadata)
+    INSERT INTO platform.industry_solutions(industry_key, solution_key, version, name, description, status, metadata)
     VALUES (
         'general',
         'general-foundation',
         1,
         'General Foundation',
-        'Default package for organization, project, workflow, governance, assistant, finance, and runtime foundations',
+        'Default industry solution for organization, project, workflow, governance, assistant, finance, and runtime foundations',
         'active',
         '{"seed":true}'::jsonb
     )
-    ON CONFLICT (industry_key, package_key, version) DO UPDATE SET
+    ON CONFLICT (industry_key, solution_key, version) DO UPDATE SET
         name = EXCLUDED.name,
         description = EXCLUDED.description,
         status = EXCLUDED.status,
-        metadata = platform.custom_packages.metadata || EXCLUDED.metadata,
+        metadata = platform.industry_solutions.metadata || EXCLUDED.metadata,
         updated_at = NOW()
     RETURNING id
 )
-INSERT INTO platform.custom_package_assets(package_id, asset_key, asset_type, payload, metadata)
+INSERT INTO platform.industry_solution_assets(solution_id, asset_key, asset_type, payload, metadata)
 SELECT id, asset_key, 'module', jsonb_build_object('module_key', module_key, 'display_name', display_name), '{"seed":true}'::jsonb
 FROM foundation_package
 CROSS JOIN (VALUES
@@ -3275,31 +3267,31 @@ CROSS JOIN (VALUES
     ('developer_tools', 'Developer Tools')
 ) AS modules(module_key, display_name)
 CROSS JOIN LATERAL (SELECT module_key || '-module' AS asset_key) asset_keys
-ON CONFLICT (package_id, asset_key) DO UPDATE SET
+ON CONFLICT (solution_id, asset_key) DO UPDATE SET
     payload = EXCLUDED.payload,
-    metadata = platform.custom_package_assets.metadata || EXCLUDED.metadata,
+    metadata = platform.industry_solution_assets.metadata || EXCLUDED.metadata,
     updated_at = NOW();
 
 WITH manufacturing_package AS (
-    INSERT INTO platform.custom_packages(industry_key, package_key, version, name, description, status, metadata)
+    INSERT INTO platform.industry_solutions(industry_key, solution_key, version, name, description, status, metadata)
     VALUES (
         'manufacturing',
         'manufacturing-supply-chain',
         1,
         'Manufacturing Supply Chain',
-        'Manufacturing package with inventory, procurement, sales, finance, costing, assistant, and runtime capabilities',
+        'Manufacturing industry solution with inventory, procurement, sales, finance, costing, assistant, and runtime capabilities',
         'active',
         '{"seed":true}'::jsonb
     )
-    ON CONFLICT (industry_key, package_key, version) DO UPDATE SET
+    ON CONFLICT (industry_key, solution_key, version) DO UPDATE SET
         name = EXCLUDED.name,
         description = EXCLUDED.description,
         status = EXCLUDED.status,
-        metadata = platform.custom_packages.metadata || EXCLUDED.metadata,
+        metadata = platform.industry_solutions.metadata || EXCLUDED.metadata,
         updated_at = NOW()
     RETURNING id
 )
-INSERT INTO platform.custom_package_assets(package_id, asset_key, asset_type, payload, metadata)
+INSERT INTO platform.industry_solution_assets(solution_id, asset_key, asset_type, payload, metadata)
 SELECT id, asset_key, 'module', jsonb_build_object('module_key', module_key, 'display_name', display_name), '{"seed":true}'::jsonb
 FROM manufacturing_package
 CROSS JOIN (VALUES
@@ -3314,9 +3306,9 @@ CROSS JOIN (VALUES
     ('toolruntime', 'Tool Runtime')
 ) AS modules(module_key, display_name)
 CROSS JOIN LATERAL (SELECT module_key || '-module' AS asset_key) asset_keys
-ON CONFLICT (package_id, asset_key) DO UPDATE SET
+ON CONFLICT (solution_id, asset_key) DO UPDATE SET
     payload = EXCLUDED.payload,
-    metadata = platform.custom_package_assets.metadata || EXCLUDED.metadata,
+    metadata = platform.industry_solution_assets.metadata || EXCLUDED.metadata,
     updated_at = NOW();
 
 

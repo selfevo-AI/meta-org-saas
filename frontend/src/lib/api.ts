@@ -592,21 +592,21 @@ export async function listPlatformDetails(token: string, masterKey: string): Pro
   return apiRequest<PlatformDetail[]>(`/platform/admin/masters/${encodeURIComponent(masterKey)}/details`, { token })
 }
 
-export async function listOrganizationSchemaTargets(token: string, limit = 100): Promise<OrganizationSchemaTarget[]> {
+export async function listOrganizationIndustrySolutionTargets(token: string, limit = 100): Promise<OrganizationIndustrySolutionTarget[]> {
   const query = limit > 0 ? `?limit=${encodeURIComponent(String(limit))}` : ''
-  return apiRequest<OrganizationSchemaTarget[]>(`/platform/admin/schema-targets${query}`, { token })
+  return apiRequest<OrganizationIndustrySolutionTarget[]>(`/platform/admin/industry-solution-targets${query}`, { token })
 }
 
-export async function exportOrganizationSchema(token: string, organizationID: string): Promise<SchemaPackage> {
-  return apiRequest<SchemaPackage>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/schema/export`, { token })
+export async function exportOrganizationIndustrySolutionManifest(token: string, organizationID: string): Promise<IndustrySolutionManifest> {
+  return apiRequest<IndustrySolutionManifest>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-manifest/export`, { token })
 }
 
-export async function createOrganizationSchemaChange(
+export async function createIndustrySolutionChangeRequest(
   token: string,
   organizationID: string,
-  input: CreateSchemaChangeRequestInput,
-): Promise<SchemaChangeRequest> {
-  return apiRequest<SchemaChangeRequest>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/schema/change-requests`, {
+  input: CreateIndustrySolutionChangeRequestInput,
+): Promise<IndustrySolutionChangeRequest> {
+  return apiRequest<IndustrySolutionChangeRequest>(`/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-change-requests`, {
     method: 'POST',
     token,
     body: input,
@@ -622,8 +622,8 @@ export async function createERPStandardSolutionFlow(
     name: string
     enabled_modules: string[]
   },
-): Promise<SchemaChangeRequest> {
-  return apiRequest<SchemaChangeRequest>(
+): Promise<IndustrySolutionChangeRequest> {
+  return apiRequest<IndustrySolutionChangeRequest>(
     `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-flows/erp-standard`,
     {
       method: 'POST',
@@ -633,8 +633,8 @@ export async function createERPStandardSolutionFlow(
   )
 }
 
-export async function createRetailDistributionSolutionFlow(token: string, organizationID: string): Promise<SchemaChangeRequest> {
-  return apiRequest<SchemaChangeRequest>(
+export async function createRetailDistributionSolutionFlow(token: string, organizationID: string): Promise<IndustrySolutionChangeRequest> {
+  return apiRequest<IndustrySolutionChangeRequest>(
     `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-flows/retail-distribution`,
     {
       method: 'POST',
@@ -643,13 +643,13 @@ export async function createRetailDistributionSolutionFlow(token: string, organi
   )
 }
 
-export async function createIndustrySolutionSchemaChange(
+export async function createIndustrySolutionTableFieldChange(
   token: string,
   organizationID: string,
-  input: CreateIndustrySolutionSchemaChangeInput,
-): Promise<SchemaChangeRequest> {
-  return apiRequest<SchemaChangeRequest>(
-    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-schema/change-requests`,
+  input: CreateIndustrySolutionTableFieldChangeInput,
+): Promise<IndustrySolutionChangeRequest> {
+  return apiRequest<IndustrySolutionChangeRequest>(
+    `/platform/admin/organizations/${encodeURIComponent(organizationID)}/industry-solution-table-fields/change-requests`,
     {
       method: 'POST',
       token,
@@ -658,31 +658,31 @@ export async function createIndustrySolutionSchemaChange(
   )
 }
 
-export async function approveSchemaChange(token: string, requestID: string, reason = ''): Promise<SchemaChangeRequest> {
-  return apiRequest<SchemaChangeRequest>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/approve`, {
+export async function approveIndustrySolutionChange(token: string, requestID: string, reason = ''): Promise<IndustrySolutionChangeRequest> {
+  return apiRequest<IndustrySolutionChangeRequest>(`/platform/admin/industry-solution-change-requests/${encodeURIComponent(requestID)}/approve`, {
     method: 'POST',
     token,
     body: { reason },
   })
 }
 
-export async function verifySchemaChange(token: string, requestID: string): Promise<SchemaVerificationReport> {
-  return apiRequest<SchemaVerificationReport>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/verify`, {
+export async function verifyIndustrySolutionChange(token: string, requestID: string): Promise<IndustrySolutionVerificationReport> {
+  return apiRequest<IndustrySolutionVerificationReport>(`/platform/admin/industry-solution-change-requests/${encodeURIComponent(requestID)}/verify`, {
     method: 'POST',
     token,
   })
 }
 
-export async function getSchemaChangePackageDiff(token: string, requestID: string): Promise<PackageAssetDiff[]> {
-  const result = await apiRequest<{ diff: PackageAssetDiff[] }>(
-    `/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/package-diff`,
+export async function getIndustrySolutionChangeAssetDiff(token: string, requestID: string): Promise<IndustrySolutionAssetDiff[]> {
+  const result = await apiRequest<{ diff: IndustrySolutionAssetDiff[] }>(
+    `/platform/admin/industry-solution-change-requests/${encodeURIComponent(requestID)}/asset-diff`,
     { token },
   )
   return result.diff
 }
 
-export async function applySchemaChange(token: string, requestID: string): Promise<SchemaApplyJob> {
-  return apiRequest<SchemaApplyJob>(`/platform/admin/schema-change-requests/${encodeURIComponent(requestID)}/apply`, {
+export async function applyIndustrySolutionChange(token: string, requestID: string): Promise<IndustrySolutionApplyJob> {
+  return apiRequest<IndustrySolutionApplyJob>(`/platform/admin/industry-solution-change-requests/${encodeURIComponent(requestID)}/apply`, {
     method: 'POST',
     token,
   })
@@ -1930,9 +1930,9 @@ export interface PlatformDetail {
   updated_at: string
 }
 
-export interface OrganizationSchemaTarget {
+export interface OrganizationIndustrySolutionTarget {
   organization_id: string
-  schema_name: string
+  target_schema_name: string
   template_version: string
   status: string
   last_change_request_id?: string
@@ -1941,18 +1941,18 @@ export interface OrganizationSchemaTarget {
   updated_at: string
 }
 
-export interface SchemaPackage {
+export interface IndustrySolutionManifest {
   format_version: string
   module_key: string
-  tables: SchemaTableDefinition[]
+  tables: IndustrySolutionTableDefinition[]
   metadata?: {
-    industry_manifest?: IndustrySolutionManifest
-    package_diff?: PackageAssetDiff[]
+    industry_manifest?: IndustrySolutionAssetManifest
+    package_diff?: IndustrySolutionAssetDiff[]
     [key: string]: unknown
   }
 }
 
-export interface IndustrySolutionManifest {
+export interface IndustrySolutionAssetManifest {
   manifest_version: string
   industry_key: string
   package_key: string
@@ -1974,7 +1974,7 @@ export interface IndustrySolutionAsset {
   payload: Record<string, unknown>
 }
 
-export interface PackageAssetDiff {
+export interface IndustrySolutionAssetDiff {
   asset_type: string
   asset_key: string
   action: string
@@ -1986,17 +1986,17 @@ export interface PackageAssetDiff {
   depends_on?: string[]
 }
 
-export interface SchemaTableDefinition {
+export interface IndustrySolutionTableDefinition {
   name: string
   previous_name?: string
-  fields: SchemaFieldDefinition[]
-  indexes?: SchemaIndexDefinition[]
+  fields: IndustrySolutionFieldDefinition[]
+  indexes?: IndustrySolutionIndexDefinition[]
   constraints?: string[]
   seeds?: Array<Record<string, unknown>>
   metadata?: Record<string, unknown>
 }
 
-export interface SchemaFieldDefinition {
+export interface IndustrySolutionFieldDefinition {
   name: string
   previous_name?: string
   data_type: string
@@ -2005,7 +2005,7 @@ export interface SchemaFieldDefinition {
   default?: string
 }
 
-export interface SchemaIndexDefinition {
+export interface IndustrySolutionIndexDefinition {
   name: string
   fields: string[]
   unique?: boolean
@@ -2029,25 +2029,25 @@ export interface IndustrySolutionTableInput {
   metadata?: Record<string, unknown>
 }
 
-export interface CreateIndustrySolutionSchemaChangeInput {
+export interface CreateIndustrySolutionTableFieldChangeInput {
   organization_id?: string
   industry_key: string
   package_key: string
   table: IndustrySolutionTableInput
-  current_schema_package?: SchemaPackage
+  current_solution_manifest?: IndustrySolutionManifest
   reason?: string
 }
 
-export interface SchemaChangeRequest {
+export interface IndustrySolutionChangeRequest {
   id: string
   organization_id: string
-  schema_name: string
+  target_schema_name: string
   request_type: string
   status: string
   risk_level?: string
   reason: string
-  schema_package: SchemaPackage
-  diff?: SchemaDiff[]
+  solution_manifest: IndustrySolutionManifest
+  diff?: IndustrySolutionDiff[]
   statements: string[]
   requested_by?: string
   reviewed_by?: string
@@ -2059,43 +2059,43 @@ export interface SchemaChangeRequest {
   updated_at: string
 }
 
-export interface SchemaVerificationReport {
+export interface IndustrySolutionVerificationReport {
   change_request_id: string
   organization_id: string
-  schema_name: string
+  target_schema_name: string
   request_status: string
   status: string
   risk_level: string
   statement_count: number
   blocking_issues: number
   can_apply: boolean
-  checks: SchemaVerificationCheck[]
+  checks: IndustrySolutionVerificationCheck[]
 }
 
-export interface SchemaVerificationCheck {
+export interface IndustrySolutionVerificationCheck {
   key: string
   status: string
   message: string
   metadata?: Record<string, unknown>
 }
 
-export interface SchemaApplyJob {
+export interface IndustrySolutionApplyJob {
   id: string
   change_request_id: string
   organization_id: string
-  schema_name: string
+  target_schema_name: string
   status: string
   statements: string[]
   error_message?: string
   metadata: {
-    asset_results?: SchemaApplyAssetResult[]
+    asset_results?: IndustrySolutionApplyAssetResult[]
     [key: string]: unknown
   }
   created_at: string
   updated_at: string
 }
 
-export interface SchemaApplyAssetResult {
+export interface IndustrySolutionApplyAssetResult {
   asset_key: string
   asset_type: string
   status: string
@@ -2104,15 +2104,15 @@ export interface SchemaApplyAssetResult {
   metadata?: Record<string, unknown>
 }
 
-export interface CreateSchemaChangeRequestInput {
+export interface CreateIndustrySolutionChangeRequestInput {
   organization_id?: string
   request_type?: string
   reason?: string
-  current_schema_package?: SchemaPackage
-  schema_package: SchemaPackage
+  current_solution_manifest?: IndustrySolutionManifest
+  solution_manifest: IndustrySolutionManifest
 }
 
-export interface SchemaDiff {
+export interface IndustrySolutionDiff {
   action: string
   table?: string
   field?: string

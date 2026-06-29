@@ -18,7 +18,7 @@ import (
 var (
 	ErrForbidden         = errors.New("forbidden")
 	ErrValidation        = errors.New("validation error")
-	ErrInvalidTransition = errors.New("invalid schema change status transition")
+	ErrInvalidTransition = errors.New("invalid industry solution change status transition")
 )
 
 type Service struct {
@@ -45,12 +45,12 @@ type repository interface {
 	ListDatabaseMaintenanceJobs(context.Context, int) ([]DatabaseMaintenanceJob, error)
 	CreateDatabaseMaintenanceJob(context.Context, CreateDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error)
 	ReviewDatabaseMaintenanceJob(context.Context, ReviewDatabaseMaintenanceJobRecord) (*DatabaseMaintenanceJob, error)
-	ListSchemaTargets(context.Context, int) ([]OrganizationSchemaTarget, error)
-	GetSchemaTarget(context.Context, uuid.UUID) (*OrganizationSchemaTarget, error)
-	CreateSchemaChangeRequest(context.Context, CreateSchemaChangeRequestRecord) (*SchemaChangeRequest, error)
-	GetSchemaChangeRequest(context.Context, uuid.UUID) (*SchemaChangeRequest, error)
-	UpdateSchemaChangeRequestStatus(context.Context, uuid.UUID, string, uuid.UUID, string) (*SchemaChangeRequest, error)
-	ApplySchemaChange(context.Context, *SchemaChangeRequest, []string, []SchemaApplyAssetResult) (*SchemaApplyJob, error)
+	ListIndustrySolutionTargets(context.Context, int) ([]OrganizationIndustrySolutionTarget, error)
+	GetIndustrySolutionTarget(context.Context, uuid.UUID) (*OrganizationIndustrySolutionTarget, error)
+	CreateIndustrySolutionChangeRequest(context.Context, CreateIndustrySolutionChangeRequestRecord) (*IndustrySolutionChangeRequest, error)
+	GetIndustrySolutionChangeRequest(context.Context, uuid.UUID) (*IndustrySolutionChangeRequest, error)
+	UpdateIndustrySolutionChangeRequestStatus(context.Context, uuid.UUID, string, uuid.UUID, string) (*IndustrySolutionChangeRequest, error)
+	ApplyIndustrySolutionChange(context.Context, *IndustrySolutionChangeRequest, []string, []IndustrySolutionApplyAssetResult) (*IndustrySolutionApplyJob, error)
 }
 
 func NewService(repo repository) *Service {
@@ -118,7 +118,7 @@ func menuItemsForPermissions(permissions map[string]bool, catalog []PlatformMenu
 	if permissions[platformauth.PermissionRuntimeManage] {
 		items = append(items, "runtime")
 	}
-	if permissions[platformauth.PermissionSchemaManage] {
+	if permissions[platformauth.PermissionIndustrySolutionManage] {
 		items = append(items, "schema")
 	}
 	return items
@@ -415,43 +415,43 @@ func (s *Service) ReviewDatabaseMaintenanceJob(ctx context.Context, actorID uuid
 	})
 }
 
-func (s *Service) ListSchemaTargets(ctx context.Context, actorID uuid.UUID, limit int) ([]OrganizationSchemaTarget, error) {
+func (s *Service) ListIndustrySolutionTargets(ctx context.Context, actorID uuid.UUID, limit int) ([]OrganizationIndustrySolutionTarget, error) {
 	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionPlatformRead); err != nil {
 		return nil, err
 	}
-	return s.repo.ListSchemaTargets(ctx, limit)
+	return s.repo.ListIndustrySolutionTargets(ctx, limit)
 }
 
-func (s *Service) ExportOrganizationSchema(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID) (*SchemaPackage, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
+func (s *Service) ExportOrganizationIndustrySolutionManifest(ctx context.Context, actorID uuid.UUID, orgID uuid.UUID) (*IndustrySolutionManifest, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionExport); err != nil {
 		return nil, err
 	}
 	if orgID == uuid.Nil {
 		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
 	}
-	pkg := DefaultOrganizationSchemaPackage()
-	return &pkg, nil
+	manifest := DefaultOrganizationIndustrySolutionManifest()
+	return &manifest, nil
 }
 
-func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UUID, input CreateSchemaChangeRequestInput) (*SchemaChangeRequest, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
+func (s *Service) CreateIndustrySolutionChangeRequest(ctx context.Context, actorID uuid.UUID, input CreateIndustrySolutionChangeRequestInput) (*IndustrySolutionChangeRequest, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionManage); err != nil {
 		return nil, err
 	}
 	if input.OrganizationID == uuid.Nil {
 		return nil, fmt.Errorf("%w: organization_id is required", ErrValidation)
 	}
 	if input.RequestType == "" {
-		input.RequestType = "import_schema_package"
+		input.RequestType = "industry_solution_manifest_import"
 	}
-	if err := ValidateSchemaPackage(input.SchemaPackage); err != nil {
+	if err := ValidateIndustrySolutionManifest(input.SolutionManifest); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
 	schemaName := tenantdb.SchemaNameForOrganization(input.OrganizationID)
-	riskLevel := SchemaRiskSafe
-	diff := []SchemaDiff{{Action: "create_or_ensure_tables", Risk: SchemaRiskSafe}}
+	riskLevel := IndustrySolutionRiskSafe
+	diff := []IndustrySolutionDiff{{Action: "create_or_ensure_tables", Risk: IndustrySolutionRiskSafe}}
 	var statements []string
-	if input.CurrentSchemaPackage != nil {
-		plan, err := BuildSchemaMigrationPlan(schemaName, *input.CurrentSchemaPackage, input.SchemaPackage)
+	if input.CurrentSolutionManifest != nil {
+		plan, err := BuildIndustrySolutionMigrationPlan(schemaName, *input.CurrentSolutionManifest, input.SolutionManifest)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
@@ -460,25 +460,25 @@ func (s *Service) CreateSchemaChangeRequest(ctx context.Context, actorID uuid.UU
 		diff = plan.Diff
 	} else {
 		var err error
-		statements, err = BuildCreateTableStatements(schemaName, input.SchemaPackage)
+		statements, err = BuildIndustrySolutionTableStatements(schemaName, input.SolutionManifest)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 	}
-	return s.repo.CreateSchemaChangeRequest(ctx, CreateSchemaChangeRequestRecord{
-		OrganizationID: input.OrganizationID,
-		SchemaName:     schemaName,
-		RequestType:    input.RequestType,
-		Reason:         input.Reason,
-		SchemaPackage:  input.SchemaPackage,
-		Statements:     statements,
-		RiskLevel:      riskLevel,
-		Diff:           diff,
-		RequestedBy:    actorID,
+	return s.repo.CreateIndustrySolutionChangeRequest(ctx, CreateIndustrySolutionChangeRequestRecord{
+		OrganizationID:   input.OrganizationID,
+		TargetSchemaName: schemaName,
+		RequestType:      input.RequestType,
+		Reason:           input.Reason,
+		SolutionManifest: input.SolutionManifest,
+		Statements:       statements,
+		RiskLevel:        riskLevel,
+		Diff:             diff,
+		RequestedBy:      actorID,
 	})
 }
 
-func (s *Service) CreateIndustrySolutionSchemaChange(ctx context.Context, actorID uuid.UUID, input CreateIndustrySolutionSchemaChangeInput) (*SchemaChangeRequest, error) {
+func (s *Service) CreateIndustrySolutionTableFieldChange(ctx context.Context, actorID uuid.UUID, input CreateIndustrySolutionTableFieldChangeInput) (*IndustrySolutionChangeRequest, error) {
 	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionManage); err != nil {
 		return nil, err
 	}
@@ -490,7 +490,7 @@ func (s *Service) CreateIndustrySolutionSchemaChange(ctx context.Context, actorI
 	if input.IndustryKey == "" || input.PackageKey == "" {
 		return nil, fmt.Errorf("%w: industry_key and package_key are required", ErrValidation)
 	}
-	pkg, err := BuildIndustrySolutionTableFieldSchemaPackage(input)
+	manifest, err := BuildIndustrySolutionTableFieldManifest(input)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
@@ -498,24 +498,24 @@ func (s *Service) CreateIndustrySolutionSchemaChange(ctx context.Context, actorI
 	if reason == "" {
 		reason = "Update industry solution table and field definition"
 	}
-	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
-		OrganizationID:       input.OrganizationID,
-		RequestType:          "industry_solution_table_field_change",
-		Reason:               reason,
-		SchemaPackage:        pkg,
-		CurrentSchemaPackage: input.CurrentSchemaPackage,
+	return s.CreateIndustrySolutionChangeRequest(ctx, actorID, CreateIndustrySolutionChangeRequestInput{
+		OrganizationID:          input.OrganizationID,
+		RequestType:             "industry_solution_table_field_change",
+		Reason:                  reason,
+		SolutionManifest:        manifest,
+		CurrentSolutionManifest: input.CurrentSolutionManifest,
 	})
 }
 
-func BuildIndustrySolutionTableFieldSchemaPackage(input CreateIndustrySolutionSchemaChangeInput) (SchemaPackage, error) {
+func BuildIndustrySolutionTableFieldManifest(input CreateIndustrySolutionTableFieldChangeInput) (IndustrySolutionManifest, error) {
 	table := input.Table
 	table.Name = strings.TrimSpace(table.Name)
 	table.PreviousName = strings.TrimSpace(table.PreviousName)
 	table.DisplayName = strings.TrimSpace(table.DisplayName)
 	if table.Name == "" {
-		return SchemaPackage{}, fmt.Errorf("table.name is required")
+		return IndustrySolutionManifest{}, fmt.Errorf("table.name is required")
 	}
-	fields := []SchemaFieldDefinition{
+	fields := []IndustrySolutionFieldDefinition{
 		{Name: "id", DataType: "uuid", PrimaryKey: true, Default: "gen_random_uuid()"},
 	}
 	for _, fieldInput := range table.Fields {
@@ -524,12 +524,12 @@ func BuildIndustrySolutionTableFieldSchemaPackage(input CreateIndustrySolutionSc
 		fieldInput.DataType = strings.TrimSpace(fieldInput.DataType)
 		fieldInput.Default = strings.TrimSpace(fieldInput.Default)
 		if fieldInput.Name == "" || fieldInput.DataType == "" {
-			return SchemaPackage{}, fmt.Errorf("field name and data_type are required")
+			return IndustrySolutionManifest{}, fmt.Errorf("field name and data_type are required")
 		}
 		if fieldInput.Name == "id" {
 			continue
 		}
-		fields = append(fields, SchemaFieldDefinition{
+		fields = append(fields, IndustrySolutionFieldDefinition{
 			Name:         fieldInput.Name,
 			PreviousName: fieldInput.PreviousName,
 			DataType:     fieldInput.DataType,
@@ -538,16 +538,16 @@ func BuildIndustrySolutionTableFieldSchemaPackage(input CreateIndustrySolutionSc
 		})
 	}
 	if len(fields) == 1 {
-		return SchemaPackage{}, fmt.Errorf("at least one non-id field is required")
+		return IndustrySolutionManifest{}, fmt.Errorf("at least one non-id field is required")
 	}
 	metadata := copyMap(table.Metadata)
 	if table.DisplayName != "" {
 		metadata["display_name"] = table.DisplayName
 	}
-	pkg := SchemaPackage{
-		FormatVersion: SchemaPackageFormatVersion,
+	manifest := IndustrySolutionManifest{
+		FormatVersion: IndustrySolutionManifestFormatVersion,
 		ModuleKey:     "industry_solution",
-		Tables: []SchemaTableDefinition{
+		Tables: []IndustrySolutionTableDefinition{
 			{
 				Name:         table.Name,
 				PreviousName: table.PreviousName,
@@ -561,13 +561,13 @@ func BuildIndustrySolutionTableFieldSchemaPackage(input CreateIndustrySolutionSc
 			"source":       "platform_industry_solution_table_field_editor",
 		},
 	}
-	if err := ValidateSchemaPackage(pkg); err != nil {
-		return SchemaPackage{}, err
+	if err := ValidateIndustrySolutionManifest(manifest); err != nil {
+		return IndustrySolutionManifest{}, err
 	}
-	return pkg, nil
+	return manifest, nil
 }
 
-func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*SchemaChangeRequest, error) {
+func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*IndustrySolutionChangeRequest, error) {
 	if input.IndustryKey == "" {
 		input.IndustryKey = "standard_erp"
 	}
@@ -580,28 +580,28 @@ func (s *Service) BuildERPSolutionFlow(ctx context.Context, actorID uuid.UUID, i
 	if len(input.EnabledModules) == 0 {
 		input.EnabledModules = []string{"project", "procurement", "inventory", "sales", "finance"}
 	}
-	pkg := BuildERPSolutionSchemaPackage(input)
-	desiredManifest, err := ManifestFromSchemaPackage(pkg)
+	solutionManifest := BuildERPSolutionManifest(input)
+	desiredAssetManifest, err := AssetManifestFromSolutionManifest(solutionManifest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	currentManifest := IndustrySolutionManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
+	currentAssetManifest := IndustrySolutionAssetManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
 	if input.CurrentTemplate != nil {
-		if parsed, err := ManifestFromSchemaPackage(*input.CurrentTemplate); err == nil {
-			currentManifest = parsed
+		if parsed, err := AssetManifestFromSolutionManifest(*input.CurrentTemplate); err == nil {
+			currentAssetManifest = parsed
 		}
 	}
-	pkg.Metadata["package_diff"] = BuildPackageAssetDiff(currentManifest, desiredManifest)
-	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
-		OrganizationID:       input.OrganizationID,
-		RequestType:          "erp_solution_flow",
-		Reason:               "Create ERP standard industry solution flow",
-		SchemaPackage:        pkg,
-		CurrentSchemaPackage: input.CurrentTemplate,
+	solutionManifest.Metadata["package_diff"] = BuildIndustrySolutionAssetDiff(currentAssetManifest, desiredAssetManifest)
+	return s.CreateIndustrySolutionChangeRequest(ctx, actorID, CreateIndustrySolutionChangeRequestInput{
+		OrganizationID:          input.OrganizationID,
+		RequestType:             "erp_solution_flow",
+		Reason:                  "Create ERP standard industry solution flow",
+		SolutionManifest:        solutionManifest,
+		CurrentSolutionManifest: input.CurrentTemplate,
 	})
 }
 
-func (s *Service) BuildRetailDistributionSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*SchemaChangeRequest, error) {
+func (s *Service) BuildRetailDistributionSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*IndustrySolutionChangeRequest, error) {
 	if input.IndustryKey == "" {
 		input.IndustryKey = "retail_chain_distribution"
 	}
@@ -612,28 +612,28 @@ func (s *Service) BuildRetailDistributionSolutionFlow(ctx context.Context, actor
 		input.Name = "Retail Distribution v1"
 	}
 	input.EnabledModules = []string{"master_data", "procurement", "inventory", "sales", "finance", "retail"}
-	pkg := BuildRetailDistributionSolutionSchemaPackage(input)
-	desiredManifest, err := ManifestFromSchemaPackage(pkg)
+	solutionManifest := BuildRetailDistributionSolutionManifest(input)
+	desiredAssetManifest, err := AssetManifestFromSolutionManifest(solutionManifest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	currentManifest := IndustrySolutionManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
+	currentAssetManifest := IndustrySolutionAssetManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
 	if input.CurrentTemplate != nil {
-		if parsed, err := ManifestFromSchemaPackage(*input.CurrentTemplate); err == nil {
-			currentManifest = parsed
+		if parsed, err := AssetManifestFromSolutionManifest(*input.CurrentTemplate); err == nil {
+			currentAssetManifest = parsed
 		}
 	}
-	pkg.Metadata["package_diff"] = BuildPackageAssetDiff(currentManifest, desiredManifest)
-	return s.CreateSchemaChangeRequest(ctx, actorID, CreateSchemaChangeRequestInput{
-		OrganizationID:       input.OrganizationID,
-		RequestType:          "retail_distribution_solution_flow",
-		Reason:               "Create retail distribution industry solution flow",
-		SchemaPackage:        pkg,
-		CurrentSchemaPackage: input.CurrentTemplate,
+	solutionManifest.Metadata["package_diff"] = BuildIndustrySolutionAssetDiff(currentAssetManifest, desiredAssetManifest)
+	return s.CreateIndustrySolutionChangeRequest(ctx, actorID, CreateIndustrySolutionChangeRequestInput{
+		OrganizationID:          input.OrganizationID,
+		RequestType:             "retail_distribution_solution_flow",
+		Reason:                  "Create retail distribution industry solution flow",
+		SolutionManifest:        solutionManifest,
+		CurrentSolutionManifest: input.CurrentTemplate,
 	})
 }
 
-func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
+func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionManifest {
 	catalog := erp.DefaultCatalog()
 	actions := erp.DefaultActionRegistry().List()
 	enabled := make([]string, 0, len(input.EnabledModules))
@@ -691,10 +691,10 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 			"risk_level":  "medium",
 		},
 		{
-			"tool_key":    "schema.change.preview",
-			"entrypoint":  "/platform/admin/schema-change-requests/{id}/verify",
-			"policy":      "schema.manage",
-			"permissions": []string{"schema.manage"},
+			"tool_key":    "industry.solution.change.preview",
+			"entrypoint":  "/platform/admin/industry-solution-change-requests/{id}/verify",
+			"policy":      "industry.solution.manage",
+			"permissions": []string{"industry.solution.manage"},
 			"risk_level":  "low",
 		},
 		{
@@ -733,10 +733,10 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 			"risk_level":  riskLevel,
 		})
 	}
-	return SchemaPackage{
-		FormatVersion: SchemaPackageFormatVersion,
+	return IndustrySolutionManifest{
+		FormatVersion: IndustrySolutionManifestFormatVersion,
 		ModuleKey:     "erp_standard",
-		Tables: []SchemaTableDefinition{
+		Tables: []IndustrySolutionTableDefinition{
 			erpSolutionAssetTable("erp_solution_database_assets"),
 			erpSolutionAssetTable("erp_solution_business_functions"),
 			erpSolutionAssetTable("erp_solution_process_loops"),
@@ -821,17 +821,17 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 						"allowed_tools": []string{"erp.mjdt.post", "erp.mglr.run"},
 					},
 					{
-						"skill_key":     "schema_change_reviewer",
-						"targets":       []string{"schema_change", "industry_package"},
+						"skill_key":     "industry_solution_change_reviewer",
+						"targets":       []string{"industry_solution_change", "industry_solution"},
 						"context_rules": []string{"erp_governance_approval_context"},
-						"allowed_tools": []string{"schema.change.preview"},
+						"allowed_tools": []string{"industry.solution.change.preview"},
 					},
 				},
 				"quality_gates": []map[string]any{
 					{
-						"gate_key":        "schema_verify_before_apply",
-						"stage":           "schema_change",
-						"required_checks": []string{"schema_package", "ddl_plan", "permissions_impact", "runtime_operations", "assistant_context", "verification_scenarios"},
+						"gate_key":        "solution_verify_before_apply",
+						"stage":           "industry_solution_change",
+						"required_checks": []string{"solution_manifest", "ddl_plan", "permissions_impact", "runtime_operations", "assistant_context", "verification_scenarios"},
 					},
 					{
 						"gate_key":        "tool_policy_before_execution",
@@ -872,13 +872,13 @@ func BuildERPSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
 					},
 				},
 			}
-			metadata["industry_manifest"] = buildIndustryManifest(input, metadata)
+			metadata["industry_manifest"] = buildIndustryAssetManifest(input, metadata)
 			return metadata
 		}(),
 	}
 }
 
-func BuildRetailDistributionSolutionSchemaPackage(input ERPSolutionFlowRequest) SchemaPackage {
+func BuildRetailDistributionSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionManifest {
 	if input.IndustryKey == "" {
 		input.IndustryKey = "retail_chain_distribution"
 	}
@@ -889,26 +889,26 @@ func BuildRetailDistributionSolutionSchemaPackage(input ERPSolutionFlowRequest) 
 		input.Name = "Retail Distribution v1"
 	}
 	input.EnabledModules = []string{"master_data", "procurement", "inventory", "sales", "finance", "retail"}
-	pkg := BuildERPSolutionSchemaPackage(input)
-	pkg.ModuleKey = "retail_distribution"
-	pkg.Metadata["solution_key"] = "retail_distribution_v1"
-	pkg.Metadata["code_table_only"] = true
-	pkg.Metadata["semantic_supply_chain_policy"] = "removed_from_primary_model"
-	pkg.Metadata["ui_workspaces"] = []string{"master_data", "procurement", "sales", "inventory", "finance", "retail", "developer_erp_code"}
-	pkg.Metadata["assistant_targets"] = []string{"store", "pos_terminal", "member", "promotion", "item_publication", "pos_sale", "distribution_request", "distribution_shipment", "distribution_receipt", "distribution_difference", "stock_policy", "store_count", "special_purchase_request", "purchase_order", "delivery", "ar_invoice", "incoming_payment", "trial_balance"}
-	pkg.Metadata["process_loops"] = append(mapSliceFromAny(pkg.Metadata["process_loops"]),
+	manifest := BuildERPSolutionManifest(input)
+	manifest.ModuleKey = "retail_distribution"
+	manifest.Metadata["solution_key"] = "retail_distribution_v1"
+	manifest.Metadata["code_table_only"] = true
+	manifest.Metadata["semantic_supply_chain_policy"] = "removed_from_primary_model"
+	manifest.Metadata["ui_workspaces"] = []string{"master_data", "procurement", "sales", "inventory", "finance", "retail", "developer_erp_code"}
+	manifest.Metadata["assistant_targets"] = []string{"store", "pos_terminal", "member", "promotion", "item_publication", "pos_sale", "distribution_request", "distribution_shipment", "distribution_receipt", "distribution_difference", "stock_policy", "store_count", "special_purchase_request", "purchase_order", "delivery", "ar_invoice", "incoming_payment", "trial_balance"}
+	manifest.Metadata["process_loops"] = append(mapSliceFromAny(manifest.Metadata["process_loops"]),
 		map[string]any{"key": "retail_replenishment_to_distribution", "steps": []string{"MSTP.replenish", "MDRQ.submit", "MDRQ.approve", "MDRQ.auto-allocate", "MDSP.ship", "MDRC.receive", "MDIF.resolve"}},
 		map[string]any{"key": "retail_pos_to_cash", "steps": []string{"MRPS.close", "MIGE", "MINV", "MRCT"}},
 		map[string]any{"key": "retail_count_to_adjustment", "steps": []string{"MCNT.submit", "MCNT.approve", "MCNT.post-adjustment", "MIGN", "MIGE"}},
 		map[string]any{"key": "retail_special_procurement", "steps": []string{"MSPR.submit", "MSPR.approve", "MSPR.convert-to-purchase-order", "MPOR.submit", "MPOR.approve", "MPDN.post"}},
 	)
-	pkg.Metadata["verification_scenarios"] = append(mapSliceFromAny(pkg.Metadata["verification_scenarios"]),
+	manifest.Metadata["verification_scenarios"] = append(mapSliceFromAny(manifest.Metadata["verification_scenarios"]),
 		map[string]any{"scenario_key": "retail_replenishment_to_distribution_smoke", "steps": []string{"MSTP.replenish", "MDRQ.submit", "MDRQ.approve", "MDRQ.auto-allocate", "MDSP.ship", "MDRC.receive"}, "expected": []string{"MDRQ", "MDSP", "MIGE", "MDRC", "MIGN"}},
 		map[string]any{"scenario_key": "retail_pos_to_cash_smoke", "steps": []string{"MRPS.close"}, "expected": []string{"MIGE", "MINV", "MRCT"}},
 		map[string]any{"scenario_key": "retail_count_to_adjustment_smoke", "steps": []string{"MCNT.submit", "MCNT.approve", "MCNT.post-adjustment"}, "expected": []string{"MIGN", "MIGE"}},
 		map[string]any{"scenario_key": "retail_special_procurement_smoke", "steps": []string{"MSPR.submit", "MSPR.approve", "MSPR.convert-to-purchase-order"}, "expected": []string{"MPOR"}},
 	)
-	pkg.Metadata["context_rules"] = append(mapSliceFromAny(pkg.Metadata["context_rules"]),
+	manifest.Metadata["context_rules"] = append(mapSliceFromAny(manifest.Metadata["context_rules"]),
 		map[string]any{
 			"key":                  "retail_distribution_state_context",
 			"scope":                "retail",
@@ -918,7 +918,7 @@ func BuildRetailDistributionSolutionSchemaPackage(input ERPSolutionFlowRequest) 
 			"attention_budget":     "retail_distribution_loop",
 		},
 	)
-	pkg.Metadata["assistant_skills"] = append(mapSliceFromAny(pkg.Metadata["assistant_skills"]),
+	manifest.Metadata["assistant_skills"] = append(mapSliceFromAny(manifest.Metadata["assistant_skills"]),
 		map[string]any{
 			"skill_key":     "retail_distribution_operator",
 			"targets":       []string{"stock_policy", "distribution_request", "distribution_shipment", "distribution_receipt", "pos_sale", "store_count", "special_purchase_request"},
@@ -926,10 +926,10 @@ func BuildRetailDistributionSolutionSchemaPackage(input ERPSolutionFlowRequest) 
 			"allowed_tools": []string{"erp.mstp.replenish", "erp.mdrq.submit", "erp.mdrq.approve", "erp.mdrq.auto-allocate", "erp.mdsp.ship", "erp.mdrc.receive", "erp.mrps.close", "erp.mcnt.post-adjustment", "erp.mspr.convert-to-purchase-order"},
 		},
 	)
-	manifest := buildIndustryManifest(input, pkg.Metadata)
-	manifest.Dependencies = append(manifest.Dependencies, "erp.retail_code_tables")
-	setIndustryManifest(&pkg, manifest)
-	return pkg
+	assetManifest := buildIndustryAssetManifest(input, manifest.Metadata)
+	assetManifest.Dependencies = append(assetManifest.Dependencies, "erp.retail_code_tables")
+	setIndustryAssetManifest(&manifest, assetManifest)
+	return manifest
 }
 
 type erpRuntimeWorkspaceDocument struct {
@@ -1153,37 +1153,37 @@ func copyMap(input map[string]any) map[string]any {
 	return output
 }
 
-func (s *Service) VerifySchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) (*SchemaVerificationReport, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
+func (s *Service) VerifyIndustrySolutionChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) (*IndustrySolutionVerificationReport, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionVerify); err != nil {
 		return nil, err
 	}
-	request, err := s.repo.GetSchemaChangeRequest(ctx, requestID)
+	request, err := s.repo.GetIndustrySolutionChangeRequest(ctx, requestID)
 	if err != nil {
 		return nil, err
 	}
-	schemaName := request.SchemaName
+	schemaName := request.TargetSchemaName
 	if schemaName == "" {
 		schemaName = tenantdb.SchemaNameForOrganization(request.OrganizationID)
 	}
-	report := &SchemaVerificationReport{
-		ChangeRequestID: request.ID,
-		OrganizationID:  request.OrganizationID,
-		SchemaName:      schemaName,
-		RequestStatus:   request.Status,
-		Status:          "passed",
-		RiskLevel:       firstNonEmptyString(request.RiskLevel, SchemaRiskSafe),
+	report := &IndustrySolutionVerificationReport{
+		ChangeRequestID:  request.ID,
+		OrganizationID:   request.OrganizationID,
+		TargetSchemaName: schemaName,
+		RequestStatus:    request.Status,
+		Status:           "passed",
+		RiskLevel:        firstNonEmptyString(request.RiskLevel, IndustrySolutionRiskSafe),
 	}
-	if err := ValidateSchemaPackage(request.SchemaPackage); err != nil {
-		report.addCheck("schema_package", "failed", err.Error(), nil)
+	if err := ValidateIndustrySolutionManifest(request.SolutionManifest); err != nil {
+		report.addCheck("solution_manifest", "failed", err.Error(), nil)
 	} else {
-		report.addCheck("schema_package", "passed", "schema package is valid", map[string]any{
-			"module_key": request.SchemaPackage.ModuleKey,
-			"tables":     len(request.SchemaPackage.Tables),
+		report.addCheck("solution_manifest", "passed", "industry solution manifest is valid", map[string]any{
+			"module_key": request.SolutionManifest.ModuleKey,
+			"tables":     len(request.SolutionManifest.Tables),
 		})
 	}
 	statements := request.Statements
 	if len(statements) == 0 && report.BlockingIssues == 0 {
-		generated, err := BuildCreateTableStatements(schemaName, request.SchemaPackage)
+		generated, err := BuildIndustrySolutionTableStatements(schemaName, request.SolutionManifest)
 		if err != nil {
 			report.addCheck("ddl_plan", "failed", err.Error(), nil)
 		} else {
@@ -1192,90 +1192,90 @@ func (s *Service) VerifySchemaChange(ctx context.Context, actorID uuid.UUID, req
 	}
 	report.StatementCount = len(statements)
 	if report.StatementCount == 0 {
-		report.addCheck("ddl_plan", "failed", "schema change has no executable statements", nil)
+		report.addCheck("ddl_plan", "failed", "industry solution change has no executable statements", nil)
 	} else {
 		report.addCheck("ddl_plan", "passed", "DDL statements are available", map[string]any{"statement_count": report.StatementCount})
 	}
-	if report.RiskLevel == SchemaRiskDestructive {
-		report.addCheck("risk_level", "warning", "destructive schema changes require explicit review before apply", nil)
+	if report.RiskLevel == IndustrySolutionRiskDestructive {
+		report.addCheck("risk_level", "warning", "destructive industry solution changes require explicit review before apply", nil)
 	} else {
 		report.addCheck("risk_level", "passed", "risk level is safe", nil)
 	}
 	addIndustryFactoryCoverageChecks(report, request)
 	switch request.Status {
-	case SchemaChangeApproved:
+	case IndustrySolutionChangeApproved:
 		report.addCheck("lifecycle_status", "passed", "change request is approved for apply", nil)
-	case SchemaChangePending:
+	case IndustrySolutionChangePending:
 		report.addCheck("lifecycle_status", "warning", "change request must be approved before apply", nil)
 	default:
 		report.addCheck("lifecycle_status", "failed", "change request is not in an applicable state", map[string]any{"status": request.Status})
 	}
 	report.Status = reportStatus(report.Checks)
-	report.CanApply = report.BlockingIssues == 0 && request.Status == SchemaChangeApproved
+	report.CanApply = report.BlockingIssues == 0 && request.Status == IndustrySolutionChangeApproved
 	return report, nil
 }
 
-func addIndustryFactoryCoverageChecks(report *SchemaVerificationReport, request *SchemaChangeRequest) {
+func addIndustryFactoryCoverageChecks(report *IndustrySolutionVerificationReport, request *IndustrySolutionChangeRequest) {
 	if report == nil || request == nil || !isIndustryFactoryPackage(request) {
 		return
 	}
-	addMetadataCoverageCheck(report, request, "permissions_impact", []string{"permissions"}, "package declares permission impact", "industry package should declare permission impact")
-	manifest, err := ManifestFromSchemaPackage(request.SchemaPackage)
+	addMetadataCoverageCheck(report, request, "permissions_impact", []string{"permissions"}, "solution declares permission impact", "industry solution should declare permission impact")
+	manifest, err := AssetManifestFromSolutionManifest(request.SolutionManifest)
 	if err != nil {
 		report.addCheck("industry_manifest", "failed", err.Error(), nil)
 		return
 	}
 	for _, check := range ManifestVerificationChecks(manifest, report.RiskLevel) {
-		if check.Key == "verification_scenarios" && !request.SchemaPackageHas("verification_scenarios") {
+		if check.Key == "verification_scenarios" && !request.SolutionManifestHas("verification_scenarios") {
 			check.Status = "warning"
-			check.Message = "industry package should declare verification scenarios"
+			check.Message = "industry solution should declare verification scenarios"
 			check.Metadata = map[string]any{"missing": []string{"verification_scenarios"}}
 		}
 		report.addCheck(check.Key, check.Status, check.Message, check.Metadata)
 	}
 }
 
-func (s *Service) GetSchemaChangePackageDiff(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) ([]PackageAssetDiff, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaManage); err != nil {
+func (s *Service) GetIndustrySolutionChangeAssetDiff(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) ([]IndustrySolutionAssetDiff, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionVerify); err != nil {
 		return nil, err
 	}
-	request, err := s.repo.GetSchemaChangeRequest(ctx, requestID)
+	request, err := s.repo.GetIndustrySolutionChangeRequest(ctx, requestID)
 	if err != nil {
 		return nil, err
 	}
-	if diff := PackageDiffFromSchemaPackage(request.SchemaPackage); len(diff) > 0 {
+	if diff := AssetDiffFromSolutionManifest(request.SolutionManifest); len(diff) > 0 {
 		return diff, nil
 	}
-	manifest, err := ManifestFromSchemaPackage(request.SchemaPackage)
+	manifest, err := AssetManifestFromSolutionManifest(request.SolutionManifest)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
-	return BuildPackageAssetDiff(IndustrySolutionManifest{ManifestVersion: IndustryManifestVersion}, manifest), nil
+	return BuildIndustrySolutionAssetDiff(IndustrySolutionAssetManifest{ManifestVersion: IndustryManifestVersion}, manifest), nil
 }
 
-func isIndustryFactoryPackage(request *SchemaChangeRequest) bool {
+func isIndustryFactoryPackage(request *IndustrySolutionChangeRequest) bool {
 	if request == nil {
 		return false
 	}
 	if request.RequestType == "erp_solution_flow" {
 		return true
 	}
-	metadata := request.SchemaPackage.Metadata
+	metadata := request.SolutionManifest.Metadata
 	if metadata == nil {
 		return false
 	}
 	return metadata["industry_key"] != nil || metadata["package_key"] != nil
 }
 
-func addMetadataCoverageCheck(report *SchemaVerificationReport, request *SchemaChangeRequest, key string, required []string, passedMessage string, warningMessage string) {
+func addMetadataCoverageCheck(report *IndustrySolutionVerificationReport, request *IndustrySolutionChangeRequest, key string, required []string, passedMessage string, warningMessage string) {
 	missing := make([]string, 0)
 	counts := make(map[string]any, len(required))
 	for _, metadataKey := range required {
-		if !request.SchemaPackageHas(metadataKey) {
+		if !request.SolutionManifestHas(metadataKey) {
 			missing = append(missing, metadataKey)
 			continue
 		}
-		counts[metadataKey] = metadataValueCount(request.SchemaPackage.Metadata[metadataKey])
+		counts[metadataKey] = metadataValueCount(request.SolutionManifest.Metadata[metadataKey])
 	}
 	if len(missing) > 0 {
 		report.addCheck(key, "warning", warningMessage, map[string]any{"missing": missing})
@@ -1300,14 +1300,14 @@ func metadataValueCount(value any) int {
 	}
 }
 
-func (r *SchemaVerificationReport) addCheck(key string, status string, message string, metadata map[string]any) {
-	r.Checks = append(r.Checks, SchemaVerificationCheck{Key: key, Status: status, Message: message, Metadata: metadata})
+func (r *IndustrySolutionVerificationReport) addCheck(key string, status string, message string, metadata map[string]any) {
+	r.Checks = append(r.Checks, IndustrySolutionVerificationCheck{Key: key, Status: status, Message: message, Metadata: metadata})
 	if status == "failed" {
 		r.BlockingIssues++
 	}
 }
 
-func reportStatus(checks []SchemaVerificationCheck) string {
+func reportStatus(checks []IndustrySolutionVerificationCheck) string {
 	hasWarning := false
 	for _, check := range checks {
 		switch check.Status {
@@ -1332,60 +1332,60 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-func erpSolutionAssetTable(name string) SchemaTableDefinition {
-	return SchemaTableDefinition{
+func erpSolutionAssetTable(name string) IndustrySolutionTableDefinition {
+	return IndustrySolutionTableDefinition{
 		Name: name,
-		Fields: []SchemaFieldDefinition{
+		Fields: []IndustrySolutionFieldDefinition{
 			{Name: "id", DataType: "uuid", PrimaryKey: true, Default: "gen_random_uuid()"},
 			{Name: "asset_key", DataType: "varchar(120)", Nullable: false},
 			{Name: "payload", DataType: "jsonb", Nullable: false, Default: "'{}'::jsonb"},
 			{Name: "created_at", DataType: "timestamptz", Nullable: false, Default: "now()"},
 		},
-		Indexes: []SchemaIndexDefinition{{Name: name + "_asset_key_idx", Fields: []string{"asset_key"}, Unique: true}},
+		Indexes: []IndustrySolutionIndexDefinition{{Name: name + "_asset_key_idx", Fields: []string{"asset_key"}, Unique: true}},
 	}
 }
 
-func (s *Service) ApproveSchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID, reason string) (*SchemaChangeRequest, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApprove); err != nil {
+func (s *Service) ApproveIndustrySolutionChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID, reason string) (*IndustrySolutionChangeRequest, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionApprove); err != nil {
 		return nil, err
 	}
-	return s.repo.UpdateSchemaChangeRequestStatus(ctx, requestID, SchemaChangeApproved, actorID, reason)
+	return s.repo.UpdateIndustrySolutionChangeRequestStatus(ctx, requestID, IndustrySolutionChangeApproved, actorID, reason)
 }
 
-func (s *Service) ApplySchemaChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) (*SchemaApplyJob, error) {
-	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionSchemaApply); err != nil {
+func (s *Service) ApplyIndustrySolutionChange(ctx context.Context, actorID uuid.UUID, requestID uuid.UUID) (*IndustrySolutionApplyJob, error) {
+	if err := s.requirePlatformPermission(ctx, actorID, platformauth.PermissionIndustrySolutionApply); err != nil {
 		return nil, err
 	}
-	request, err := s.repo.GetSchemaChangeRequest(ctx, requestID)
+	request, err := s.repo.GetIndustrySolutionChangeRequest(ctx, requestID)
 	if err != nil {
 		return nil, err
 	}
-	if request.Status != SchemaChangeApproved {
+	if request.Status != IndustrySolutionChangeApproved {
 		return nil, ErrInvalidTransition
 	}
-	report, err := s.VerifySchemaChange(ctx, actorID, requestID)
+	report, err := s.VerifyIndustrySolutionChange(ctx, actorID, requestID)
 	if err != nil {
 		return nil, err
 	}
 	if !report.CanApply {
-		return nil, fmt.Errorf("%w: schema change verification has %d blocking issues", ErrValidation, report.BlockingIssues)
+		return nil, fmt.Errorf("%w: industry solution change verification has %d blocking issues", ErrValidation, report.BlockingIssues)
 	}
-	schemaName := request.SchemaName
+	schemaName := request.TargetSchemaName
 	if schemaName == "" {
 		schemaName = tenantdb.SchemaNameForOrganization(request.OrganizationID)
 	}
 	statements := request.Statements
 	if len(statements) == 0 {
-		statements, err = BuildCreateTableStatements(schemaName, request.SchemaPackage)
+		statements, err = BuildIndustrySolutionTableStatements(schemaName, request.SolutionManifest)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 		}
 	}
-	assetResults := []SchemaApplyAssetResult{}
-	if manifest, err := ManifestFromSchemaPackage(request.SchemaPackage); err == nil {
-		assetResults = BuildSchemaApplyAssetResults(manifest)
+	assetResults := []IndustrySolutionApplyAssetResult{}
+	if manifest, err := AssetManifestFromSolutionManifest(request.SolutionManifest); err == nil {
+		assetResults = BuildIndustrySolutionApplyAssetResults(manifest)
 	}
-	return s.repo.ApplySchemaChange(ctx, request, statements, assetResults)
+	return s.repo.ApplyIndustrySolutionChange(ctx, request, statements, assetResults)
 }
 
 func (s *Service) requirePlatformPermission(ctx context.Context, actorID uuid.UUID, permission string) error {

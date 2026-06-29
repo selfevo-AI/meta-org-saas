@@ -5,49 +5,49 @@ import (
 	"testing"
 )
 
-func TestValidateSchemaPackageRequiresMasterDetailTables(t *testing.T) {
-	pkg := SchemaPackage{
-		FormatVersion: "meta-org.schema.v1",
+func TestValidateIndustrySolutionManifestRequiresMasterDetailTables(t *testing.T) {
+	manifest := IndustrySolutionManifest{
+		FormatVersion: IndustrySolutionManifestFormatVersion,
 		ModuleKey:     "organization",
-		Tables: []SchemaTableDefinition{
+		Tables: []IndustrySolutionTableDefinition{
 			{
 				Name: "custom_records",
-				Fields: []SchemaFieldDefinition{
+				Fields: []IndustrySolutionFieldDefinition{
 					{Name: "id", DataType: "uuid", PrimaryKey: true},
 				},
 			},
 		},
 	}
 
-	err := ValidateSchemaPackage(pkg)
+	err := ValidateIndustrySolutionManifest(manifest)
 	if err == nil {
-		t.Fatal("ValidateSchemaPackage() succeeded, want error")
+		t.Fatal("ValidateIndustrySolutionManifest() succeeded, want error")
 	}
 	if !strings.Contains(err.Error(), "organization_masters") {
-		t.Fatalf("ValidateSchemaPackage() error = %q, want organization_masters requirement", err.Error())
+		t.Fatalf("ValidateIndustrySolutionManifest() error = %q, want organization_masters requirement", err.Error())
 	}
 }
 
-func TestValidateSchemaPackageRejectsUnsafeFieldType(t *testing.T) {
-	pkg := validOrganizationPackage()
-	pkg.Tables[0].Fields[2].DataType = "text); drop table users; --"
+func TestValidateIndustrySolutionManifestRejectsUnsafeFieldType(t *testing.T) {
+	manifest := validOrganizationManifest()
+	manifest.Tables[0].Fields[2].DataType = "text); drop table users; --"
 
-	err := ValidateSchemaPackage(pkg)
+	err := ValidateIndustrySolutionManifest(manifest)
 	if err == nil {
-		t.Fatal("ValidateSchemaPackage() succeeded, want error")
+		t.Fatal("ValidateIndustrySolutionManifest() succeeded, want error")
 	}
 	if !strings.Contains(err.Error(), "unsupported data type") {
-		t.Fatalf("ValidateSchemaPackage() error = %q, want unsupported data type", err.Error())
+		t.Fatalf("ValidateIndustrySolutionManifest() error = %q, want unsupported data type", err.Error())
 	}
 }
 
-func TestBuildCreateTableStatementsUsesQuotedSchemaAndNonDestructiveDDL(t *testing.T) {
-	statements, err := BuildCreateTableStatements("org_123e4567e89b12d3a456426614174000", validOrganizationPackage())
+func TestBuildIndustrySolutionTableStatementsUsesQuotedSchemaAndNonDestructiveDDL(t *testing.T) {
+	statements, err := BuildIndustrySolutionTableStatements("org_123e4567e89b12d3a456426614174000", validOrganizationManifest())
 	if err != nil {
-		t.Fatalf("BuildCreateTableStatements() error = %v", err)
+		t.Fatalf("BuildIndustrySolutionTableStatements() error = %v", err)
 	}
 	if len(statements) != 2 {
-		t.Fatalf("BuildCreateTableStatements() returned %d statements, want 2", len(statements))
+		t.Fatalf("BuildIndustrySolutionTableStatements() returned %d statements, want 2", len(statements))
 	}
 	for _, stmt := range statements {
 		if !strings.Contains(stmt, `CREATE TABLE IF NOT EXISTS "org_123e4567e89b12d3a456426614174000".`) {
@@ -62,37 +62,37 @@ func TestBuildCreateTableStatementsUsesQuotedSchemaAndNonDestructiveDDL(t *testi
 	}
 }
 
-func TestBuildSchemaMigrationPlanDetectsFullSchemaChanges(t *testing.T) {
-	current := validOrganizationPackage()
+func TestBuildIndustrySolutionMigrationPlanDetectsFullChanges(t *testing.T) {
+	current := validOrganizationManifest()
 	current.Tables[0].Fields = append(current.Tables[0].Fields,
-		SchemaFieldDefinition{Name: "legacy_code", DataType: "text", Nullable: true},
-		SchemaFieldDefinition{Name: "display_name", DataType: "text", Nullable: true},
+		IndustrySolutionFieldDefinition{Name: "legacy_code", DataType: "text", Nullable: true},
+		IndustrySolutionFieldDefinition{Name: "display_name", DataType: "text", Nullable: true},
 	)
-	current.Tables = append(current.Tables, SchemaTableDefinition{
+	current.Tables = append(current.Tables, IndustrySolutionTableDefinition{
 		Name: "obsolete_table",
-		Fields: []SchemaFieldDefinition{
+		Fields: []IndustrySolutionFieldDefinition{
 			{Name: "id", DataType: "uuid", PrimaryKey: true},
 		},
 	})
 
-	desired := validOrganizationPackage()
+	desired := validOrganizationManifest()
 	desired.Tables[0].Fields = append(desired.Tables[0].Fields,
-		SchemaFieldDefinition{Name: "external_code", DataType: "text", Nullable: true, PreviousName: "legacy_code"},
-		SchemaFieldDefinition{Name: "display_name", DataType: "varchar(255)", Nullable: false, Default: "''"},
-		SchemaFieldDefinition{Name: "search_vector", DataType: "text", Nullable: true},
+		IndustrySolutionFieldDefinition{Name: "external_code", DataType: "text", Nullable: true, PreviousName: "legacy_code"},
+		IndustrySolutionFieldDefinition{Name: "display_name", DataType: "varchar(255)", Nullable: false, Default: "''"},
+		IndustrySolutionFieldDefinition{Name: "search_vector", DataType: "text", Nullable: true},
 	)
-	desired.Tables[0].Indexes = []SchemaIndexDefinition{{Name: "idx_organization_masters_external_code", Fields: []string{"external_code"}}}
-	desired.Tables = append(desired.Tables, SchemaTableDefinition{
+	desired.Tables[0].Indexes = []IndustrySolutionIndexDefinition{{Name: "idx_organization_masters_external_code", Fields: []string{"external_code"}}}
+	desired.Tables = append(desired.Tables, IndustrySolutionTableDefinition{
 		Name: "audit_events",
-		Fields: []SchemaFieldDefinition{
+		Fields: []IndustrySolutionFieldDefinition{
 			{Name: "id", DataType: "uuid", PrimaryKey: true, Default: "gen_random_uuid()"},
 			{Name: "payload", DataType: "jsonb", Nullable: false, Default: "'{}'::jsonb"},
 		},
 	})
 
-	plan, err := BuildSchemaMigrationPlan("org_123e4567e89b12d3a456426614174000", current, desired)
+	plan, err := BuildIndustrySolutionMigrationPlan("org_123e4567e89b12d3a456426614174000", current, desired)
 	if err != nil {
-		t.Fatalf("BuildSchemaMigrationPlan error = %v", err)
+		t.Fatalf("BuildIndustrySolutionMigrationPlan error = %v", err)
 	}
 	joined := strings.Join(plan.Statements, "\n")
 	expected := []string{
@@ -108,22 +108,22 @@ func TestBuildSchemaMigrationPlanDetectsFullSchemaChanges(t *testing.T) {
 			t.Fatalf("migration statements missing %q\nstatements:\n%s", snippet, joined)
 		}
 	}
-	if plan.RiskLevel != SchemaRiskDestructive {
-		t.Fatalf("risk level = %q, want %q", plan.RiskLevel, SchemaRiskDestructive)
+	if plan.RiskLevel != IndustrySolutionRiskDestructive {
+		t.Fatalf("risk level = %q, want %q", plan.RiskLevel, IndustrySolutionRiskDestructive)
 	}
 	if len(plan.Diff) == 0 {
 		t.Fatalf("migration diff is empty")
 	}
 }
 
-func validOrganizationPackage() SchemaPackage {
-	return SchemaPackage{
-		FormatVersion: "meta-org.schema.v1",
+func validOrganizationManifest() IndustrySolutionManifest {
+	return IndustrySolutionManifest{
+		FormatVersion: IndustrySolutionManifestFormatVersion,
 		ModuleKey:     "organization",
-		Tables: []SchemaTableDefinition{
+		Tables: []IndustrySolutionTableDefinition{
 			{
 				Name: "organization_masters",
-				Fields: []SchemaFieldDefinition{
+				Fields: []IndustrySolutionFieldDefinition{
 					{Name: "master_key", DataType: "text", PrimaryKey: true},
 					{Name: "entity_type", DataType: "text", Nullable: false},
 					{Name: "payload", DataType: "jsonb", Nullable: false, Default: "'{}'::jsonb"},
@@ -131,7 +131,7 @@ func validOrganizationPackage() SchemaPackage {
 			},
 			{
 				Name: "organization_details",
-				Fields: []SchemaFieldDefinition{
+				Fields: []IndustrySolutionFieldDefinition{
 					{Name: "detail_key", DataType: "text", PrimaryKey: true},
 					{Name: "master_key", DataType: "text", Nullable: false},
 					{Name: "detail_type", DataType: "text", Nullable: false},

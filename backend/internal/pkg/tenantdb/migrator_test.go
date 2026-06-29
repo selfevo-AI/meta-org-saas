@@ -196,6 +196,26 @@ func TestFileTenantMigratorRejectsChecksumDriftForAlreadyAppliedMigration(t *tes
 	}
 }
 
+func TestTenantMigrationTrackingUsesTenantMigrationRuns(t *testing.T) {
+	if tenantMigrationTrackingTable != "tenant_migration_runs" {
+		t.Fatalf("tenant migration tracking table = %q, want tenant_migration_runs", tenantMigrationTrackingTable)
+	}
+	sql := tenantMigrationTrackingSQL()
+	if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS tenant_migration_runs") {
+		t.Fatalf("tracking SQL = %q, want tenant_migration_runs table", sql)
+	}
+	if strings.Contains(sql, "CREATE TABLE IF NOT EXISTS tenant_schema_migrations") {
+		t.Fatalf("tracking SQL = %q, must not create old tenant_schema_migrations table", sql)
+	}
+	legacySQL := migrateLegacyTenantMigrationRunsSQL()
+	if !strings.Contains(legacySQL, "to_regclass('tenant_schema_migrations')") {
+		t.Fatalf("legacy tracking SQL = %q, want legacy tenant_schema_migrations copy guard", legacySQL)
+	}
+	if !strings.Contains(legacySQL, "INSERT INTO tenant_migration_runs") {
+		t.Fatalf("legacy tracking SQL = %q, want copy into tenant_migration_runs", legacySQL)
+	}
+}
+
 func writeTestFile(t *testing.T, dir string, name string, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {

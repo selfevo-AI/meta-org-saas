@@ -37,6 +37,29 @@ func TestBootstrapTenantDataUsesPartialIndexConflictTargetForOwnerMembership(t *
 	}
 }
 
+func TestBootstrapTenantDataDoesNotSendParameterizedMultiStatementERPSeed(t *testing.T) {
+	departmentID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174111")
+	db := &captureBootstrapDB{tx: &captureBootstrapTx{departmentID: departmentID}}
+
+	err := BootstrapTenantData(context.Background(), db, TenantBootstrapInput{
+		OrganizationID:               uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+		OwnerUserID:                  uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"),
+		OwnerName:                    "Owner",
+		OwnerEmail:                   "owner@local.test",
+		SampleKey:                    "unit",
+		IncludeBusinessClosureSample: true,
+	})
+	if err != nil {
+		t.Fatalf("BootstrapTenantData() error = %v", err)
+	}
+
+	for _, sql := range db.tx.execSQL {
+		if strings.Count(sql, "INSERT INTO") > 1 {
+			t.Fatalf("bootstrap sent multiple parameterized commands in one Exec: %s", sql)
+		}
+	}
+}
+
 type captureBootstrapDB struct {
 	tx *captureBootstrapTx
 }

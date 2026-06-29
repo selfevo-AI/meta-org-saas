@@ -158,11 +158,11 @@ belongs to `000_saas_platform_management_baseline.sql`.
 Phase 2 intentionally reuses existing platform storage instead of creating a
 table per asset type:
 
-- `platform.schema_change_requests.schema_package.metadata.industry_manifest`
+- `platform.industry_solution_change_requests.solution_manifest.metadata.industry_manifest`
   stores the desired manifest.
-- `platform.schema_change_requests.schema_package.metadata.package_diff` stores
-  the package-level asset diff computed at request creation.
-- `platform.schema_apply_jobs.metadata.asset_results` stores per-asset apply
+- `platform.industry_solution_change_requests.solution_manifest.metadata.package_diff` stores
+  the solution-level asset diff computed at request creation.
+- `platform.industry_solution_apply_jobs.metadata.asset_results` stores per-asset apply
   status and retry diagnostics.
 - `platform.runtime_operations` stores runtime operation assets.
 - `tool_definitions` stores Tool Runtime definition and policy assets from the
@@ -170,18 +170,18 @@ table per asset type:
 - `platform.platform_masters` stores draft context rule, assistant skill,
   quality gate, and verification scenario metadata assets.
 
-Context-rule assets generated from industry packages are stored as draft
-metadata and must not be activated automatically by schema apply.
+Context-rule assets generated from industry solutions are stored as draft
+metadata and must not be activated automatically by solution apply.
 
 Phase 3 keeps the same tables and extends the runtime metadata contract:
-industry package `runtime_operation` assets preserve their full payload in
+industry solution `runtime_operation` assets preserve their full payload in
 `platform.runtime_operations.metadata`, including `metadata.workspace` for
 tenant ERP business workbench document/action configuration.
 
-Phase 4 adds structured `solution_table` and `solution_field` package asset
+Phase 4 adds structured `database_table` and `database_field` solution asset
 types. Tenant-specific table and field edits are converted into
-`platform.schema_change_requests` so every selected tenant still follows the
-preview, approve, verify, and apply lifecycle before physical schema changes
+`platform.industry_solution_change_requests` so every selected tenant still follows the
+preview, approve, verify, and apply lifecycle before physical database changes
 are applied.
 
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
@@ -228,20 +228,19 @@ tree under the current tenant organization. Tenant-side department, position,
 member, authority, and department-MVRU structures remain scoped by
 `organization_id` for isolation, but the user-facing concept is department.
 
-Future organization profile, subscription, entitlement, invitation, schema, AI,
+Future organization profile, subscription, entitlement, invitation, industry solution, AI,
 assistant, governance, and platform administration schema changes belong in
 `000_saas_platform_management_baseline.sql`. Future tenant department or
 ERP/industry-solution structures belong in `001_erp_code_baseline.sql` unless
 they are AI capability structures owned by `004_ai_capability_baseline.sql`.
 
 Tenant runtime is moving from compatibility shared schemas toward physical
-tenant business databases. During the transition, `organization_schema_targets`
-remains the compatibility runtime-schema registry, while
-`tenant_database_targets` is the source of truth for physical database routing.
+tenant business databases. `organization_industry_solution_targets` records the
+tenant solution target, while `tenant_database_targets` is the source of truth for physical database routing.
 New platform code must read or write tenant database placement through the
 platform control-plane target table, not derive deployment topology only from
 `org_<uuid>` schema names. Private deployments run a local platform control
-plane copy and synchronize only package, license, authorization, and settlement
+plane copy and synchronize only solution, license, authorization, and settlement
 summaries with the central SaaS platform.
 
 ERP, project, workflow, costing, finance, inventory, procurement, sales, and
@@ -273,7 +272,7 @@ capability platform projections.
 Phase 4 Verified Context + Tool Loop changes also belong to `004`: context
 change proposals include the `applied` lifecycle state plus `apply_result` and
 `applied_at`; the baseline seeds the governed tools `erp.action.execute`,
-`schema.change.preview`, `runtime.operation.execute`, and
+`industry.solution.change.preview`, `runtime.operation.execute`, and
 `context.proposal.apply`; active ERP/finance/governance context rules are seeded
 so strict modules do not fall back to compatibility context without dictionary
 coverage.
@@ -282,7 +281,7 @@ Phase 5 Monitoring Agent storage is split by ownership: `004` owns
 `monitoring_agent_runs` because scan execution and summaries are AI/evolution
 capability metadata; `000` owns the `signals` table and adds the monitoring
 fingerprint index used to suppress duplicate unacknowledged findings. The agent
-may write signals and pending context proposals, but it must not apply schema,
+may write signals and pending context proposals, but it must not apply database changes,
 activate context rules, bypass tool approvals, or execute repository code
 changes.
 

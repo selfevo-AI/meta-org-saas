@@ -2,23 +2,23 @@ package systemadmin
 
 import "testing"
 
-func TestBuildERPSolutionSchemaPackageIncludesStructuredManifest(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{
+func TestBuildERPSolutionManifestIncludesStructuredAssetManifest(t *testing.T) {
+	manifest := BuildERPSolutionManifest(ERPSolutionFlowRequest{
 		IndustryKey:    "professional_services",
 		PackageKey:     "erp_standard",
 		Name:           "ERP Standard",
 		EnabledModules: []string{"project", "procurement", "inventory", "sales", "finance"},
 	})
 
-	manifest, err := ManifestFromSchemaPackage(pkg)
+	assetManifest, err := AssetManifestFromSolutionManifest(manifest)
 	if err != nil {
-		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
 	}
-	if manifest.ManifestVersion != IndustryManifestVersion {
-		t.Fatalf("manifest version = %q, want %q", manifest.ManifestVersion, IndustryManifestVersion)
+	if assetManifest.ManifestVersion != IndustryManifestVersion {
+		t.Fatalf("manifest version = %q, want %q", assetManifest.ManifestVersion, IndustryManifestVersion)
 	}
-	if manifest.IndustryKey != "professional_services" || manifest.PackageKey != "erp_standard" {
-		t.Fatalf("manifest package = %s/%s, want professional_services/erp_standard", manifest.IndustryKey, manifest.PackageKey)
+	if assetManifest.IndustryKey != "professional_services" || assetManifest.PackageKey != "erp_standard" {
+		t.Fatalf("asset manifest package = %s/%s, want professional_services/erp_standard", assetManifest.IndustryKey, assetManifest.PackageKey)
 	}
 	requiredTypes := []string{
 		AssetTypeDatabaseAsset,
@@ -36,16 +36,16 @@ func TestBuildERPSolutionSchemaPackageIncludesStructuredManifest(t *testing.T) {
 		AssetTypeVerificationScenario,
 	}
 	for _, assetType := range requiredTypes {
-		if countManifestAssets(manifest, assetType) == 0 {
-			t.Fatalf("manifest missing asset type %s in %#v", assetType, manifest.Assets)
+		if countManifestAssets(assetManifest, assetType) == 0 {
+			t.Fatalf("asset manifest missing asset type %s in %#v", assetType, assetManifest.Assets)
 		}
 	}
-	if !manifestHasRuntimeWorkspace(manifest, "project", "requirement", "MREQ", "convert-to-project") {
-		t.Fatalf("manifest missing runtime workspace payload for MREQ convert action: %#v", manifest.Assets)
+	if !manifestHasRuntimeWorkspace(assetManifest, "project", "requirement", "MREQ", "convert-to-project") {
+		t.Fatalf("asset manifest missing runtime workspace payload for MREQ convert action: %#v", assetManifest.Assets)
 	}
 }
 
-func countManifestAssets(manifest IndustrySolutionManifest, assetType string) int {
+func countManifestAssets(manifest IndustrySolutionAssetManifest, assetType string) int {
 	count := 0
 	for _, asset := range manifest.Assets {
 		if asset.AssetType == assetType {
@@ -55,7 +55,7 @@ func countManifestAssets(manifest IndustrySolutionManifest, assetType string) in
 	return count
 }
 
-func manifestHasRuntimeWorkspace(manifest IndustrySolutionManifest, module string, documentID string, tableCode string, action string) bool {
+func manifestHasRuntimeWorkspace(manifest IndustrySolutionAssetManifest, module string, documentID string, tableCode string, action string) bool {
 	for _, asset := range manifest.Assets {
 		if asset.AssetType != AssetTypeRuntimeOperation {
 			continue
@@ -68,8 +68,8 @@ func manifestHasRuntimeWorkspace(manifest IndustrySolutionManifest, module strin
 	return false
 }
 
-func TestBuildPackageAssetDiffDetectsManifestAssetChanges(t *testing.T) {
-	current := IndustrySolutionManifest{
+func TestBuildIndustrySolutionAssetDiffDetectsManifestAssetChanges(t *testing.T) {
+	current := IndustrySolutionAssetManifest{
 		ManifestVersion: IndustryManifestVersion,
 		IndustryKey:     "professional_services",
 		PackageKey:      "erp_standard",
@@ -80,7 +80,7 @@ func TestBuildPackageAssetDiffDetectsManifestAssetChanges(t *testing.T) {
 			{AssetKey: "runtime_operation.old", AssetType: AssetTypeRuntimeOperation, Version: "v1", RiskLevel: "low", Payload: map[string]any{"path": "/old"}},
 		},
 	}
-	desired := IndustrySolutionManifest{
+	desired := IndustrySolutionAssetManifest{
 		ManifestVersion: IndustryManifestVersion,
 		IndustryKey:     "professional_services",
 		PackageKey:      "erp_standard",
@@ -92,7 +92,7 @@ func TestBuildPackageAssetDiffDetectsManifestAssetChanges(t *testing.T) {
 		},
 	}
 
-	diff := BuildPackageAssetDiff(current, desired)
+	diff := BuildIndustrySolutionAssetDiff(current, desired)
 
 	assertPackageDiffAction(t, diff, "database_asset.mreq", "unchanged")
 	assertPackageDiffAction(t, diff, "tool_definition.erp.mreq.approve", "update")
@@ -100,7 +100,7 @@ func TestBuildPackageAssetDiffDetectsManifestAssetChanges(t *testing.T) {
 	assertPackageDiffAction(t, diff, "runtime_operation.old", "remove")
 }
 
-func assertPackageDiffAction(t *testing.T, diff []PackageAssetDiff, assetKey string, action string) {
+func assertPackageDiffAction(t *testing.T, diff []IndustrySolutionAssetDiff, assetKey string, action string) {
 	t.Helper()
 	for _, item := range diff {
 		if item.AssetKey == assetKey {
@@ -113,17 +113,17 @@ func assertPackageDiffAction(t *testing.T, diff []PackageAssetDiff, assetKey str
 	t.Fatalf("missing diff item %s in %#v", assetKey, diff)
 }
 
-func TestBuildSchemaApplyAssetResultsIncludesManifestAssets(t *testing.T) {
-	pkg := BuildERPSolutionSchemaPackage(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
-	manifest, err := ManifestFromSchemaPackage(pkg)
+func TestBuildIndustrySolutionApplyAssetResultsIncludesManifestAssets(t *testing.T) {
+	manifest := BuildERPSolutionManifest(ERPSolutionFlowRequest{IndustryKey: "professional_services", PackageKey: "erp_standard", Name: "ERP Standard"})
+	assetManifest, err := AssetManifestFromSolutionManifest(manifest)
 	if err != nil {
-		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
 	}
 
-	results := BuildSchemaApplyAssetResults(manifest)
+	results := BuildIndustrySolutionApplyAssetResults(assetManifest)
 
 	if len(results) == 0 {
-		t.Fatal("BuildSchemaApplyAssetResults returned no results")
+		t.Fatal("BuildIndustrySolutionApplyAssetResults returned no results")
 	}
 	if !hasAssetResult(results, AssetTypeRuntimeOperation) {
 		t.Fatalf("results missing runtime operation asset in %#v", results)
@@ -133,7 +133,7 @@ func TestBuildSchemaApplyAssetResultsIncludesManifestAssets(t *testing.T) {
 	}
 }
 
-func hasAssetResult(results []SchemaApplyAssetResult, assetType string) bool {
+func hasAssetResult(results []IndustrySolutionApplyAssetResult, assetType string) bool {
 	for _, result := range results {
 		if result.AssetType == assetType && result.Status == "pending" {
 			return true

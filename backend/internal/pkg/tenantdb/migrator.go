@@ -35,6 +35,34 @@ type FileTenantMigrator struct {
 	OpenStore     TenantMigrationStoreOpener
 }
 
+const tenantMigrationTrackingTable = "tenant_migration_runs"
+
+func tenantMigrationTrackingSQL() string {
+	return `
+		CREATE TABLE IF NOT EXISTS tenant_migration_runs (
+			filename   TEXT PRIMARY KEY,
+			checksum   TEXT NOT NULL,
+			scope      TEXT NOT NULL,
+			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)
+	`
+}
+
+func migrateLegacyTenantMigrationRunsSQL() string {
+	return `
+		DO $$
+		BEGIN
+			IF to_regclass('tenant_schema_migrations') IS NOT NULL THEN
+				INSERT INTO tenant_migration_runs(filename, checksum, scope, applied_at)
+				SELECT filename, checksum, scope, applied_at FROM tenant_schema_migrations
+				ON CONFLICT (filename) DO NOTHING;
+				DROP TABLE tenant_schema_migrations;
+			END IF;
+		END;
+		$$;
+	`
+}
+
 func (m FileTenantMigrator) Migrate(ctx context.Context, _ Target, tenantDatabaseURL string) (MigrationResult, error) {
 	files, err := LoadTenantMigrationFiles(m.migrationsDir())
 	if err != nil {
@@ -203,22 +231,18 @@ func OpenPGTenantMigrationStore(ctx context.Context, tenantDatabaseURL string) (
 }
 
 func (s *PGTenantMigrationStore) EnsureMigrationTable(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
-		CREATE TABLE IF NOT EXISTS tenant_schema_migrations (
-			filename   TEXT PRIMARY KEY,
-			checksum   TEXT NOT NULL,
-			scope      TEXT NOT NULL,
-			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
-	`)
+	_, err := s.pool.Exec(ctx, tenantMigrationTrackingSQL())
 	if err != nil {
 		return fmt.Errorf("ensure tenant migration tracking table: %w", err)
+	}
+	if _, err := s.pool.Exec(ctx, migrateLegacyTenantMigrationRunsSQL()); err != nil {
+		return fmt.Errorf("migrate legacy tenant migration tracking table: %w", err)
 	}
 	return nil
 }
 
 func (s *PGTenantMigrationStore) AppliedMigrations(ctx context.Context) (map[string]string, error) {
-	rows, err := s.pool.Query(ctx, `SELECT filename, checksum FROM tenant_schema_migrations`)
+	rows, err := s.pool.Query(ctx, `SELECT filename, checksum FROM tenant_migration_runs`)
 	if err != nil {
 		return nil, fmt.Errorf("list applied tenant migrations: %w", err)
 	}
@@ -250,7 +274,7 @@ func (s *PGTenantMigrationStore) ApplyMigration(ctx context.Context, file Tenant
 		return fmt.Errorf("execute tenant migration SQL: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO tenant_schema_migrations(filename, checksum, scope)
+		INSERT INTO tenant_migration_runs(filename, checksum, scope)
 		VALUES ($1, $2, $3)
 	`, file.Filename, file.Checksum, file.Stage.Scope); err != nil {
 		return fmt.Errorf("record tenant migration: %w", err)

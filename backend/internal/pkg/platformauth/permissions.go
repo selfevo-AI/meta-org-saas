@@ -11,9 +11,6 @@ const (
 	PermissionPlatformRead       = "platform.read"
 	PermissionOrganizationManage = "organization.manage"
 	PermissionOrganizationClose  = "organization.close"
-	PermissionSchemaManage       = "schema.manage"
-	PermissionSchemaApprove      = "schema.approve"
-	PermissionSchemaApply        = "schema.apply"
 	PermissionModelManage        = "model.manage"
 	PermissionRuntimeManage      = "runtime.manage"
 	PermissionAssistantRun       = "assistant.platform.run"
@@ -27,6 +24,9 @@ const (
 	PermissionIndustrySolutionManage      = "industry.solution.manage"
 	PermissionIndustrySolutionImport      = "industry.solution.import"
 	PermissionIndustrySolutionExport      = "industry.solution.export"
+	PermissionIndustrySolutionVerify      = "industry.solution.verify"
+	PermissionIndustrySolutionApprove     = "industry.solution.approve"
+	PermissionIndustrySolutionApply       = "industry.solution.apply"
 	PermissionTenantIndustrySolutionApply = "tenant.industry_solution.apply"
 )
 
@@ -35,9 +35,6 @@ var rolePermissions = map[string][]string{
 		PermissionPlatformRead,
 		PermissionOrganizationManage,
 		PermissionOrganizationClose,
-		PermissionSchemaManage,
-		PermissionSchemaApprove,
-		PermissionSchemaApply,
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
@@ -50,14 +47,14 @@ var rolePermissions = map[string][]string{
 		PermissionIndustrySolutionManage,
 		PermissionIndustrySolutionImport,
 		PermissionIndustrySolutionExport,
+		PermissionIndustrySolutionVerify,
+		PermissionIndustrySolutionApprove,
+		PermissionIndustrySolutionApply,
 		PermissionTenantIndustrySolutionApply,
 	},
 	RoleAdmin: {
 		PermissionPlatformRead,
 		PermissionOrganizationManage,
-		PermissionSchemaManage,
-		PermissionSchemaApprove,
-		PermissionSchemaApply,
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
@@ -70,12 +67,14 @@ var rolePermissions = map[string][]string{
 		PermissionIndustrySolutionManage,
 		PermissionIndustrySolutionImport,
 		PermissionIndustrySolutionExport,
+		PermissionIndustrySolutionVerify,
+		PermissionIndustrySolutionApprove,
+		PermissionIndustrySolutionApply,
 		PermissionTenantIndustrySolutionApply,
 	},
 	RoleOperator: {
 		PermissionPlatformRead,
 		PermissionOrganizationManage,
-		PermissionSchemaManage,
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
@@ -83,6 +82,7 @@ var rolePermissions = map[string][]string{
 		PermissionIndustrySolutionManage,
 		PermissionIndustrySolutionImport,
 		PermissionIndustrySolutionExport,
+		PermissionIndustrySolutionVerify,
 		PermissionTenantIndustrySolutionApply,
 	},
 	RoleAuditor: {

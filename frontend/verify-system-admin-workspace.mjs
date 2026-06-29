@@ -15,12 +15,13 @@ const workspaceSource = existsSync(workspacePath) ? readFileSync(workspacePath, 
 const requiredApiExports = [
   'listPlatformMasters',
   'listPlatformDetails',
-  'listOrganizationSchemaTargets',
-  'exportOrganizationSchema',
-  'createOrganizationSchemaChange',
-  'approveSchemaChange',
-  'verifySchemaChange',
-  'applySchemaChange',
+  'listOrganizationIndustrySolutionTargets',
+  'exportOrganizationIndustrySolutionManifest',
+  'createIndustrySolutionChangeRequest',
+  'approveIndustrySolutionChange',
+  'verifyIndustrySolutionChange',
+  'getIndustrySolutionChangeAssetDiff',
+  'applyIndustrySolutionChange',
   'listPlatformOrganizations',
   'getOrganizationSubscription',
   'getOrganizationEntitlements',
@@ -39,15 +40,19 @@ const requiredApiExports = [
 const requiredApiTypes = [
   'PlatformMaster',
   'PlatformDetail',
-  'OrganizationSchemaTarget',
-  'SchemaPackage',
-  'SchemaTableDefinition',
-  'SchemaFieldDefinition',
-  'SchemaChangeRequest',
-  'SchemaVerificationReport',
-  'SchemaVerificationCheck',
-  'SchemaApplyJob',
-  'CreateSchemaChangeRequestInput',
+  'OrganizationIndustrySolutionTarget',
+  'IndustrySolutionManifest',
+  'IndustrySolutionAssetManifest',
+  'IndustrySolutionAsset',
+  'IndustrySolutionAssetDiff',
+  'IndustrySolutionTableDefinition',
+  'IndustrySolutionFieldDefinition',
+  'IndustrySolutionChangeRequest',
+  'IndustrySolutionVerificationReport',
+  'IndustrySolutionVerificationCheck',
+  'IndustrySolutionApplyJob',
+  'IndustrySolutionApplyAssetResult',
+  'CreateIndustrySolutionChangeRequestInput',
   'OrganizationSubscription',
   'OrganizationInvitation',
   'CreateOrganizationInvitationInput',
@@ -66,8 +71,8 @@ const requiredI18nKeys = [
   'systemAdmin.title',
   'systemAdmin.platformCatalog',
   'systemAdmin.saasOrganizations',
-  'systemAdmin.schemaTargets',
-  'systemAdmin.schemaPackage',
+  'systemAdmin.industrySolutionTargets',
+  'systemAdmin.solutionManifest',
   'systemAdmin.saasOrganizationsSummary',
   'systemAdmin.subscription',
   'systemAdmin.entitlements',
@@ -84,7 +89,7 @@ const requiredI18nKeys = [
   'systemAdmin.noInvitations',
   'systemAdmin.module',
   'systemAdmin.selectedOrganization',
-  'systemAdmin.exportSchema',
+  'systemAdmin.exportSolutionManifest',
   'systemAdmin.importJson',
   'systemAdmin.createChange',
   'systemAdmin.approve',
@@ -100,7 +105,7 @@ const requiredI18nKeys = [
   'systemAdmin.checks',
   'systemAdmin.packageDiff',
   'systemAdmin.noPackageDiff',
-  'systemAdmin.check.schema_package',
+  'systemAdmin.check.solution_manifest',
   'systemAdmin.check.ddl_plan',
   'systemAdmin.check.risk_level',
   'systemAdmin.check.lifecycle_status',
@@ -171,14 +176,14 @@ const requiredWorkspaceSnippets = [
   'updateOrganizationModules',
   'listOrganizationInvitations',
   'createOrganizationInvitation',
-  'listOrganizationSchemaTargets',
-  'exportOrganizationSchema',
-  'createOrganizationSchemaChange',
-  'approveSchemaChange',
-  'verifySchemaChange',
+  'listOrganizationIndustrySolutionTargets',
+  'exportOrganizationIndustrySolutionManifest',
+  'createIndustrySolutionChangeRequest',
+  'approveIndustrySolutionChange',
+  'verifyIndustrySolutionChange',
   'verificationReport',
-  'applySchemaChange',
-  'schemaDiffItems',
+  'applyIndustrySolutionChange',
+  'solutionDiffItems',
   'changeRequest?.diff',
   "t('systemAdmin.packageDiff')",
   "'context_rules'",
@@ -200,24 +205,16 @@ const requiredAssistantSnippets = [
 ]
 
 const requiredOperationSnippets = [
-  "id: 'system-admin-schema-change-verify'",
-  "title: 'operation.systemAdmin.schemaChangeVerify'",
-  "path: '/platform/admin/schema-change-requests/{id}/verify'",
-  "label: 'operation.systemAdmin.schemaChangeRequestId'",
+  "id: 'system-admin-industry-solution-change-verify'",
+  "title: 'operation.systemAdmin.industrySolutionChangeVerify'",
+  "path: '/platform/admin/industry-solution-change-requests/{id}/verify'",
+  "label: 'operation.systemAdmin.industrySolutionChangeRequestId'",
   "operationKind: 'admin'",
   "dangerLevel: 'low'",
   "resultView: 'audit'",
 ]
 
-requiredApiExports.push('getSchemaChangePackageDiff')
-
-requiredApiTypes.push(
-  'IndustrySolutionManifest',
-  'IndustrySolutionAsset',
-  'PackageAssetDiff',
-  'SchemaApplyAssetResult',
-  'PublicationGateResult',
-)
+requiredApiTypes.push('PublicationGateResult')
 
 requiredI18nKeys.push(
   'systemAdmin.packageAssets',
@@ -225,6 +222,13 @@ requiredI18nKeys.push(
   'systemAdmin.publicationGates',
   'systemAdmin.blockingReason',
   'systemAdmin.metadataAssets',
+  'systemAdmin.industrySolutionChangeCreated',
+  'systemAdmin.solutionManifestExported',
+  'systemAdmin.industrySolutionTargetSummary',
+  'systemAdmin.targetSchemaName',
+  'systemAdmin.solutionManifestSummary',
+  'systemAdmin.solutionManifestJson',
+  'systemAdmin.solutionManifestJsonPlaceholder',
   'systemAdmin.assetType.database_asset',
   'systemAdmin.assetType.business_function',
   'systemAdmin.assetType.process_loop',
@@ -242,8 +246,8 @@ requiredI18nKeys.push(
 )
 
 requiredWorkspaceSnippets.push(
-  'getSchemaChangePackageDiff',
-  'packageAssetDiff',
+  'getIndustrySolutionChangeAssetDiff',
+  'solutionAssetDiff',
   'packageAssetsByType',
   'assetResults',
   'publication_gates',
@@ -278,7 +282,7 @@ const requiredAuthSnippets = [
 const requiredApiSnippets = [
   'organizationId?: string | null',
   'organizationId: organizationID',
-  'diff?: SchemaDiff[]',
+  'diff?: IndustrySolutionDiff[]',
   'action: string',
 ]
 
@@ -354,7 +358,7 @@ if (missingAssistantSnippets.length > 0) {
 
 const missingOperationSnippets = requiredOperationSnippets.filter((snippet) => !operationsSource.includes(snippet))
 if (missingOperationSnippets.length > 0) {
-  failures.push(`Missing schema verification operation snippets:\n${missingOperationSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+  failures.push(`Missing industry solution verification operation snippets:\n${missingOperationSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
 const platformDomainsMatch = apiWorkbenchSource.match(/const platformOperationDomains = new Set\(\[([\s\S]*?)\]\)/)

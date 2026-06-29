@@ -45,8 +45,8 @@ func TestBuildERPSolutionFlowBuildsCompleteChangePackage(t *testing.T) {
 		"verification_scenarios",
 	}
 	for _, key := range required {
-		if !result.SchemaPackageHas(key) {
-			t.Fatalf("schema package missing %s in %#v", key, result.SchemaPackage.Metadata)
+		if !result.SolutionManifestHas(key) {
+			t.Fatalf("solution manifest missing %s in %#v", key, result.SolutionManifest.Metadata)
 		}
 	}
 	requiredTables := []string{
@@ -57,13 +57,13 @@ func TestBuildERPSolutionFlowBuildsCompleteChangePackage(t *testing.T) {
 		"erp_solution_verification_scenarios",
 	}
 	for _, name := range requiredTables {
-		if !schemaPackageHasTable(result.SchemaPackage, name) {
-			t.Fatalf("schema package missing table %s in %#v", name, result.SchemaPackage.Tables)
+		if !solutionManifestHasTable(result.SolutionManifest, name) {
+			t.Fatalf("solution manifest missing table %s in %#v", name, result.SolutionManifest.Tables)
 		}
 	}
-	runtimeOperations := mapSliceFromAny(result.SchemaPackage.Metadata["runtime_operations"])
+	runtimeOperations := mapSliceFromAny(result.SolutionManifest.Metadata["runtime_operations"])
 	if len(runtimeOperations) == 0 {
-		t.Fatalf("schema package runtime_operations is empty in %#v", result.SchemaPackage.Metadata)
+		t.Fatalf("solution manifest runtime_operations is empty in %#v", result.SolutionManifest.Metadata)
 	}
 	if !hasWorkspaceRuntimeOperation(runtimeOperations, "project", "requirement", "MREQ", "convert-to-project") {
 		t.Fatalf("runtime_operations missing project requirement convert workspace metadata: %#v", runtimeOperations)
@@ -93,9 +93,9 @@ func TestBuildRetailDistributionSolutionFlowBuildsCodeTablePackage(t *testing.T)
 	if result.RequestType != "retail_distribution_solution_flow" {
 		t.Fatalf("RequestType = %q, want retail_distribution_solution_flow", result.RequestType)
 	}
-	manifest, err := ManifestFromSchemaPackage(result.SchemaPackage)
+	manifest, err := AssetManifestFromSolutionManifest(result.SolutionManifest)
 	if err != nil {
-		t.Fatalf("ManifestFromSchemaPackage error = %v", err)
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
 	}
 	if manifest.IndustryKey != "retail_chain_distribution" || manifest.PackageKey != "retail_distribution_v1" {
 		t.Fatalf("manifest package = %s/%s, want retail_chain_distribution/retail_distribution_v1", manifest.IndustryKey, manifest.PackageKey)
@@ -115,7 +115,7 @@ func TestBuildRetailDistributionSolutionFlowBuildsCodeTablePackage(t *testing.T)
 	}
 }
 
-func schemaPackageHasTable(pkg SchemaPackage, name string) bool {
+func solutionManifestHasTable(pkg IndustrySolutionManifest, name string) bool {
 	for _, table := range pkg.Tables {
 		if table.Name == name {
 			return true
@@ -143,7 +143,7 @@ func hasRuntimeOperationPath(operations []map[string]any, path string) bool {
 	return false
 }
 
-func manifestHasDatabaseAsset(manifest IndustrySolutionManifest, tableCode string) bool {
+func manifestHasDatabaseAsset(manifest IndustrySolutionAssetManifest, tableCode string) bool {
 	for _, asset := range manifest.Assets {
 		if asset.AssetType == AssetTypeDatabaseAsset && asset.Payload["table_code"] == tableCode {
 			return true
@@ -152,7 +152,7 @@ func manifestHasDatabaseAsset(manifest IndustrySolutionManifest, tableCode strin
 	return false
 }
 
-func manifestHasProcessLoop(manifest IndustrySolutionManifest, key string) bool {
+func manifestHasProcessLoop(manifest IndustrySolutionAssetManifest, key string) bool {
 	for _, asset := range manifest.Assets {
 		if asset.AssetType == AssetTypeProcessLoop && asset.Payload["key"] == key {
 			return true

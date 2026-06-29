@@ -11,7 +11,7 @@ const (
 	StatusActive   = "active"
 	StatusArchived = "archived"
 
-	AssetTypeSchemaPackage    = "schema_package"
+	AssetTypeSolutionManifest = "solution_manifest"
 	AssetTypeModule           = "module"
 	AssetTypeRuntimeEntity    = "runtime_entity"
 	AssetTypeRuntimeOperation = "runtime_operation"

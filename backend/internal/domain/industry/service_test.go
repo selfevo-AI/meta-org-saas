@@ -27,7 +27,7 @@ func TestValidatePackageValidatesSchemaAndSkillAssets(t *testing.T) {
 	pkg.Assets = append(pkg.Assets,
 		PackageAsset{
 			AssetKey:  "invalid-schema",
-			AssetType: AssetTypeSchemaPackage,
+			AssetType: AssetTypeSolutionManifest,
 			Payload: map[string]any{
 				"format_version": "wrong",
 				"module_key":     "organization",
@@ -332,8 +332,8 @@ func validPackage() Package {
 		Assets: []PackageAsset{
 			{
 				AssetKey:  "organization-schema",
-				AssetType: AssetTypeSchemaPackage,
-				Payload:   mustMap(systemadmin.DefaultOrganizationSchemaPackage()),
+				AssetType: AssetTypeSolutionManifest,
+				Payload:   mustMap(systemadmin.DefaultOrganizationIndustrySolutionManifest()),
 			},
 			{
 				AssetKey:  "organization-module",

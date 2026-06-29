@@ -25,7 +25,7 @@ const (
 	AssetTypeVerificationScenario = "verification_scenario"
 )
 
-type IndustrySolutionManifest struct {
+type IndustrySolutionAssetManifest struct {
 	ManifestVersion       string                  `json:"manifest_version"`
 	IndustryKey           string                  `json:"industry_key"`
 	PackageKey            string                  `json:"package_key"`
@@ -47,12 +47,12 @@ type IndustrySolutionAsset struct {
 	Payload   map[string]any `json:"payload"`
 }
 
-func ManifestFromSchemaPackage(pkg SchemaPackage) (IndustrySolutionManifest, error) {
-	var manifest IndustrySolutionManifest
-	if pkg.Metadata == nil || pkg.Metadata["industry_manifest"] == nil {
+func AssetManifestFromSolutionManifest(solution IndustrySolutionManifest) (IndustrySolutionAssetManifest, error) {
+	var manifest IndustrySolutionAssetManifest
+	if solution.Metadata == nil || solution.Metadata["industry_manifest"] == nil {
 		return manifest, fmt.Errorf("industry_manifest metadata is required")
 	}
-	data, err := json.Marshal(pkg.Metadata["industry_manifest"])
+	data, err := json.Marshal(solution.Metadata["industry_manifest"])
 	if err != nil {
 		return manifest, fmt.Errorf("marshal industry manifest: %w", err)
 	}
@@ -65,7 +65,7 @@ func ManifestFromSchemaPackage(pkg SchemaPackage) (IndustrySolutionManifest, err
 	return manifest, nil
 }
 
-func BuildPackageAssetDiff(current IndustrySolutionManifest, desired IndustrySolutionManifest) []PackageAssetDiff {
+func BuildIndustrySolutionAssetDiff(current IndustrySolutionAssetManifest, desired IndustrySolutionAssetManifest) []IndustrySolutionAssetDiff {
 	currentByKey := map[string]IndustrySolutionAsset{}
 	desiredByKey := map[string]IndustrySolutionAsset{}
 	for _, asset := range current.Assets {
@@ -75,7 +75,7 @@ func BuildPackageAssetDiff(current IndustrySolutionManifest, desired IndustrySol
 		desiredByKey[asset.AssetKey] = asset
 	}
 
-	items := []PackageAssetDiff{}
+	items := []IndustrySolutionAssetDiff{}
 	for key, desiredAsset := range desiredByKey {
 		currentAsset, ok := currentByKey[key]
 		action := "create"
@@ -88,7 +88,7 @@ func BuildPackageAssetDiff(current IndustrySolutionManifest, desired IndustrySol
 				action = "update"
 			}
 		}
-		items = append(items, PackageAssetDiff{
+		items = append(items, IndustrySolutionAssetDiff{
 			AssetType:      desiredAsset.AssetType,
 			AssetKey:       desiredAsset.AssetKey,
 			Action:         action,
@@ -103,7 +103,7 @@ func BuildPackageAssetDiff(current IndustrySolutionManifest, desired IndustrySol
 		if _, ok := desiredByKey[key]; ok {
 			continue
 		}
-		items = append(items, PackageAssetDiff{
+		items = append(items, IndustrySolutionAssetDiff{
 			AssetType:      currentAsset.AssetType,
 			AssetKey:       currentAsset.AssetKey,
 			Action:         "remove",
@@ -123,23 +123,23 @@ func BuildPackageAssetDiff(current IndustrySolutionManifest, desired IndustrySol
 	return items
 }
 
-func PackageDiffFromSchemaPackage(pkg SchemaPackage) []PackageAssetDiff {
-	if pkg.Metadata == nil {
+func AssetDiffFromSolutionManifest(solution IndustrySolutionManifest) []IndustrySolutionAssetDiff {
+	if solution.Metadata == nil {
 		return nil
 	}
-	data, err := json.Marshal(pkg.Metadata["package_diff"])
+	data, err := json.Marshal(solution.Metadata["package_diff"])
 	if err != nil {
 		return nil
 	}
-	var diff []PackageAssetDiff
+	var diff []IndustrySolutionAssetDiff
 	if err := json.Unmarshal(data, &diff); err != nil {
 		return nil
 	}
 	return diff
 }
 
-func ManifestVerificationChecks(manifest IndustrySolutionManifest, riskLevel string) []SchemaVerificationCheck {
-	return []SchemaVerificationCheck{
+func ManifestVerificationChecks(manifest IndustrySolutionAssetManifest, riskLevel string) []IndustrySolutionVerificationCheck {
+	return []IndustrySolutionVerificationCheck{
 		runtimeOperationCheck(manifest),
 		toolPolicyCheck(manifest),
 		assistantContextCheck(manifest),
@@ -150,7 +150,7 @@ func ManifestVerificationChecks(manifest IndustrySolutionManifest, riskLevel str
 	}
 }
 
-func runtimeOperationCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck {
+func runtimeOperationCheck(manifest IndustrySolutionAssetManifest) IndustrySolutionVerificationCheck {
 	paths := map[string]string{}
 	duplicates := []string{}
 	count := 0
@@ -161,7 +161,7 @@ func runtimeOperationCheck(manifest IndustrySolutionManifest) SchemaVerification
 		count++
 		path := stringValue(asset.Payload["path"])
 		if path == "" {
-			return SchemaVerificationCheck{Key: "runtime_operations", Status: "failed", Message: "runtime operation asset is missing path", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "runtime_operations", Status: "failed", Message: "runtime operation asset is missing path", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 		if previous := paths[path]; previous != "" {
 			duplicates = append(duplicates, previous, asset.AssetKey)
@@ -169,12 +169,12 @@ func runtimeOperationCheck(manifest IndustrySolutionManifest) SchemaVerification
 		paths[path] = asset.AssetKey
 	}
 	if len(duplicates) > 0 {
-		return SchemaVerificationCheck{Key: "runtime_operations", Status: "failed", Message: "runtime operation paths must be unique", Metadata: map[string]any{"duplicates": duplicates}}
+		return IndustrySolutionVerificationCheck{Key: "runtime_operations", Status: "failed", Message: "runtime operation paths must be unique", Metadata: map[string]any{"duplicates": duplicates}}
 	}
-	return SchemaVerificationCheck{Key: "runtime_operations", Status: "passed", Message: "runtime operations are unique and executable", Metadata: map[string]any{"count": count}}
+	return IndustrySolutionVerificationCheck{Key: "runtime_operations", Status: "passed", Message: "runtime operations are unique and executable", Metadata: map[string]any{"count": count}}
 }
 
-func toolPolicyCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck {
+func toolPolicyCheck(manifest IndustrySolutionAssetManifest) IndustrySolutionVerificationCheck {
 	count := 0
 	for _, asset := range manifest.Assets {
 		if asset.AssetType != AssetTypeToolPolicy && asset.AssetType != AssetTypeToolDefinition {
@@ -182,19 +182,19 @@ func toolPolicyCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck 
 		}
 		count++
 		if stringValue(asset.Payload["tool_key"]) == "" {
-			return SchemaVerificationCheck{Key: "tool_policy", Status: "failed", Message: "tool asset is missing tool_key", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "tool_policy", Status: "failed", Message: "tool asset is missing tool_key", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 		if stringValue(asset.Payload["policy"]) == "" {
-			return SchemaVerificationCheck{Key: "tool_policy", Status: "failed", Message: "tool asset is missing policy", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "tool_policy", Status: "failed", Message: "tool asset is missing policy", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 		if len(stringSliceFromAny(asset.Payload["permissions"])) == 0 {
-			return SchemaVerificationCheck{Key: "tool_policy", Status: "failed", Message: "tool asset is missing required permissions", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "tool_policy", Status: "failed", Message: "tool asset is missing required permissions", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 	}
-	return SchemaVerificationCheck{Key: "tool_policy", Status: "passed", Message: "tool definitions declare policy, risk, and permissions", Metadata: map[string]any{"count": count}}
+	return IndustrySolutionVerificationCheck{Key: "tool_policy", Status: "passed", Message: "tool definitions declare policy, risk, and permissions", Metadata: map[string]any{"count": count}}
 }
 
-func assistantContextCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck {
+func assistantContextCheck(manifest IndustrySolutionAssetManifest) IndustrySolutionVerificationCheck {
 	count := 0
 	for _, asset := range manifest.Assets {
 		if asset.AssetType != AssetTypeContextRule {
@@ -203,16 +203,16 @@ func assistantContextCheck(manifest IndustrySolutionManifest) SchemaVerification
 		count++
 		status := firstNonEmptyString(stringValue(asset.Payload["status"]), "draft")
 		if status == "active" {
-			return SchemaVerificationCheck{Key: "assistant_context", Status: "failed", Message: "context rules from industry packages must stay draft before human activation", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "assistant_context", Status: "failed", Message: "context rules from industry solutions must stay draft before human activation", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 		if len(stringSliceFromAny(asset.Payload["required_permissions"])) == 0 {
-			return SchemaVerificationCheck{Key: "assistant_context", Status: "failed", Message: "context rule is missing required permissions", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "assistant_context", Status: "failed", Message: "context rule is missing required permissions", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 	}
-	return SchemaVerificationCheck{Key: "assistant_context", Status: "passed", Message: "assistant context assets are draft and permission scoped", Metadata: map[string]any{"count": count}}
+	return IndustrySolutionVerificationCheck{Key: "assistant_context", Status: "passed", Message: "assistant context assets are draft and permission scoped", Metadata: map[string]any{"count": count}}
 }
 
-func assistantSkillCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck {
+func assistantSkillCheck(manifest IndustrySolutionAssetManifest) IndustrySolutionVerificationCheck {
 	count := 0
 	for _, asset := range manifest.Assets {
 		if asset.AssetType != AssetTypeAssistantSkill {
@@ -220,42 +220,42 @@ func assistantSkillCheck(manifest IndustrySolutionManifest) SchemaVerificationCh
 		}
 		count++
 		if len(stringSliceFromAny(asset.Payload["targets"])) == 0 || len(stringSliceFromAny(asset.Payload["context_rules"])) == 0 || len(stringSliceFromAny(asset.Payload["allowed_tools"])) == 0 {
-			return SchemaVerificationCheck{Key: "assistant_skills", Status: "failed", Message: "assistant skill must declare targets, context rules, and allowed tools", Metadata: map[string]any{"asset_key": asset.AssetKey}}
+			return IndustrySolutionVerificationCheck{Key: "assistant_skills", Status: "failed", Message: "assistant skill must declare targets, context rules, and allowed tools", Metadata: map[string]any{"asset_key": asset.AssetKey}}
 		}
 	}
-	return SchemaVerificationCheck{Key: "assistant_skills", Status: "passed", Message: "assistant skills declare targets, context rules, and allowed tools", Metadata: map[string]any{"count": count}}
+	return IndustrySolutionVerificationCheck{Key: "assistant_skills", Status: "passed", Message: "assistant skills declare targets, context rules, and allowed tools", Metadata: map[string]any{"count": count}}
 }
 
-func qualityGateCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck {
+func qualityGateCheck(manifest IndustrySolutionAssetManifest) IndustrySolutionVerificationCheck {
 	if len(manifest.QualityGates) == 0 {
-		return SchemaVerificationCheck{Key: "quality_gates", Status: "warning", Message: "industry package should declare quality gates"}
+		return IndustrySolutionVerificationCheck{Key: "quality_gates", Status: "warning", Message: "industry solution should declare quality gates"}
 	}
-	return SchemaVerificationCheck{Key: "quality_gates", Status: "passed", Message: "quality gates are declared", Metadata: map[string]any{"count": len(manifest.QualityGates)}}
+	return IndustrySolutionVerificationCheck{Key: "quality_gates", Status: "passed", Message: "quality gates are declared", Metadata: map[string]any{"count": len(manifest.QualityGates)}}
 }
 
-func verificationScenarioCheck(manifest IndustrySolutionManifest) SchemaVerificationCheck {
+func verificationScenarioCheck(manifest IndustrySolutionAssetManifest) IndustrySolutionVerificationCheck {
 	if len(manifest.VerificationScenarios) == 0 {
-		return SchemaVerificationCheck{Key: "verification_scenarios", Status: "warning", Message: "industry package should declare verification scenarios"}
+		return IndustrySolutionVerificationCheck{Key: "verification_scenarios", Status: "warning", Message: "industry solution should declare verification scenarios"}
 	}
-	return SchemaVerificationCheck{Key: "verification_scenarios", Status: "passed", Message: "verification scenarios are declared", Metadata: map[string]any{"count": len(manifest.VerificationScenarios)}}
+	return IndustrySolutionVerificationCheck{Key: "verification_scenarios", Status: "passed", Message: "verification scenarios are declared", Metadata: map[string]any{"count": len(manifest.VerificationScenarios)}}
 }
 
-func rollbackRiskCheck(manifest IndustrySolutionManifest, riskLevel string) SchemaVerificationCheck {
-	if riskLevel == SchemaRiskDestructive {
+func rollbackRiskCheck(manifest IndustrySolutionAssetManifest, riskLevel string) IndustrySolutionVerificationCheck {
+	if riskLevel == IndustrySolutionRiskDestructive {
 		for _, asset := range manifest.Assets {
 			if stringValue(asset.Payload["rollback_plan"]) != "" {
-				return SchemaVerificationCheck{Key: "rollback_risk", Status: "warning", Message: "destructive change includes a rollback plan for manual review"}
+				return IndustrySolutionVerificationCheck{Key: "rollback_risk", Status: "warning", Message: "destructive change includes a rollback plan for manual review"}
 			}
 		}
-		return SchemaVerificationCheck{Key: "rollback_risk", Status: "failed", Message: "destructive industry package requires rollback_plan metadata"}
+		return IndustrySolutionVerificationCheck{Key: "rollback_risk", Status: "failed", Message: "destructive industry solution requires rollback_plan metadata"}
 	}
-	return SchemaVerificationCheck{Key: "rollback_risk", Status: "passed", Message: "rollback risk is low for additive factory package", Metadata: map[string]any{"risk_level": riskLevel}}
+	return IndustrySolutionVerificationCheck{Key: "rollback_risk", Status: "passed", Message: "rollback risk is low for additive industry solution", Metadata: map[string]any{"risk_level": riskLevel}}
 }
 
-func BuildSchemaApplyAssetResults(manifest IndustrySolutionManifest) []SchemaApplyAssetResult {
-	results := make([]SchemaApplyAssetResult, 0, len(manifest.Assets))
+func BuildIndustrySolutionApplyAssetResults(manifest IndustrySolutionAssetManifest) []IndustrySolutionApplyAssetResult {
+	results := make([]IndustrySolutionApplyAssetResult, 0, len(manifest.Assets))
 	for _, asset := range manifest.Assets {
-		results = append(results, SchemaApplyAssetResult{
+		results = append(results, IndustrySolutionApplyAssetResult{
 			AssetKey:  asset.AssetKey,
 			AssetType: asset.AssetType,
 			Status:    "pending",
@@ -285,18 +285,18 @@ func applyTargetForAsset(asset IndustrySolutionAsset) string {
 	case AssetTypeVerificationScenario:
 		return "platform.platform_masters:verification_scenario"
 	default:
-		return "schema_package.metadata"
+		return "industry_solution_manifest.metadata"
 	}
 }
 
-func setIndustryManifest(pkg *SchemaPackage, manifest IndustrySolutionManifest) {
-	if pkg.Metadata == nil {
-		pkg.Metadata = map[string]any{}
+func setIndustryAssetManifest(solution *IndustrySolutionManifest, manifest IndustrySolutionAssetManifest) {
+	if solution.Metadata == nil {
+		solution.Metadata = map[string]any{}
 	}
-	pkg.Metadata["industry_manifest"] = manifest
+	solution.Metadata["industry_manifest"] = manifest
 }
 
-func buildIndustryManifest(input ERPSolutionFlowRequest, metadata map[string]any) IndustrySolutionManifest {
+func buildIndustryAssetManifest(input ERPSolutionFlowRequest, metadata map[string]any) IndustrySolutionAssetManifest {
 	assets := []IndustrySolutionAsset{}
 	appendAssets := func(assetType string, values []map[string]any, keyField string) {
 		for _, value := range values {
@@ -388,13 +388,13 @@ func buildIndustryManifest(input ERPSolutionFlowRequest, metadata map[string]any
 	}
 
 	sortManifestAssets(assets)
-	return IndustrySolutionManifest{
+	return IndustrySolutionAssetManifest{
 		ManifestVersion:       IndustryManifestVersion,
 		IndustryKey:           input.IndustryKey,
 		PackageKey:            input.PackageKey,
 		PackageVersion:        "v1",
 		Assets:                assets,
-		Dependencies:          []string{"erp.catalog", "erp.action_registry", "platform.schema_change"},
+		Dependencies:          []string{"erp.catalog", "erp.action_registry", "platform.industry_solution_change"},
 		QualityGates:          stringSliceFromMaps(mapSliceFromAny(metadata["quality_gates"]), "gate_key"),
 		VerificationScenarios: stringSliceFromMaps(mapSliceFromAny(metadata["verification_scenarios"]), "scenario_key"),
 	}

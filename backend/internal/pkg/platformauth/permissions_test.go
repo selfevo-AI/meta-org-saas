@@ -10,10 +10,10 @@ func TestRolePermissionMatrix(t *testing.T) {
 		want       bool
 	}{
 		{name: "owner can close organizations", role: RoleOwner, permission: PermissionOrganizationClose, want: true},
-		{name: "admin can manage schema", role: RoleAdmin, permission: PermissionSchemaApply, want: true},
+		{name: "admin can apply industry solutions", role: RoleAdmin, permission: PermissionIndustrySolutionApply, want: true},
 		{name: "operator cannot close organizations", role: RoleOperator, permission: PermissionOrganizationClose, want: false},
 		{name: "auditor can read platform", role: RoleAuditor, permission: PermissionPlatformRead, want: true},
-		{name: "auditor cannot apply schema", role: RoleAuditor, permission: PermissionSchemaApply, want: false},
+		{name: "auditor cannot apply industry solutions", role: RoleAuditor, permission: PermissionIndustrySolutionApply, want: false},
 		{name: "legacy system owner maps to owner", role: "system_owner", permission: PermissionOrganizationClose, want: true},
 		{name: "owner can manage platform users", role: RoleOwner, permission: PermissionPlatformUserManage, want: true},
 		{name: "admin can approve database maintenance", role: RoleAdmin, permission: PermissionDatabaseMaintenanceApprove, want: true},

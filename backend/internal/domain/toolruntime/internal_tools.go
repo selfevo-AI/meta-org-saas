@@ -37,8 +37,8 @@ type ERPActionService interface {
 	RunAction(context.Context, string, string, string, erp.ActionInput) (*erp.ActionResult, error)
 }
 
-type SchemaVerifier interface {
-	VerifySchemaChange(context.Context, uuid.UUID, uuid.UUID) (*systemadmin.SchemaVerificationReport, error)
+type IndustrySolutionChangeVerifier interface {
+	VerifyIndustrySolutionChange(context.Context, uuid.UUID, uuid.UUID) (*systemadmin.IndustrySolutionVerificationReport, error)
 }
 
 type RuntimeOperationService interface {
@@ -50,10 +50,10 @@ type ContextProposalService interface {
 }
 
 type PlatformToolServices struct {
-	ERP             ERPActionService
-	SchemaVerifier  SchemaVerifier
-	Runtime         RuntimeOperationService
-	ContextProposal ContextProposalService
+	ERP                      ERPActionService
+	IndustrySolutionVerifier IndustrySolutionChangeVerifier
+	Runtime                  RuntimeOperationService
+	ContextProposal          ContextProposalService
 }
 
 func InternalTools(projectSvc ProjectService, financeSvc FinanceService, evolutionSvc EvolutionService) map[string]ToolAdapter {
@@ -96,10 +96,10 @@ func InternalToolsWithPlatform(projectSvc ProjectService, financeSvc FinanceServ
 	} else {
 		tools["erp.action.execute"] = erpActionExecuteTool(platform.ERP)
 	}
-	if platform.SchemaVerifier == nil {
-		tools["schema.change.preview"] = notConfiguredTool("schema verifier is not configured")
+	if platform.IndustrySolutionVerifier == nil {
+		tools["industry.solution.change.preview"] = notConfiguredTool("industry solution verifier is not configured")
 	} else {
-		tools["schema.change.preview"] = schemaChangePreviewTool(platform.SchemaVerifier)
+		tools["industry.solution.change.preview"] = industrySolutionChangePreviewTool(platform.IndustrySolutionVerifier)
 	}
 	if platform.Runtime == nil {
 		tools["runtime.operation.execute"] = notConfiguredTool("runtime operation service is not configured")
@@ -127,7 +127,7 @@ func DefaultToolDefinitions() []CreateToolInput {
 		{Name: "evolution.create_signal", Description: "Create evolution signal", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "evolution.propose_experiment", Description: "Propose evolution experiment", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
 		{Name: "erp.action.execute", Description: "Execute an ERP business action", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
-		{Name: "schema.change.preview", Description: "Verify a schema change request without applying it", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "low", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
+		{Name: "industry.solution.change.preview", Description: "Verify an industry solution change request without applying it", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "low", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "runtime.operation.execute", Description: "Execute a platform runtime operation", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "context.proposal.apply", Description: "Apply an approved context change proposal", SourceType: SourceManualApproval, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
 	}
@@ -342,17 +342,17 @@ func erpActionExecuteTool(erpSvc ERPActionService) ToolAdapter {
 	}
 }
 
-func schemaChangePreviewTool(verifier SchemaVerifier) ToolAdapter {
+func industrySolutionChangePreviewTool(verifier IndustrySolutionChangeVerifier) ToolAdapter {
 	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
-		requestID, err := firstUUIDArg(input.Arguments, "request_id", "schema_change_request_id", "id")
+		requestID, err := firstUUIDArg(input.Arguments, "request_id", "industry_solution_change_request_id", "id")
 		if err != nil {
 			return ToolResult{}, err
 		}
-		report, err := verifier.VerifySchemaChange(ctx, input.ActorID, requestID)
+		report, err := verifier.VerifyIndustrySolutionChange(ctx, input.ActorID, requestID)
 		if err != nil {
 			return ToolResult{}, err
 		}
-		return ToolResult{Summary: "Schema change verified", Data: map[string]any{"verification": report}}, nil
+		return ToolResult{Summary: "Industry solution change verified", Data: map[string]any{"verification": report}}, nil
 	}
 }
 
