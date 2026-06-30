@@ -81,6 +81,10 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
 			return tx.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"BtfStatus": "P"})
 		})
+	case "MGLR:run":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.runTrialBalance(ctx, key, input)
+		})
 	case "MPUB:publish":
 		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "published"})
 	case "MRPS:close":
@@ -136,6 +140,32 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
 			return tx.convertSpecialPurchaseRequest(ctx, key)
 		})
+	case "MBOM:approve":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.approveBOM(ctx, key, input)
+		})
+	case "MBOM:make-work-order":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.makeWorkOrderFromBOM(ctx, key, input)
+		})
+	case "MWOR:release":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.releaseWorkOrder(ctx, key)
+		})
+	case "MWOR:issue-material":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.issueWorkOrderMaterial(ctx, key)
+		})
+	case "MWOR:complete":
+		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
+			return tx.completeWorkOrder(ctx, key, input)
+		})
+	case "MWOR:close":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "closed"})
+	case "MWOR:stop":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "stopped"})
+	case "MWOR:reopen":
+		return s.mergeStatusAction(ctx, tableCode, key, action, map[string]any{"Status": "released"})
 	default:
 		return nil, fmt.Errorf("%w: %s for %s", errUnsupportedERPAction, action, tableCode)
 	}
@@ -332,9 +362,19 @@ func (s *Service) postDelivery(ctx context.Context, key string) (*ActionResult, 
 
 func (s *Service) postInvoice(ctx context.Context, key string) (*ActionResult, error) {
 	invoiceTable, _ := s.table("MINV")
-	journal, err := s.createDocument(ctx, "MINV", key, "post", "MJDT", "JE-"+key, map[string]any{"BaseEntry": key})
+	current, err := s.repo.GetRecord(ctx, invoiceTable, key)
 	if err != nil {
 		return nil, err
+	}
+	amount := positiveNumeric(current.Data, "DocTotal", 0)
+	journal, err := s.createDocument(ctx, "MINV", key, "post", "MJDT", "JE-"+key, map[string]any{"BaseEntry": key, "BtfStatus": "P", "TransType": "ar_invoice", "Memo": "A/R invoice " + key})
+	if err != nil {
+		return nil, err
+	}
+	if amount > 0 {
+		if err := s.createBalancedJournalLines(ctx, journal.Key, "Accounts Receivable", "Sales Revenue", amount, "Invoice "+key); err != nil {
+			return nil, err
+		}
 	}
 	invoice, err := s.repo.UpdateRecord(ctx, invoiceTable, key, RecordInput{Data: map[string]any{"Posted": "Y"}})
 	if err != nil {
@@ -379,11 +419,18 @@ func (s *Service) allocateIncomingPayment(ctx context.Context, key string, input
 	if _, err := s.repo.UpdateRecord(ctx, targetTable, targetKey, RecordInput{Data: map[string]any{"PaidToDate": paid, "DocStatus": status}}); err != nil {
 		return nil, err
 	}
+	journal, err := s.createDocument(ctx, "MRCT", key, "allocate", "MJDT", "JE-"+key, map[string]any{"BaseEntry": key, "BtfStatus": "P", "TransType": "incoming_payment", "Memo": "Incoming payment " + key})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.createBalancedJournalLines(ctx, journal.Key, "Cash", "Accounts Receivable", amount, "Payment "+key); err != nil {
+		return nil, err
+	}
 	payment, err := s.repo.UpdateRecord(ctx, paymentTable, key, RecordInput{Data: map[string]any{"OpenBal": currentOpenBal - amount}})
 	if err != nil {
 		return nil, err
 	}
-	return &ActionResult{TableCode: "MRCT", Key: key, Action: "allocate", Status: "allocated", Record: payment, Effects: map[string]any{"allocated_amount": amount, "target_table": targetTableCode, "target_key": targetKey}}, nil
+	return &ActionResult{TableCode: "MRCT", Key: key, Action: "allocate", Status: "allocated", Record: payment, GeneratedRecords: []Record{*journal}, Effects: map[string]any{"allocated_amount": amount, "target_table": targetTableCode, "target_key": targetKey}}, nil
 }
 
 func (s *Service) closePOSSale(ctx context.Context, key string) (*ActionResult, error) {
@@ -703,6 +750,232 @@ func (s *Service) convertSpecialPurchaseRequest(ctx context.Context, key string)
 	return &ActionResult{TableCode: "MSPR", Key: key, Action: "convert-to-purchase-order", Status: "converted", Record: updated, GeneratedRecords: []Record{*order}}, nil
 }
 
+func (s *Service) approveBOM(ctx context.Context, key string, input ActionInput) (*ActionResult, error) {
+	lines, err := s.listChildPayloads(ctx, "MBOM", key, "BOM1")
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("%w: BOM requires at least one component before approval", ErrValidation)
+	}
+	for _, line := range lines {
+		if stringValue(line, "ItemCode", "") == "" || numericValue(line, "Quantity") <= 0 {
+			return nil, fmt.Errorf("%w: BOM component ItemCode and positive Quantity are required", ErrValidation)
+		}
+	}
+	data := map[string]any{"Status": "approved"}
+	if approver := stringValue(input.Data, "approver", ""); approver != "" {
+		data["ApprovedBy"] = approver
+	}
+	result, err := s.mergeStatusAction(ctx, "MBOM", key, "approve", data)
+	if err != nil {
+		return nil, err
+	}
+	result.Status = "approved"
+	return result, nil
+}
+
+func (s *Service) makeWorkOrderFromBOM(ctx context.Context, key string, input ActionInput) (*ActionResult, error) {
+	bomTable, _ := s.table("MBOM")
+	bom, err := s.repo.GetRecord(ctx, bomTable, key)
+	if err != nil {
+		return nil, err
+	}
+	if !documentFieldEquals(bom, "Status", "approved") {
+		return nil, fmt.Errorf("%w: BOM must be approved before making a work order", ErrValidation)
+	}
+	lines, err := s.listChildPayloads(ctx, "MBOM", key, "BOM1")
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("%w: BOM requires at least one component", ErrValidation)
+	}
+	workOrderKey := stringValue(input.Data, "WorkOrderCode", "WO-"+key)
+	quantity := positiveNumeric(input.Data, "Quantity", positiveNumeric(bom.Data, "Quantity", 1))
+	payload := map[string]any{
+		"WorkOrderCode":   workOrderKey,
+		"Name":            stringValue(input.Data, "Name", "Work order "+workOrderKey),
+		"Status":          "planned",
+		"BOMCode":         key,
+		"ItemCode":        stringValue(input.Data, "ItemCode", stringValue(bom.Data, "ItemCode", "")),
+		"Quantity":        quantity,
+		"SourceWhsCode":   stringValue(input.Data, "SourceWhsCode", stringValue(bom.Data, "SourceWhsCode", "")),
+		"WipWhsCode":      stringValue(input.Data, "WipWhsCode", stringValue(bom.Data, "WipWhsCode", "")),
+		"FinishedWhsCode": stringValue(input.Data, "FinishedWhsCode", stringValue(bom.Data, "FinishedWhsCode", "")),
+	}
+	workOrder, err := s.createDocument(ctx, "MBOM", key, "make-work-order", "MWOR", workOrderKey, payload)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.createWorkOrderRequiredLines(ctx, workOrderKey, key, bom, lines, quantity); err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.UpdateRecord(ctx, bomTable, key, RecordInput{Data: map[string]any{"LastWorkOrderCode": workOrderKey}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MBOM", Key: key, Action: "make-work-order", Status: "planned", Record: updated, GeneratedRecords: []Record{*workOrder}}, nil
+}
+
+func (s *Service) releaseWorkOrder(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MWOR")
+	workOrder, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if status := stringValue(workOrder.Data, "Status", ""); status == "completed" || status == "closed" {
+		return nil, fmt.Errorf("%w: completed or closed work order cannot be released", ErrValidation)
+	}
+	lines, err := s.listChildPayloads(ctx, "MWOR", key, "WOR1")
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		bomCode := stringValue(workOrder.Data, "BOMCode", "")
+		if bomCode == "" {
+			return nil, fmt.Errorf("%w: BOMCode is required to release work order without required items", ErrValidation)
+		}
+		bomTable, _ := s.table("MBOM")
+		bom, err := s.repo.GetRecord(ctx, bomTable, bomCode)
+		if err != nil {
+			return nil, err
+		}
+		if !documentFieldEquals(bom, "Status", "approved") {
+			return nil, fmt.Errorf("%w: BOM must be approved before work order release", ErrValidation)
+		}
+		bomLines, err := s.listChildPayloads(ctx, "MBOM", bomCode, "BOM1")
+		if err != nil {
+			return nil, err
+		}
+		if err := s.createWorkOrderRequiredLines(ctx, key, bomCode, bom, bomLines, positiveNumeric(workOrder.Data, "Quantity", 1)); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"Status": "released"}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MWOR", Key: key, Action: "release", Status: "released", Record: updated}, nil
+}
+
+func (s *Service) issueWorkOrderMaterial(ctx context.Context, key string) (*ActionResult, error) {
+	table, _ := s.table("MWOR")
+	workOrder, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if documentFieldEquals(workOrder, "MaterialIssued", "Y") {
+		return &ActionResult{TableCode: "MWOR", Key: key, Action: "issue-material", Status: "in_process", Record: workOrder}, nil
+	}
+	status := stringValue(workOrder.Data, "Status", "")
+	if status != "released" && status != "in_process" {
+		return nil, fmt.Errorf("%w: work order must be released before material issue", ErrValidation)
+	}
+	lines, err := s.listChildPayloads(ctx, "MWOR", key, "WOR1")
+	if err != nil {
+		return nil, err
+	}
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("%w: work order requires material lines before issue", ErrValidation)
+	}
+	issue, err := s.createDocument(ctx, "MWOR", key, "issue-material", "MIGE", "IGE-"+key, map[string]any{"BaseEntry": key, "DocTotal": sumLineAmount(lines)})
+	if err != nil {
+		return nil, err
+	}
+	for i, line := range lines {
+		whsCode := firstNonEmptyString(stringValue(line, "WhsCode", ""), stringValue(workOrder.Data, "SourceWhsCode", ""))
+		if err := s.adjustInventory(ctx, stringValue(line, "ItemCode", ""), whsCode, numericValue(line, "Quantity"), -1); err != nil {
+			return nil, err
+		}
+		next := copyData(line)
+		next["WhsCode"] = whsCode
+		if _, err := s.createDocumentLine(ctx, "MIGE", issue.Key, "IGE1", fmt.Sprint(i+1), next); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"Status": "in_process", "MaterialIssued": "Y", "MaterialIssueKey": issue.Key}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MWOR", Key: key, Action: "issue-material", Status: "in_process", Record: updated, GeneratedRecords: []Record{*issue}}, nil
+}
+
+func (s *Service) completeWorkOrder(ctx context.Context, key string, input ActionInput) (*ActionResult, error) {
+	table, _ := s.table("MWOR")
+	workOrder, err := s.repo.GetRecord(ctx, table, key)
+	if err != nil {
+		return nil, err
+	}
+	if isPostedDocument(workOrder) || documentFieldEquals(workOrder, "Status", "completed") {
+		return &ActionResult{TableCode: "MWOR", Key: key, Action: "complete", Status: "completed", Record: workOrder}, nil
+	}
+	if !documentFieldEquals(workOrder, "MaterialIssued", "Y") {
+		return nil, fmt.Errorf("%w: work order material must be issued before completion", ErrValidation)
+	}
+	itemCode := stringValue(workOrder.Data, "ItemCode", "")
+	finishedWhs := firstNonEmptyString(stringValue(input.Data, "FinishedWhsCode", ""), stringValue(workOrder.Data, "FinishedWhsCode", ""))
+	quantity := positiveNumeric(input.Data, "Quantity", positiveNumeric(workOrder.Data, "Quantity", 1))
+	if err := s.adjustInventory(ctx, itemCode, finishedWhs, quantity, 1); err != nil {
+		return nil, err
+	}
+	receipt, err := s.createDocument(ctx, "MWOR", key, "complete", "MIGN", "IGN-"+key, map[string]any{"BaseEntry": key, "ItemCode": itemCode, "WhsCode": finishedWhs, "Quantity": quantity})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.createDocumentLine(ctx, "MIGN", receipt.Key, "IGN1", "1", map[string]any{"ItemCode": itemCode, "WhsCode": finishedWhs, "Quantity": quantity}); err != nil {
+		return nil, err
+	}
+	journal, err := s.createDocument(ctx, "MWOR", key, "complete", "MJDT", "JE-"+key, map[string]any{"BaseEntry": key, "BtfStatus": "P", "TransType": "production", "Memo": "Production completion " + key})
+	if err != nil {
+		return nil, err
+	}
+	lines, err := s.listChildPayloads(ctx, "MWOR", key, "WOR1")
+	if err != nil {
+		return nil, err
+	}
+	amount := sumLineAmount(lines)
+	if amount <= 0 {
+		amount = quantity
+	}
+	if err := s.createBalancedJournalLines(ctx, journal.Key, "Finished Goods Inventory", "Work In Process", amount, "Production "+key); err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.UpdateRecord(ctx, table, key, RecordInput{Data: map[string]any{"Status": "completed", "Posted": "Y", "ProducedQuantity": quantity, "GoodsReceiptKey": receipt.Key, "JournalEntryKey": journal.Key}})
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MWOR", Key: key, Action: "complete", Status: "completed", Record: updated, GeneratedRecords: []Record{*receipt, *journal}}, nil
+}
+
+func (s *Service) createWorkOrderRequiredLines(ctx context.Context, workOrderKey string, bomCode string, bom *Record, bomLines []map[string]any, productionQuantity float64) error {
+	bomQuantity := positiveNumeric(bom.Data, "Quantity", 1)
+	for i, line := range bomLines {
+		quantity := numericValue(line, "Quantity")
+		if quantity <= 0 || stringValue(line, "ItemCode", "") == "" {
+			return fmt.Errorf("%w: BOM component ItemCode and positive Quantity are required", ErrValidation)
+		}
+		next := copyData(line)
+		requiredQuantity := quantity * productionQuantity / bomQuantity
+		next["Quantity"] = requiredQuantity
+		next["BOMCode"] = bomCode
+		if stringValue(next, "WhsCode", "") == "" {
+			next["WhsCode"] = stringValue(bom.Data, "SourceWhsCode", "")
+		}
+		if payload, ok := next["Payload"].(map[string]any); ok {
+			nested := copyData(payload)
+			nested["Quantity"] = requiredQuantity
+			nested["BOMCode"] = bomCode
+			nested["WhsCode"] = next["WhsCode"]
+			next["Payload"] = nested
+		}
+		if _, err := s.createDocumentLine(ctx, "MWOR", workOrderKey, "WOR1", fmt.Sprint(i+1), next); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) postInventoryDocument(ctx context.Context, tableCode string, key string, direction float64) (*ActionResult, error) {
 	table, _ := s.table(tableCode)
 	current, err := s.repo.GetRecord(ctx, table, key)
@@ -948,6 +1221,92 @@ func (s *Service) adjustInventory(ctx context.Context, itemCode string, whsCode 
 	return err
 }
 
+func (s *Service) runTrialBalance(ctx context.Context, key string, input ActionInput) (*ActionResult, error) {
+	journalTable, _ := s.table("MJDT")
+	journals, err := s.repo.ListRecords(ctx, journalTable, 500)
+	if err != nil {
+		return nil, err
+	}
+	totalDebit := 0.0
+	totalCredit := 0.0
+	journalCount := 0
+	for _, journal := range journals {
+		if !documentFieldEquals(&journal, "BtfStatus", "P") && !documentFieldEquals(&journal, "Posted", "Y") {
+			continue
+		}
+		lines, err := s.listChildPayloads(ctx, "MJDT", journal.Key, "JDT1")
+		if err != nil {
+			return nil, err
+		}
+		journalDebit := 0.0
+		journalCredit := 0.0
+		for _, line := range lines {
+			journalDebit += numericValue(line, "Debit")
+			journalCredit += numericValue(line, "Credit")
+		}
+		if journalDebit != journalCredit {
+			return nil, fmt.Errorf("%w: journal entry %s is not balanced", ErrValidation, journal.Key)
+		}
+		if journalDebit == 0 && journalCredit == 0 {
+			continue
+		}
+		totalDebit += journalDebit
+		totalCredit += journalCredit
+		journalCount++
+	}
+	reportCode := stringValue(input.Data, "ReportCode", key)
+	if reportCode == "" {
+		reportCode = key
+	}
+	data := map[string]any{
+		"ReportCode":    reportCode,
+		"Currency":      stringValue(input.Data, "Currency", "CNY"),
+		"PeriodStart":   input.Data["PeriodStart"],
+		"PeriodEnd":     input.Data["PeriodEnd"],
+		"TotalDebit":    totalDebit,
+		"TotalCredit":   totalCredit,
+		"JournalCount":  journalCount,
+		"Payload":       map[string]any{"JournalCount": journalCount},
+		"LastRunStatus": "balanced",
+	}
+	reportTable, _ := s.table("MGLR")
+	report, err := s.repo.GetRecord(ctx, reportTable, reportCode)
+	if err == ErrNotFound {
+		report, err = s.repo.CreateRecord(ctx, reportTable, RecordInput{Key: reportCode, Data: data})
+	} else if err == nil {
+		report, err = s.repo.UpdateRecord(ctx, reportTable, reportCode, RecordInput{Data: data})
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &ActionResult{TableCode: "MGLR", Key: reportCode, Action: "run", Status: "balanced", Record: report, Effects: map[string]any{"journal_count": journalCount}}, nil
+}
+
+func (s *Service) createBalancedJournalLines(ctx context.Context, journalKey string, debitAccount string, creditAccount string, amount float64, description string) error {
+	if amount <= 0 {
+		return fmt.Errorf("%w: positive journal amount is required", ErrValidation)
+	}
+	if _, err := s.createDocumentLine(ctx, "MJDT", journalKey, "JDT1", "1", map[string]any{
+		"AccountCode": debitAccount,
+		"AccountName": debitAccount,
+		"Debit":       amount,
+		"Credit":      0.0,
+		"Description": description,
+	}); err != nil {
+		return err
+	}
+	if _, err := s.createDocumentLine(ctx, "MJDT", journalKey, "JDT1", "2", map[string]any{
+		"AccountCode": creditAccount,
+		"AccountName": creditAccount,
+		"Debit":       0.0,
+		"Credit":      amount,
+		"Description": description,
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
 func sumLineAmount(lines []map[string]any) float64 {
 	total := 0.0
 	for _, line := range lines {
@@ -1007,4 +1366,12 @@ func numericValue(values map[string]any, key string) float64 {
 	default:
 		return 0
 	}
+}
+
+func positiveNumeric(values map[string]any, key string, fallback float64) float64 {
+	value := numericValue(values, key)
+	if value <= 0 {
+		return fallback
+	}
+	return value
 }

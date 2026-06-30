@@ -513,7 +513,7 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 	var deptID uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO departments (organization_id, name, code, description, metadata)
-		VALUES ($1, 'Default Department', 'DEFAULT', 'Sample tenant default department', jsonb_build_object('system_created', true, 'sample_key', $2))
+		VALUES ($1, 'Default Department', 'DEFAULT', 'Sample tenant default department', jsonb_build_object('system_created', true, 'sample_key', $2::text))
 		ON CONFLICT (organization_id, code) WHERE code IS NOT NULL AND code <> ''
 		DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, metadata = departments.metadata || EXCLUDED.metadata, updated_at = NOW()
 		RETURNING id
@@ -532,7 +532,7 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 			INSERT INTO organization_memberships (
 				organization_id, department_id, member_type, user_id, title, authority_tier, status, metadata
 			)
-			VALUES ($1, $2, 'internal', $3, 'Owner', 'organization_creator', 'active', jsonb_build_object('source', 'sample_tenant', 'sample_key', $4))
+			VALUES ($1, $2, 'internal', $3, 'Owner', 'organization_creator', 'active', jsonb_build_object('source', 'sample_tenant', 'sample_key', $4::text))
 			RETURNING id
 		`, org.ID, deptID, ownerID, record.SampleKey).Scan(&membershipID)
 	} else if err == nil {
@@ -542,7 +542,7 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 			    title = 'Owner',
 			    authority_tier = 'organization_creator',
 			    status = 'active',
-			    metadata = metadata || jsonb_build_object('source', 'sample_tenant', 'sample_key', $3),
+			    metadata = metadata || jsonb_build_object('source', 'sample_tenant', 'sample_key', $3::text),
 			    updated_at = NOW()
 			WHERE id = $1
 		`, membershipID, deptID, record.SampleKey)
@@ -559,7 +559,7 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 		INSERT INTO organization_subscriptions (
 			organization_id, plan_id, status, trial_ends_at, current_period_start, current_period_end, metadata
 		)
-		VALUES ($1, $2, 'trialing', NOW() + INTERVAL '365 days', NOW(), NOW() + INTERVAL '365 days', jsonb_build_object('source', 'sample_tenant', 'sample_key', $3))
+		VALUES ($1, $2, 'trialing', NOW() + INTERVAL '365 days', NOW(), NOW() + INTERVAL '365 days', jsonb_build_object('source', 'sample_tenant', 'sample_key', $3::text))
 		ON CONFLICT (organization_id) DO UPDATE SET
 			plan_id = EXCLUDED.plan_id,
 			status = EXCLUDED.status,
@@ -582,7 +582,7 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 	for _, moduleKey := range record.EnabledModules {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO organization_module_entitlements (organization_id, module_key, status, source, metadata)
-			VALUES ($1, $2, 'enabled', 'trial', jsonb_build_object('sample_key', $3, 'full_authorized', true))
+			VALUES ($1, $2, 'enabled', 'trial', jsonb_build_object('sample_key', $3::text, 'full_authorized', true))
 			ON CONFLICT (organization_id, module_key) DO UPDATE SET
 			    status = 'enabled',
 			    source = 'trial',

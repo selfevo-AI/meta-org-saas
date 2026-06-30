@@ -115,6 +115,40 @@ func TestBuildRetailDistributionSolutionFlowBuildsCodeTablePackage(t *testing.T)
 	}
 }
 
+func TestBuildERPNextManufacturingSolutionFlowBuildsClosedLoopPackage(t *testing.T) {
+	repo := &fakeRepository{role: "system_owner"}
+	service := NewService(repo)
+	organizationID := uuid.New()
+
+	result, err := service.BuildERPNextManufacturingSolutionFlow(context.Background(), uuid.New(), ERPSolutionFlowRequest{
+		OrganizationID: organizationID,
+	})
+	if err != nil {
+		t.Fatalf("BuildERPNextManufacturingSolutionFlow error: %v", err)
+	}
+	if result.RequestType != "erpnext_manufacturing_solution_flow" {
+		t.Fatalf("RequestType = %q, want erpnext_manufacturing_solution_flow", result.RequestType)
+	}
+	manifest, err := AssetManifestFromSolutionManifest(result.SolutionManifest)
+	if err != nil {
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
+	}
+	if manifest.IndustryKey != "manufacturing" || manifest.PackageKey != "erpnext_manufacturing_demo" {
+		t.Fatalf("manifest package = %s/%s, want manufacturing/erpnext_manufacturing_demo", manifest.IndustryKey, manifest.PackageKey)
+	}
+	for _, tableCode := range []string{"MBOM", "BOM1", "MWOR", "WOR1", "MIGE", "MIGN", "MJDT"} {
+		if !manifestHasDatabaseAsset(manifest, tableCode) {
+			t.Fatalf("manifest missing ERPNext manufacturing code-table %s", tableCode)
+		}
+	}
+	if !manifestHasProcessLoop(manifest, "erpnext_manufacturing_bom_to_completion") {
+		t.Fatalf("manifest missing manufacturing process loop")
+	}
+	if !manifestHasRuntimeWorkspace(manifest, "manufacturing", "work_order", "MWOR", "complete") {
+		t.Fatalf("manifest missing work order complete runtime workspace")
+	}
+}
+
 func solutionManifestHasTable(pkg IndustrySolutionManifest, name string) bool {
 	for _, table := range pkg.Tables {
 		if table.Name == name {

@@ -352,10 +352,10 @@ func scanRecord(tableCode, parentTableCode, parentKey string, row interface{ Sca
 	record.Data = map[string]any{}
 	_ = json.Unmarshal(dataJSON, &record.Data)
 	if payload, ok := record.Data["Payload"].(map[string]any); ok {
+		delete(record.Data, "Payload")
 		for k, v := range payload {
 			record.Data[k] = v
 		}
-		delete(record.Data, "Payload")
 	}
 	return &record, nil
 }

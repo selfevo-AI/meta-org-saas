@@ -175,7 +175,7 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 
 The stage principle is SaaS management platform first, then platform-created or platform-adjusted industry solutions, then the ERP baseline and AI capability baseline. Future database structure, relationship, foreign-key, index, seed-data, or schema-generation changes must update the matching stage SQL and `migrations/BASELINE_RESTRUCTURE.md`.
 
-The `000` baseline seeds a `local_manufacturing_demo` industry-solution sample in the SaaS management catalog. It includes a sample tenant database template, the `sample_work_orders` sample table, and `sample.work_order.create` sample function metadata. The physical sample database is still created by tenant database provisioning or a later maintenance job, not directly inside the SQL baseline transaction.
+The `000` baseline seeds an `erpnext_manufacturing_demo` industry-solution sample in the SaaS management catalog. It includes a sample tenant database template, ERPNext-style BOM/work-order workspace metadata, and manufacturing closed-loop operation metadata. The physical sample database is still created by tenant database provisioning or a later maintenance job, not directly inside the SQL baseline transaction.
 
 ## SaaS Database Naming Rules
 

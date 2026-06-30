@@ -131,6 +131,10 @@ BEGIN
             ('IGE1','Goods Issue - Rows','warehouse','DocEntry','child','MIGE'),
             ('MIGN','Goods Receipt','warehouse','DocEntry','master',''),
             ('IGN1','Goods Receipt - Rows','warehouse','DocEntry','child','MIGN'),
+            ('MBOM','Bill of Materials','manufacturing','BOMCode','master',''),
+            ('BOM1','Bill of Materials - Components','manufacturing','BOMCode','child','MBOM'),
+            ('MWOR','Work Order','manufacturing','WorkOrderCode','master',''),
+            ('WOR1','Work Order - Required Items','manufacturing','WorkOrderCode','child','MWOR'),
             ('MWHS','Warehouses','warehouse','WhsCode','master',''),
             ('AWHS','Warehouses - History','warehouse','WhsCode','child','MWHS'),
             ('MRPS','Retail POS Sale','retail','DocEntry','master',''),
@@ -2060,8 +2064,8 @@ ON CONFLICT (table_name, field_name) DO UPDATE SET
 -- such as inventory_counts, inventory_transfers, purchase_orders, or
 -- sales_shipments. Procurement, sales, inventory, warehouse, and retail industry
 -- flows use ERP code-table master/detail pairs registered in MREG, for example
--- MPOR/POR1, MRDR/RDR1, MITW/ITW1, MRPS/RPS1, MDRQ/DRQ1, MDSP/DSP1,
--- MDRC/DRC1, MCNT/CNT1, and MSPR/SPR1.
+-- MPOR/POR1, MRDR/RDR1, MITW/ITW1, MBOM/BOM1, MWOR/WOR1, MRPS/RPS1,
+-- MDRQ/DRQ1, MDSP/DSP1, MDRC/DRC1, MCNT/CNT1, and MSPR/SPR1.
 
 INSERT INTO module_master_source_catalog(module_name, source_table, entity_type, relation_mode, parent_table, parent_fk, key_prefix, metadata)
 VALUES
@@ -2083,7 +2087,11 @@ VALUES
     ('retail', 'MCNT', 'store_inventory_count', 'master', NULL, NULL, 'CNT', '{"code_table":true,"industry_solution":"retail_distribution_v1"}'::jsonb),
     ('retail', 'CNT1', 'store_inventory_count_line', 'detail', 'MCNT', 'DocEntry', 'CNT', '{"code_table":true,"industry_solution":"retail_distribution_v1"}'::jsonb),
     ('retail', 'MSPR', 'special_purchase_request', 'master', NULL, NULL, 'SPR', '{"code_table":true,"industry_solution":"retail_distribution_v1"}'::jsonb),
-    ('retail', 'SPR1', 'special_purchase_request_line', 'detail', 'MSPR', 'DocEntry', 'SPR', '{"code_table":true,"industry_solution":"retail_distribution_v1"}'::jsonb)
+    ('retail', 'SPR1', 'special_purchase_request_line', 'detail', 'MSPR', 'DocEntry', 'SPR', '{"code_table":true,"industry_solution":"retail_distribution_v1"}'::jsonb),
+    ('manufacturing', 'MBOM', 'bill_of_materials', 'master', NULL, NULL, 'BOM', '{"code_table":true,"industry_solution":"erpnext_manufacturing_demo"}'::jsonb),
+    ('manufacturing', 'BOM1', 'bill_of_materials_component', 'detail', 'MBOM', 'BOMCode', 'BOM', '{"code_table":true,"industry_solution":"erpnext_manufacturing_demo"}'::jsonb),
+    ('manufacturing', 'MWOR', 'work_order', 'master', NULL, NULL, 'WOR', '{"code_table":true,"industry_solution":"erpnext_manufacturing_demo"}'::jsonb),
+    ('manufacturing', 'WOR1', 'work_order_required_item', 'detail', 'MWOR', 'WorkOrderCode', 'WOR', '{"code_table":true,"industry_solution":"erpnext_manufacturing_demo"}'::jsonb)
 ON CONFLICT (source_table) DO UPDATE SET
     module_name = EXCLUDED.module_name,
     entity_type = EXCLUDED.entity_type,
@@ -2099,7 +2107,8 @@ VALUES
     ('procurement', 'Procurement', 'business', true, 'commercial', '{"code_table_supply_chain":true}'::jsonb),
     ('sales', 'Sales', 'business', true, 'commercial', '{"code_table_supply_chain":true}'::jsonb),
     ('inventory', 'Inventory', 'business', true, 'commercial', '{"code_table_supply_chain":true}'::jsonb),
-    ('retail', 'Retail Distribution', 'industry', true, 'commercial', '{"industry_solution":"retail_distribution_v1","code_table_only":true}'::jsonb)
+    ('retail', 'Retail Distribution', 'industry', true, 'commercial', '{"industry_solution":"retail_distribution_v1","code_table_only":true}'::jsonb),
+    ('manufacturing', 'Manufacturing', 'industry', true, 'commercial', '{"industry_solution":"erpnext_manufacturing_demo","code_table_only":true}'::jsonb)
 ON CONFLICT (module_key) DO UPDATE SET
     display_name = EXCLUDED.display_name,
     category = EXCLUDED.category,
@@ -2115,7 +2124,7 @@ BEGIN
         INSERT INTO saas_plan_modules(plan_id, module_key)
         SELECT p.id, m.module_key
         FROM saas_plans p
-        JOIN saas_modules m ON m.module_key IN ('procurement', 'sales', 'inventory', 'retail')
+        JOIN saas_modules m ON m.module_key IN ('procurement', 'sales', 'inventory', 'retail', 'manufacturing')
         WHERE p.code = 'foundation'
         ON CONFLICT (plan_id, module_key) DO NOTHING;
     END IF;

@@ -633,6 +633,38 @@ func (s *Service) BuildRetailDistributionSolutionFlow(ctx context.Context, actor
 	})
 }
 
+func (s *Service) BuildERPNextManufacturingSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*IndustrySolutionChangeRequest, error) {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "manufacturing"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "erpnext_manufacturing_demo"
+	}
+	if input.Name == "" {
+		input.Name = "ERPNext Manufacturing Demo"
+	}
+	input.EnabledModules = []string{"master_data", "procurement", "inventory", "sales", "finance", "manufacturing"}
+	solutionManifest := BuildERPNextManufacturingSolutionManifest(input)
+	desiredAssetManifest, err := AssetManifestFromSolutionManifest(solutionManifest)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	currentAssetManifest := IndustrySolutionAssetManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
+	if input.CurrentTemplate != nil {
+		if parsed, err := AssetManifestFromSolutionManifest(*input.CurrentTemplate); err == nil {
+			currentAssetManifest = parsed
+		}
+	}
+	solutionManifest.Metadata["package_diff"] = BuildIndustrySolutionAssetDiff(currentAssetManifest, desiredAssetManifest)
+	return s.CreateIndustrySolutionChangeRequest(ctx, actorID, CreateIndustrySolutionChangeRequestInput{
+		OrganizationID:          input.OrganizationID,
+		RequestType:             "erpnext_manufacturing_solution_flow",
+		Reason:                  "Create ERPNext manufacturing industry solution flow",
+		SolutionManifest:        solutionManifest,
+		CurrentSolutionManifest: input.CurrentTemplate,
+	})
+}
+
 func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionManifest {
 	catalog := erp.DefaultCatalog()
 	actions := erp.DefaultActionRegistry().List()
@@ -656,6 +688,16 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 			"primary_key":  table.PrimaryKey,
 			"child_tables": childTables,
 		})
+		for _, child := range table.Children {
+			databaseAssets = append(databaseAssets, map[string]any{
+				"table_code":  child.Code,
+				"name":        child.Name,
+				"module":      table.Module,
+				"primary_key": child.ParentKey,
+				"parent_code": table.Code,
+				"line_key":    child.LineKey,
+			})
+		}
 	}
 	businessFunctions := make([]map[string]any, 0, len(actions))
 	for _, action := range actions {
@@ -932,6 +974,54 @@ func BuildRetailDistributionSolutionManifest(input ERPSolutionFlowRequest) Indus
 	return manifest
 }
 
+func BuildERPNextManufacturingSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionManifest {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "manufacturing"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "erpnext_manufacturing_demo"
+	}
+	if input.Name == "" {
+		input.Name = "ERPNext Manufacturing Demo"
+	}
+	input.EnabledModules = []string{"master_data", "procurement", "inventory", "sales", "finance", "manufacturing"}
+	manifest := BuildERPSolutionManifest(input)
+	manifest.ModuleKey = "erpnext_manufacturing"
+	manifest.Metadata["solution_key"] = "erpnext_manufacturing_demo"
+	manifest.Metadata["code_table_only"] = true
+	manifest.Metadata["erpnext_reference"] = "manufacturing.bom.work_order"
+	manifest.Metadata["ui_workspaces"] = []string{"master_data", "procurement", "sales", "inventory", "finance", "manufacturing", "developer_erp_code"}
+	manifest.Metadata["assistant_targets"] = []string{"item", "warehouse", "bill_of_materials", "work_order", "goods_issue", "goods_receipt", "journal_entry", "trial_balance"}
+	manifest.Metadata["process_loops"] = append(mapSliceFromAny(manifest.Metadata["process_loops"]),
+		map[string]any{"key": "erpnext_manufacturing_bom_to_completion", "steps": []string{"MBOM.approve", "MBOM.make-work-order", "MWOR.release", "MWOR.issue-material", "MWOR.complete", "MIGN", "MIGE", "MJDT"}},
+	)
+	manifest.Metadata["verification_scenarios"] = append(mapSliceFromAny(manifest.Metadata["verification_scenarios"]),
+		map[string]any{"scenario_key": "erpnext_manufacturing_bom_to_completion_smoke", "steps": []string{"MBOM.approve", "MBOM.make-work-order", "MWOR.release", "MWOR.issue-material", "MWOR.complete"}, "expected": []string{"MWOR", "WOR1", "MIGE", "MIGN", "MJDT"}},
+	)
+	manifest.Metadata["context_rules"] = append(mapSliceFromAny(manifest.Metadata["context_rules"]),
+		map[string]any{
+			"key":                  "erpnext_manufacturing_state_context",
+			"scope":                "manufacturing",
+			"source_tables":        []string{"MBOM", "BOM1", "MWOR", "WOR1", "MITM", "MITW", "MWHS", "MIGE", "MIGN", "MJDT"},
+			"required_permissions": []string{"erp:read", "assistant:erp"},
+			"workflow_stages":      []string{"draft", "approved", "planned", "released", "in_process", "completed", "closed"},
+			"attention_budget":     "manufacturing_bom_work_order_loop",
+		},
+	)
+	manifest.Metadata["assistant_skills"] = append(mapSliceFromAny(manifest.Metadata["assistant_skills"]),
+		map[string]any{
+			"skill_key":     "erpnext_manufacturing_operator",
+			"targets":       []string{"bill_of_materials", "work_order", "goods_issue", "goods_receipt", "journal_entry"},
+			"context_rules": []string{"erpnext_manufacturing_state_context"},
+			"allowed_tools": []string{"erp.mbom.approve", "erp.mbom.make-work-order", "erp.mwor.release", "erp.mwor.issue-material", "erp.mwor.complete"},
+		},
+	)
+	assetManifest := buildIndustryAssetManifest(input, manifest.Metadata)
+	assetManifest.Dependencies = append(assetManifest.Dependencies, "erp.erpnext_manufacturing_code_tables")
+	setIndustryAssetManifest(&manifest, assetManifest)
+	return manifest
+}
+
 type erpRuntimeWorkspaceDocument struct {
 	Module       string
 	DocumentID   string
@@ -995,6 +1085,10 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		{Module: "retail", DocumentID: "stock_policy", LabelKey: "erp.document.stockPolicy", SubmoduleKey: "erp.submodule.inventoryControl", TableCode: "MSTP", Actions: []string{"replenish"}, SortOrder: 110},
 		{Module: "retail", DocumentID: "store_count", LabelKey: "erp.document.storeCount", SubmoduleKey: "erp.submodule.inventoryControl", TableCode: "MCNT", Actions: []string{"submit", "approve", "post-adjustment"}, SortOrder: 120},
 		{Module: "retail", DocumentID: "special_purchase_request", LabelKey: "erp.document.specialPurchaseRequest", SubmoduleKey: "erp.submodule.specialProcurement", TableCode: "MSPR", Actions: []string{"submit", "approve", "convert-to-purchase-order"}, SortOrder: 130},
+		{Module: "manufacturing", DocumentID: "bill_of_materials", LabelKey: "erp.document.billOfMaterials", SubmoduleKey: "erp.submodule.bom", TableCode: "MBOM", Actions: []string{"approve", "make-work-order"}, SortOrder: 10},
+		{Module: "manufacturing", DocumentID: "work_order", LabelKey: "erp.document.workOrder", SubmoduleKey: "erp.submodule.workOrders", TableCode: "MWOR", Actions: []string{"release", "issue-material", "complete", "close", "stop", "reopen"}, SortOrder: 20},
+		{Module: "manufacturing", DocumentID: "goods_issue", LabelKey: "erp.document.goodsIssue", SubmoduleKey: "erp.submodule.materialIssue", TableCode: "MIGE", Actions: []string{"post"}, SortOrder: 30},
+		{Module: "manufacturing", DocumentID: "goods_receipt", LabelKey: "erp.document.goodsReceipt", SubmoduleKey: "erp.submodule.finishedGoodsReceipt", TableCode: "MIGN", Actions: []string{"post"}, SortOrder: 40},
 	}
 	operations := []map[string]any{}
 	seenPaths := map[string]bool{}

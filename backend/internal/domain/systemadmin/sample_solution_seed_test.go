@@ -21,15 +21,16 @@ func TestBaselineSeedsLocalManufacturingSampleIndustrySolution(t *testing.T) {
 	sql := string(data)
 
 	required := []string{
-		"local_manufacturing_demo",
-		"Local Manufacturing Demo",
+		"erpnext_manufacturing_demo",
+		"ERPNext Manufacturing Demo",
 		"platform.capability_packages",
 		"platform.marketplace_listings",
 		"sample_industry_solution",
 		"tenant_database_template",
 		"database_name_prefix",
-		"sample_work_order",
-		"sample_work_order_create",
+		`"table_code": "MBOM"`,
+		`"table_code": "MWOR"`,
+		"runtime_operation.erpnext_work_order_complete",
 		"('erp', 'ERP'",
 		"('inventory', 'Inventory'",
 		"('procurement', 'Procurement'",

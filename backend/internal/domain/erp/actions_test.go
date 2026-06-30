@@ -35,6 +35,14 @@ func TestDefaultActionRegistryIncludesBusinessActions(t *testing.T) {
 		{"MSPR", "submit"},
 		{"MSPR", "approve"},
 		{"MSPR", "convert-to-purchase-order"},
+		{"MBOM", "approve"},
+		{"MBOM", "make-work-order"},
+		{"MWOR", "release"},
+		{"MWOR", "issue-material"},
+		{"MWOR", "complete"},
+		{"MWOR", "close"},
+		{"MWOR", "stop"},
+		{"MWOR", "reopen"},
 	}
 
 	for _, tc := range cases {

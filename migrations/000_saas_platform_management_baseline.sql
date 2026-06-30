@@ -1601,6 +1601,7 @@ INSERT INTO saas_modules(module_key, display_name, category, enabled_default, li
     ('inventory', 'Inventory', 'business', true, 'commercial'),
     ('procurement', 'Procurement', 'business', true, 'commercial'),
     ('sales', 'Sales', 'business', true, 'commercial'),
+    ('manufacturing', 'Manufacturing', 'business', true, 'commercial'),
     ('developer_tools', 'Developer Tools', 'system', true, 'commercial')
 ON CONFLICT (module_key) DO UPDATE SET
     display_name = EXCLUDED.display_name,
@@ -2193,82 +2194,90 @@ WITH sample_industry_solution AS (
         artifact_hash, manifest, metadata
     )
     VALUES (
-        'local_manufacturing_demo',
+        'erpnext_manufacturing_demo',
         'industry_solution',
         'v1',
-        'Local Manufacturing Demo',
+        'ERPNext Manufacturing Demo',
         'published',
-        'sample-local-manufacturing-demo-v1',
+        'erpnext-manufacturing-demo-v1',
         '{
             "manifest_version": "meta-org.industry-solution.v1",
-            "industry_key": "local_manufacturing",
-            "package_key": "local_manufacturing_demo",
+            "industry_key": "manufacturing",
+            "package_key": "erpnext_manufacturing_demo",
             "package_version": "v1",
-            "dependencies": ["tenant_database.provisioning", "platform.runtime_operations"],
-            "quality_gates": ["sample_work_order_schema_smoke"],
-            "verification_scenarios": ["sample_work_order_create"],
+            "dependencies": ["tenant_database.provisioning", "platform.runtime_operations", "erp.erpnext_manufacturing_code_tables"],
+            "quality_gates": ["erpnext_manufacturing_closed_loop_smoke"],
+            "verification_scenarios": ["erpnext_manufacturing_bom_to_completion_smoke"],
             "assets": [
                 {
-                    "asset_key": "database_asset.sample_work_order",
+                    "asset_key": "database_asset.mbom",
                     "asset_type": "database_asset",
                     "version": "v1",
-                    "source": "platform_sample_seed",
+                    "source": "erpnext_reference_import",
                     "owner": "platform",
                     "risk_level": "low",
                     "payload": {
-                        "table_name": "sample_work_orders",
-                        "display_name": "Sample work orders",
-                        "tenant_database_template": {
-                            "deployment_mode": "dedicated_database",
-                            "schema_name": "public",
-                            "database_name_prefix": "meta_org_"
-                        },
-                        "fields": [
-                            {"field_name": "id", "data_type": "uuid", "primary_key": true, "default": "gen_random_uuid()"},
-                            {"field_name": "work_order_no", "data_type": "varchar(64)", "required": true},
-                            {"field_name": "status", "data_type": "varchar(32)", "required": true, "default": "draft"},
-                            {"field_name": "payload", "data_type": "jsonb", "required": true, "default": "{}"}
-                        ]
+                        "table_code": "MBOM",
+                        "display_name": "Bill of Materials",
+                        "module": "manufacturing",
+                        "primary_key": "BOMCode",
+                        "child_tables": ["BOM1"]
                     }
                 },
                 {
-                    "asset_key": "runtime_operation.sample_work_order_create",
-                    "asset_type": "runtime_operation",
+                    "asset_key": "database_asset.mwor",
+                    "asset_type": "database_asset",
                     "version": "v1",
-                    "source": "platform_sample_seed",
+                    "source": "erpnext_reference_import",
                     "owner": "platform",
                     "risk_level": "low",
                     "payload": {
-                        "operation_key": "sample.work_order.create",
-                        "domain": "manufacturing_sample",
-                        "title": "operation.sample.workOrder.create",
+                        "table_code": "MWOR",
+                        "display_name": "Work Order",
+                        "module": "manufacturing",
+                        "primary_key": "WorkOrderCode",
+                        "child_tables": ["WOR1"]
+                    }
+                },
+                {
+                    "asset_key": "runtime_operation.erpnext_work_order_complete",
+                    "asset_type": "runtime_operation",
+                    "version": "v1",
+                    "source": "erpnext_reference_import",
+                    "owner": "platform",
+                    "risk_level": "medium",
+                    "payload": {
+                        "operation_key": "erp.workspace.manufacturing.work_order.complete",
+                        "domain": "ERP",
+                        "title": "operation.erp.mwor.complete",
                         "method": "POST",
-                        "path": "/runtime/sample/work-orders",
+                        "path": "/erp/MWOR/{key}/actions/complete",
                         "operation_kind": "direct",
-                        "danger_level": "low",
+                        "danger_level": "medium",
                         "result_view": "detail",
-                        "action_type": "sample.work_order.create",
+                        "assistant_eligible": true,
+                        "action_type": "erp.action.execute",
                         "workspace": {
-                            "module": "manufacturing_sample",
-                            "document_id": "sample_work_order",
+                            "module": "manufacturing",
+                            "document_id": "work_order",
                             "kind": "document",
-                            "table_code": "SWOR",
-                            "action": "create"
+                            "table_code": "MWOR",
+                            "action": "complete"
                         }
                     }
                 },
                 {
-                    "asset_key": "ui_workspace.sample_work_order",
+                    "asset_key": "ui_workspace.erpnext_manufacturing",
                     "asset_type": "ui_workspace",
                     "version": "v1",
-                    "source": "platform_sample_seed",
+                    "source": "erpnext_reference_import",
                     "owner": "platform",
                     "risk_level": "low",
                     "payload": {
-                        "workspace_key": "sample.work_orders",
-                        "module": "manufacturing_sample",
-                        "document_id": "sample_work_order",
-                        "primary_operation": "sample.work_order.create"
+                        "workspace_key": "manufacturing",
+                        "module": "manufacturing",
+                        "documents": ["bill_of_materials", "work_order", "goods_issue", "goods_receipt"],
+                        "primary_operation": "erp.workspace.manufacturing.work_order.complete"
                     }
                 }
             ]
@@ -2277,12 +2286,13 @@ WITH sample_industry_solution AS (
             "seed": true,
             "sample_industry_solution": true,
             "sample_scope": "local_development",
+            "erpnext_reference": "manufacturing.bom.work_order",
             "tenant_database_template": {
                 "deployment_mode": "dedicated_database",
                 "schema_name": "public",
                 "database_name_prefix": "meta_org_"
             },
-            "notes": "Sample tenant database and sample function definition for SaaS management planning. Physical database creation is executed by tenant database provisioning, not by this baseline migration."
+            "notes": "ERPNext manufacturing demo package for SaaS management planning. Physical database creation and code-table seed data are executed by tenant database provisioning."
         }'::jsonb
     )
     ON CONFLICT (package_key, package_type, version_key) DO UPDATE SET
@@ -2306,7 +2316,7 @@ SELECT
     '{"billing_mode":"free_sample"}'::jsonb,
     '{"license_scope":"local_development","private_deployment_allowed":true}'::jsonb,
     '{"settlement_mode":"none"}'::jsonb,
-    '{"seed":true,"sample_industry_solution":true,"catalog":"saas_management_samples"}'::jsonb
+    '{"seed":true,"sample_industry_solution":true,"catalog":"saas_management_samples","package_key":"erpnext_manufacturing_demo"}'::jsonb
 FROM sample_industry_solution
 ON CONFLICT (package_id, listing_type) DO UPDATE SET
     status = EXCLUDED.status,
@@ -3264,6 +3274,7 @@ CROSS JOIN (VALUES
     ('inventory', 'Inventory'),
     ('procurement', 'Procurement'),
     ('sales', 'Sales'),
+    ('manufacturing', 'Manufacturing'),
     ('developer_tools', 'Developer Tools')
 ) AS modules(module_key, display_name)
 CROSS JOIN LATERAL (SELECT module_key || '-module' AS asset_key) asset_keys
@@ -3297,6 +3308,7 @@ FROM manufacturing_package
 CROSS JOIN (VALUES
     ('organization', 'Organization'),
     ('inventory', 'Inventory'),
+    ('manufacturing', 'Manufacturing'),
     ('procurement', 'Procurement'),
     ('sales', 'Sales'),
     ('finance', 'Finance'),
@@ -3307,6 +3319,42 @@ CROSS JOIN (VALUES
 ) AS modules(module_key, display_name)
 CROSS JOIN LATERAL (SELECT module_key || '-module' AS asset_key) asset_keys
 ON CONFLICT (solution_id, asset_key) DO UPDATE SET
+    payload = EXCLUDED.payload,
+    metadata = platform.industry_solution_assets.metadata || EXCLUDED.metadata,
+    updated_at = NOW();
+
+WITH erpnext_manufacturing_package AS (
+    INSERT INTO platform.industry_solutions(industry_key, solution_key, version, name, description, status, metadata)
+    VALUES (
+        'manufacturing',
+        'erpnext_manufacturing_demo',
+        1,
+        'ERPNext Manufacturing Demo',
+        'ERPNext-inspired manufacturing industry solution with BOM, work order, material issue, finished-goods receipt, and production journal closure',
+        'active',
+        '{"seed":true,"erpnext_reference":"manufacturing.bom.work_order","code_table_only":true}'::jsonb
+    )
+    ON CONFLICT (industry_key, solution_key, version) DO UPDATE SET
+        name = EXCLUDED.name,
+        description = EXCLUDED.description,
+        status = EXCLUDED.status,
+        metadata = platform.industry_solutions.metadata || EXCLUDED.metadata,
+        updated_at = NOW()
+    RETURNING id
+)
+INSERT INTO platform.industry_solution_assets(solution_id, asset_key, asset_type, payload, metadata)
+SELECT id, asset_key, asset_type, payload, '{"seed":true,"solution_key":"erpnext_manufacturing_demo"}'::jsonb
+FROM erpnext_manufacturing_package
+CROSS JOIN (VALUES
+    ('mbom-table', 'database_table', '{"table_code":"MBOM","display_name":"Bill of Materials","module":"manufacturing","primary_key":"BOMCode","child_tables":["BOM1"]}'::jsonb),
+    ('bom1-table', 'database_table', '{"table_code":"BOM1","display_name":"Bill of Materials - Components","module":"manufacturing","parent_code":"MBOM","parent_key":"BOMCode"}'::jsonb),
+    ('mwor-table', 'database_table', '{"table_code":"MWOR","display_name":"Work Order","module":"manufacturing","primary_key":"WorkOrderCode","child_tables":["WOR1"]}'::jsonb),
+    ('wor1-table', 'database_table', '{"table_code":"WOR1","display_name":"Work Order - Required Items","module":"manufacturing","parent_code":"MWOR","parent_key":"WorkOrderCode"}'::jsonb),
+    ('manufacturing-module', 'module', '{"module_key":"manufacturing","display_name":"Manufacturing"}'::jsonb),
+    ('manufacturing-workbench', 'runtime_operation', '{"operation_key":"erp.workspace.manufacturing.work_order.complete","path":"/erp/MWOR/{key}/actions/complete","method":"POST","workspace":{"module":"manufacturing","document_id":"work_order","table_code":"MWOR","action":"complete"}}'::jsonb)
+) AS assets(asset_key, asset_type, payload)
+ON CONFLICT (solution_id, asset_key) DO UPDATE SET
+    asset_type = EXCLUDED.asset_type,
     payload = EXCLUDED.payload,
     metadata = platform.industry_solution_assets.metadata || EXCLUDED.metadata,
     updated_at = NOW();

@@ -96,6 +96,10 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		"('MRDR','Sales Order','sale','DocEntry','master','')",
 		"('MITW','Items - Warehouse','product','ItemCode','master','')",
 		"('MRPS','Retail POS Sale','retail','DocEntry','master','')",
+		"('MBOM','Bill of Materials','manufacturing','BOMCode','master','')",
+		"('MWOR','Work Order','manufacturing','WorkOrderCode','master','')",
+		"('manufacturing', 'MBOM', 'bill_of_materials'",
+		"('manufacturing', 'Manufacturing', 'industry', true, 'commercial'",
 		"CREATE TABLE IF NOT EXISTS finance_payables",
 	} {
 		if !strings.Contains(sql, snippet) {

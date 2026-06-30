@@ -60,6 +60,29 @@ func TestBootstrapTenantDataDoesNotSendParameterizedMultiStatementERPSeed(t *tes
 	}
 }
 
+func TestBootstrapTenantDataSeedsERPNextManufacturingDemoCodeTables(t *testing.T) {
+	departmentID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174111")
+	db := &captureBootstrapDB{tx: &captureBootstrapTx{departmentID: departmentID}}
+
+	err := BootstrapTenantData(context.Background(), db, TenantBootstrapInput{
+		OrganizationID:               uuid.MustParse("123e4567-e89b-12d3-a456-426614174000"),
+		OwnerUserID:                  uuid.MustParse("123e4567-e89b-12d3-a456-426614174001"),
+		OwnerName:                    "Demo Owner",
+		OwnerEmail:                   "demo@local.com",
+		SampleKey:                    "erpnext_manufacturing_demo",
+		IncludeBusinessClosureSample: true,
+	})
+	if err != nil {
+		t.Fatalf("BootstrapTenantData() error = %v", err)
+	}
+
+	for _, table := range []string{`"MBOM"`, `"BOM1"`, `"MWOR"`, `"WOR1"`} {
+		if db.tx.sqlContaining(table) == "" {
+			t.Fatalf("bootstrap SQL missing %s seed; SQL statements = %#v", table, db.tx.execSQL)
+		}
+	}
+}
+
 type captureBootstrapDB struct {
 	tx *captureBootstrapTx
 }

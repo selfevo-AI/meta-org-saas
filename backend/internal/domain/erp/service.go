@@ -84,6 +84,7 @@ func (s *Service) CreateRecord(ctx context.Context, tableCode string, input Reco
 	if err != nil {
 		return nil, err
 	}
+	input = flattenPayloadInput(input)
 	if err := validateRecordInput(table, input); err != nil {
 		return nil, err
 	}
@@ -103,6 +104,7 @@ func (s *Service) UpdateRecord(ctx context.Context, tableCode, key string, input
 	if err != nil {
 		return nil, err
 	}
+	input = flattenPayloadInput(input)
 	if err := validateRecordInput(table, input); err != nil {
 		return nil, err
 	}
@@ -130,6 +132,7 @@ func (s *Service) CreateChildRecord(ctx context.Context, tableCode, parentKey, c
 	if err != nil {
 		return nil, err
 	}
+	input = flattenPayloadInput(input)
 	if err := validateChildRecordInput(child, input); err != nil {
 		return nil, err
 	}
@@ -144,6 +147,7 @@ func (s *Service) UpdateChildRecord(ctx context.Context, tableCode, parentKey, c
 	if strings.TrimSpace(parentKey) == "" || strings.TrimSpace(lineKey) == "" {
 		return nil, fmt.Errorf("%w: child parent key and line key are required", ErrValidation)
 	}
+	input = flattenPayloadInput(input)
 	if err := validateChildRecordInput(child, input); err != nil {
 		return nil, err
 	}
@@ -438,4 +442,20 @@ func validateChildRecordInput(child ChildTableDefinition, input RecordInput) err
 		}
 	}
 	return nil
+}
+
+func flattenPayloadInput(input RecordInput) RecordInput {
+	nested, ok := input.Data["Payload"].(map[string]any)
+	if !ok {
+		return input
+	}
+	flattened := copyData(nested)
+	for name, value := range input.Data {
+		if name == "Payload" {
+			continue
+		}
+		flattened[name] = value
+	}
+	input.Data = flattened
+	return input
 }

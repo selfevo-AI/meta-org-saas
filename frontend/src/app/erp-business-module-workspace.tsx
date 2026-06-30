@@ -29,7 +29,7 @@ import {
 } from '@/lib/workbench'
 import { DocumentWorkbench } from './document-workbench'
 
-type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail'
+type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail' | 'manufacturing'
 
 type BusinessSelection = {
   targetID?: string
@@ -111,6 +111,13 @@ const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
     { id: 'stock_policy', labelKey: 'erp.document.stockPolicy', submoduleKey: 'erp.submodule.stockPolicies', tableCode: 'MSTP', primaryKey: 'PolicyCode', childCode: 'STP1', actions: ['replenish'], sortOrder: 110 },
     { id: 'store_count', labelKey: 'erp.document.storeCount', submoduleKey: 'erp.submodule.storeCounts', tableCode: 'MCNT', primaryKey: 'DocEntry', childCode: 'CNT1', actions: ['submit', 'approve', 'post-adjustment'], sortOrder: 120 },
     { id: 'special_purchase_request', labelKey: 'erp.document.specialPurchaseRequest', submoduleKey: 'erp.submodule.specialPurchaseRequests', tableCode: 'MSPR', primaryKey: 'DocEntry', childCode: 'SPR1', actions: ['submit', 'approve', 'convert-to-purchase-order'], sortOrder: 130 },
+  ],
+  manufacturing: [
+    { id: 'bill_of_materials', labelKey: 'erp.document.billOfMaterials', submoduleKey: 'erp.submodule.bom', tableCode: 'MBOM', primaryKey: 'BOMCode', childCode: 'BOM1', actions: ['approve', 'make-work-order'], sortOrder: 10 },
+    { id: 'work_order', labelKey: 'erp.document.workOrder', submoduleKey: 'erp.submodule.workOrders', tableCode: 'MWOR', primaryKey: 'WorkOrderCode', childCode: 'WOR1', actions: ['release', 'issue-material', 'complete', 'stop', 'reopen', 'close'], sortOrder: 20 },
+    { id: 'material_issue', labelKey: 'erp.document.goodsIssue', submoduleKey: 'erp.submodule.materialIssue', tableCode: 'MIGE', primaryKey: 'DocEntry', childCode: 'IGE1', actions: ['post'], sortOrder: 30 },
+    { id: 'finished_goods_receipt', labelKey: 'erp.document.goodsReceipt', submoduleKey: 'erp.submodule.finishedGoodsReceipt', tableCode: 'MIGN', primaryKey: 'DocEntry', childCode: 'IGN1', actions: ['post'], sortOrder: 40 },
+    { id: 'production_journal', labelKey: 'erp.document.journalEntry', submoduleKey: 'erp.submodule.productionJournal', tableCode: 'MJDT', primaryKey: 'TransId', childCode: 'JDT1', actions: ['post'], sortOrder: 50 },
   ],
   finance: [
     { id: 'gl_account', labelKey: 'erp.document.glAccount', submoduleKey: 'erp.submodule.chartOfAccounts', tableCode: 'MACT', primaryKey: 'AcctCode', childCode: 'AACT', sortOrder: 10 },
@@ -763,6 +770,17 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
                     <ERPInput label={t('erp.business.amount')} value={form.amount} onChange={(value) => setForm((current) => ({ ...current, amount: value }))} placeholder="100" />
                   </div>
                 )}
+                {(activeDocument.tableCode === 'MBOM' || activeDocument.tableCode === 'MWOR') && (
+                  <div className="mt-3 space-y-2">
+                    {activeDocument.tableCode === 'MBOM' && (
+                      <ERPInput label={t('erp.business.workOrderCode')} value={form.targetKey} onChange={(value) => setForm((current) => ({ ...current, targetKey: value }))} placeholder="WO-1001" />
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      <ERPInput label={t('erp.business.quantity')} value={form.quantity} onChange={(value) => setForm((current) => ({ ...current, quantity: value }))} placeholder="1" />
+                      <ERPInput label={t('erp.business.whsCode')} value={form.whsCode} onChange={(value) => setForm((current) => ({ ...current, whsCode: value }))} placeholder="WHS-DEMO" />
+                    </div>
+                  </div>
+                )}
                 <div className="mt-3 grid gap-2">
                   {availableActions.map(({ action }) => (
                     <button
@@ -977,7 +995,7 @@ function ERPStatusPill({ value }: { value: string }) {
   return <span className={`inline-flex h-7 max-w-[140px] items-center truncate rounded-full border px-2.5 text-xs font-semibold ${tone}`}>{t(value)}</span>
 }
 
-function buildRecordData(document: DocumentConfig, form: { key: string; name: string; cardCode: string; quantity: string; price: string }) {
+function buildRecordData(document: DocumentConfig, form: { key: string; name: string; cardCode: string; itemCode: string; whsCode: string; quantity: string; price: string }) {
   const key = form.key.trim()
   const payload = {
     Name: form.name.trim(),
@@ -998,15 +1016,47 @@ function buildRecordData(document: DocumentConfig, form: { key: string; name: st
   if (document.primaryKey === 'PrjCode') {
     data.Active = 'Y'
   }
+  if (document.primaryKey === 'BOMCode') {
+    data.Status = 'draft'
+    data.ItemCode = form.cardCode.trim() || form.key.trim()
+    data.Quantity = Number(form.quantity || 1)
+    data.SourceWhsCode = 'WHS-DEMO'
+    data.WipWhsCode = 'WHS-DEMO'
+    data.FinishedWhsCode = 'WHS-DEMO'
+  }
+  if (document.primaryKey === 'WorkOrderCode') {
+    data.Status = 'planned'
+    data.BOMCode = form.cardCode.trim()
+    data.ItemCode = form.itemCode.trim()
+    data.Quantity = Number(form.quantity || 1)
+    data.SourceWhsCode = form.whsCode.trim()
+    data.WipWhsCode = form.whsCode.trim()
+    data.FinishedWhsCode = form.whsCode.trim()
+  }
   return data
 }
 
-function buildActionData(action: string, form: { targetKey: string; amount: string }) {
+function buildActionData(action: string, form: { key: string; targetKey: string; amount: string; quantity: string; whsCode: string }) {
   if (action === 'allocate') {
     return {
       TargetTable: 'MINV',
       TargetKey: form.targetKey.trim(),
       Amount: Number(form.amount || 0),
+    }
+  }
+  if (action === 'make-work-order') {
+    return {
+      WorkOrderCode: form.targetKey.trim() || undefined,
+      Quantity: Number(form.quantity || 1),
+      SourceWhsCode: form.whsCode.trim() || undefined,
+      WipWhsCode: form.whsCode.trim() || undefined,
+      FinishedWhsCode: form.whsCode.trim() || undefined,
+    }
+  }
+  if (action === 'complete') {
+    return {
+      Quantity: Number(form.quantity || 0) || undefined,
+      FinishedWhsCode: form.whsCode.trim() || undefined,
     }
   }
   return {}
@@ -1053,6 +1103,22 @@ function isERPActionAvailable(document: DocumentConfig | undefined, record: ERPB
       return gate(action, normalizedText(record.Confirmed) === 'y' && approvalStatus !== 'a', 'erp.business.statusReason')
     case 'MJDT:post':
       return gate(action, normalizedText(record.BtfStatus) !== 'p', 'erp.business.statusReason')
+    case 'MBOM:approve':
+      return gate(action, !['approved'].includes(status), 'erp.business.statusReason')
+    case 'MBOM:make-work-order':
+      return gate(action, status === 'approved', 'erp.business.statusReason')
+    case 'MWOR:release':
+      return gate(action, ['planned', 'stopped', ''].includes(status), 'erp.business.statusReason')
+    case 'MWOR:issue-material':
+      return gate(action, ['released', 'in_process'].includes(status) && normalizedText(record.MaterialIssued) !== 'y', 'erp.business.statusReason')
+    case 'MWOR:complete':
+      return gate(action, ['released', 'in_process'].includes(status) && normalizedText(record.MaterialIssued) === 'y', 'erp.business.statusReason')
+    case 'MWOR:stop':
+      return gate(action, ['released', 'in_process'].includes(status), 'erp.business.statusReason')
+    case 'MWOR:reopen':
+      return gate(action, status === 'stopped', 'erp.business.statusReason')
+    case 'MWOR:close':
+      return gate(action, status === 'completed', 'erp.business.statusReason')
     default:
       return { action, available: true, reasonKey: 'ready' }
   }
@@ -1123,7 +1189,8 @@ function recordArray(value: unknown): Array<Record<string, unknown>> {
 }
 
 function isClosedOrPosted(record: ERPBusinessRecord) {
-  return normalizedStatus(record) === 'c' || normalizedText(record.Posted) === 'y' || normalizedText(record.BtfStatus) === 'p'
+  const status = normalizedStatus(record)
+  return status === 'c' || status === 'closed' || status === 'completed' || normalizedText(record.Posted) === 'y' || normalizedText(record.BtfStatus) === 'p'
 }
 
 function normalizedStatus(record: ERPBusinessRecord) {
