@@ -175,7 +175,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 
 阶段原则：先有 SaaS 管理平台，再由平台创建或调整行业解决方案，最后落到 ERP 基线和 AI 能力基线。未来任何数据库结构、表关系、外键、索引、种子数据或 schema 生成逻辑调整，都必须同步更新对应阶段 SQL 和 `migrations/BASELINE_RESTRUCTURE.md`。
 
-`000` baseline 会在 SaaS 管理平台目录中写入 `local_manufacturing_demo` 行业解决方案样例，包含样例租户库模板、`sample_work_orders` 样例表和 `sample.work_order.create` 样例功能元数据。物理样例库仍由租户数据库 provisioning 或后续维护任务创建，不在 SQL baseline 事务中直接创建。
+`000` baseline 会在 SaaS 管理平台目录中写入 `erpnext_manufacturing_demo` 行业解决方案样例，包含样例租户库模板、ERPNext 风格 BOM/工单工作台和制造业闭环操作元数据。物理样例库仍由租户数据库 provisioning 或后续维护任务创建，不在 SQL baseline 事务中直接创建。
 
 ## SaaS 分库命名规则
 
@@ -341,7 +341,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 
 如果租户侧 Finance / ERP 接口出现 `relation gl_journal_entries does not exist`，检查当前组织对应的 `meta_org_xxxx` 租户库是否由 tenant migrator 创建。手工 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 不会展开 `tenantdb:include`，会导致 ERP/Finance 表缺失。
 
-如果 SaaS 管理台在为 `general` 行业组织启用 ERP 或行业方案时出现 `industry module policy denied update: module erp is not allowed by industry general`，说明平台行业包或代码层默认模块白名单未包含 ERP 入口模块。当前规范要求 `general` 可启用基础组织治理模块以及 `erp`、`finance`、`costing`、`inventory`、`procurement`、`sales`、`retail` 等 ERP/行业闭环模块；新增行业包时必须同步维护 baseline seed、后端策略校验和 SystemAdmin 前端入口。
+如果 SaaS 管理台在为 `general` 行业组织启用 ERP 或行业方案时出现 `industry module policy denied update: module erp is not allowed by industry general`，说明平台行业包或代码层默认模块白名单未包含 ERP 入口模块。当前规范要求 `general` 可启用基础组织治理模块以及 `erp`、`finance`、`costing`、`inventory`、`procurement`、`sales`、`retail`、`manufacturing` 等 ERP/行业闭环模块；新增行业包时必须同步维护 baseline seed、后端策略校验和 SystemAdmin 前端入口。
 
 如果浏览器显示 `Failed to fetch`，先验证 API 健康接口，再检查后端响应是否包含 `Access-Control-Allow-Origin`。Windows PowerShell 启动后端时，逗号分隔的 `CORS_ORIGINS` 必须作为一个字符串传入。
 5. 打开 Meta Resource 工作区，先执行一次“同步现有资源”，确认 human、agent、external_human、model_channel、tool、capability 资源能进入统一资源视图。

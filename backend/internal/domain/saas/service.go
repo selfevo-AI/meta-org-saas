@@ -250,13 +250,13 @@ func (s *Service) CreateBusinessClosureSampleTenant(ctx context.Context, actorID
 	}
 	created, err := creator.CreateBusinessClosureSampleTenant(ctx, CreateSampleTenantRecord{
 		ActorID:          actorID,
-		OwnerEmail:       "sample-tenant-owner@local.test",
-		OwnerName:        "Sample Tenant Owner",
+		OwnerEmail:       "demo@local.com",
+		OwnerName:        "ERPNext Manufacturing Demo Owner",
 		PasswordHash:     string(passwordHash),
-		OrganizationName: "Local Manufacturing Demo Tenant",
-		Description:      "Sample tenant for validating physical tenant database business closure.",
+		OrganizationName: "ERPNext Manufacturing Demo",
+		Description:      "Demo tenant for validating the ERPNext manufacturing industry solution loop.",
 		EnabledModules:   modules,
-		SampleKey:        "business_closure_sample",
+		SampleKey:        "erpnext_manufacturing_demo",
 	})
 	if err != nil {
 		return nil, err
@@ -266,10 +266,10 @@ func (s *Service) CreateBusinessClosureSampleTenant(ctx context.Context, actorID
 		OrganizationName:             created.Organization.Name,
 		Description:                  created.Organization.Description,
 		OwnerUserID:                  created.OwnerUserID,
-		OwnerName:                    "Sample Tenant Owner",
+		OwnerName:                    "ERPNext Manufacturing Demo Owner",
 		OwnerEmail:                   created.OwnerEmail,
 		EnabledModules:               modules,
-		SampleKey:                    "business_closure_sample",
+		SampleKey:                    "erpnext_manufacturing_demo",
 		IncludeBusinessClosureSample: true,
 	})
 	target := s.resolveTenantDatabaseTarget(ctx, created.Organization.ID)
@@ -280,7 +280,7 @@ func (s *Service) CreateBusinessClosureSampleTenant(ctx context.Context, actorID
 		EnabledModules:          modules,
 		TenantDatabaseStatus:    target.Status,
 		TenantDatabaseName:      target.DatabaseName,
-		IndustrySolutionPackage: "local_manufacturing_demo",
+		IndustrySolutionPackage: "erpnext_manufacturing_demo",
 	}, nil
 }
 
@@ -739,7 +739,7 @@ func (s *Service) allModuleKeys(ctx context.Context) ([]string, error) {
 	for _, module := range modules {
 		keys = append(keys, module.ModuleKey)
 	}
-	keys = append(keys, "organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales")
+	keys = append(keys, "organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales", "manufacturing")
 	return normalizeModuleKeys(keys), nil
 }
 

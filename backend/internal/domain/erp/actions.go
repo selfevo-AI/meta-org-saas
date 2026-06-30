@@ -44,6 +44,14 @@ func DefaultActionRegistry() ActionRegistry {
 		{TableCode: "MSPR", Action: "approve", Label: "Approve special purchase request", Description: "Approve branch special purchase request"},
 		{TableCode: "MSPR", Action: "convert-to-purchase-order", Label: "Convert to purchase order", Description: "Create purchase order from approved branch special purchase request", NextTables: []string{"MPOR"}},
 		{TableCode: "MPUB", Action: "publish", Label: "Publish items", Description: "Publish new items and promotion visibility to stores"},
+		{TableCode: "MBOM", Action: "approve", Label: "Approve BOM", Description: "Approve bill of materials for production planning"},
+		{TableCode: "MBOM", Action: "make-work-order", Label: "Make work order", Description: "Create work order and required material lines from approved BOM", NextTables: []string{"MWOR"}},
+		{TableCode: "MWOR", Action: "release", Label: "Release work order", Description: "Release work order and derive required items from BOM"},
+		{TableCode: "MWOR", Action: "issue-material", Label: "Issue material", Description: "Issue raw materials to work order and decrease source inventory", NextTables: []string{"MIGE"}},
+		{TableCode: "MWOR", Action: "complete", Label: "Complete work order", Description: "Receive finished goods and create production journal entry", NextTables: []string{"MIGN", "MJDT"}},
+		{TableCode: "MWOR", Action: "close", Label: "Close work order", Description: "Close completed work order"},
+		{TableCode: "MWOR", Action: "stop", Label: "Stop work order", Description: "Stop released or in-process work order"},
+		{TableCode: "MWOR", Action: "reopen", Label: "Reopen work order", Description: "Reopen stopped work order"},
 	}
 	registry := ActionRegistry{actions: map[string]ActionDefinition{}}
 	for _, def := range defs {

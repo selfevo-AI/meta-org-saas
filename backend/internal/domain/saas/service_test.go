@@ -122,9 +122,9 @@ func TestCreateBusinessClosureSampleTenantEnablesAllModulesAndBootstrapsTenantDa
 		platformRole: "owner",
 		tenantTarget: &target,
 		sampleTenant: &CreatedSampleTenant{
-			Organization: OrganizationAccount{ID: orgID, Name: "Local Manufacturing Demo Tenant"},
+			Organization: OrganizationAccount{ID: orgID, Name: "ERPNext Manufacturing Demo"},
 			OwnerUserID:  uuid.New(),
-			OwnerEmail:   "sample-tenant-owner@local.test",
+			OwnerEmail:   "demo@local.com",
 		},
 		modules: []Module{
 			{ModuleKey: "organization"},
@@ -136,6 +136,7 @@ func TestCreateBusinessClosureSampleTenantEnablesAllModulesAndBootstrapsTenantDa
 			{ModuleKey: "inventory"},
 			{ModuleKey: "procurement"},
 			{ModuleKey: "sales"},
+			{ModuleKey: "manufacturing"},
 		},
 	}
 	provisioner := &fakeTenantDatabaseProvisioner{result: tenantdb.ProvisionResult{Target: provisioned}}
@@ -150,13 +151,25 @@ func TestCreateBusinessClosureSampleTenantEnablesAllModulesAndBootstrapsTenantDa
 	if result.Organization.ID != orgID {
 		t.Fatalf("sample org = %s, want %s", result.Organization.ID, orgID)
 	}
-	for _, key := range []string{"organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales"} {
+	if result.OwnerEmail != "demo@local.com" {
+		t.Fatalf("owner email = %q, want demo@local.com", result.OwnerEmail)
+	}
+	if repo.sampleRecord.OwnerEmail != "demo@local.com" || repo.sampleRecord.OrganizationName != "ERPNext Manufacturing Demo" {
+		t.Fatalf("sample record = %#v, want ERPNext manufacturing demo owner/org", repo.sampleRecord)
+	}
+	for _, key := range []string{"organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales", "manufacturing"} {
 		if !containsString(repo.sampleRecord.EnabledModules, key) {
 			t.Fatalf("sample enabled modules missing %q: %#v", key, repo.sampleRecord.EnabledModules)
 		}
 	}
+	if result.IndustrySolutionPackage != "erpnext_manufacturing_demo" {
+		t.Fatalf("IndustrySolutionPackage = %q, want erpnext_manufacturing_demo", result.IndustrySolutionPackage)
+	}
 	if bootstrapper.input.OrganizationID != orgID {
 		t.Fatalf("bootstrap org = %s, want %s", bootstrapper.input.OrganizationID, orgID)
+	}
+	if bootstrapper.input.SampleKey != "erpnext_manufacturing_demo" {
+		t.Fatalf("bootstrap sample key = %q, want erpnext_manufacturing_demo", bootstrapper.input.SampleKey)
 	}
 	if !bootstrapper.input.IncludeBusinessClosureSample {
 		t.Fatalf("bootstrap IncludeBusinessClosureSample = false, want true")

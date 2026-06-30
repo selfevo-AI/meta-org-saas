@@ -33,6 +33,8 @@ func TestDefaultCatalogIncludesERPBusinessHierarchy(t *testing.T) {
 		{"Retail", "Inventory Control", "Stock Policy", "MSTP", "STP1", "replenish"},
 		{"Retail", "Inventory Control", "Store Count", "MCNT", "CNT1", "post-adjustment"},
 		{"Retail", "Special Procurement", "Special Purchase Request", "MSPR", "SPR1", "convert-to-purchase-order"},
+		{"Manufacturing", "BOM", "Bill of Materials", "MBOM", "BOM1", "make-work-order"},
+		{"Manufacturing", "Work Orders", "Work Order", "MWOR", "WOR1", "complete"},
 	}
 
 	for _, tc := range cases {

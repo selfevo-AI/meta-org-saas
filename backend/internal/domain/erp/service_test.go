@@ -274,3 +274,34 @@ func TestCreateChildRecordUsesParentAndChildDefinitions(t *testing.T) {
 		t.Fatalf("child record = %#v, want INV1 under MINV/1001", record)
 	}
 }
+
+func TestCreateChildRecordFlattensNestedPayloadFields(t *testing.T) {
+	repo := &fakeRepository{}
+	service := NewService(repo, DefaultCatalog())
+
+	_, err := service.CreateChildRecord(context.Background(), "MPDN", "GR-1", "PDN1", RecordInput{
+		Key: "1",
+		Data: map[string]any{
+			"LineNum": "1",
+			"Payload": map[string]any{
+				"ItemCode": "RAW-1",
+				"WhsCode":  "RM",
+				"Quantity": float64(2),
+				"Price":    float64(5),
+			},
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("CreateChildRecord() error = %v", err)
+	}
+	if _, ok := repo.createdChild.Data["Payload"]; ok {
+		t.Fatalf("created child data retained nested Payload = %#v", repo.createdChild.Data)
+	}
+	if repo.createdChild.Data["ItemCode"] != "RAW-1" || repo.createdChild.Data["WhsCode"] != "RM" {
+		t.Fatalf("created child data = %#v, want flattened item and warehouse fields", repo.createdChild.Data)
+	}
+	if repo.createdChild.Data["LineNum"] != "1" {
+		t.Fatalf("LineNum = %#v, want explicit top-level line key preserved", repo.createdChild.Data["LineNum"])
+	}
+}

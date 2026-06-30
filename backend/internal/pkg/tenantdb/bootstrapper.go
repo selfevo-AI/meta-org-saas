@@ -147,7 +147,10 @@ func bootstrapBusinessClosureSample(ctx context.Context, db DB, input TenantBoot
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO "MITM"("ItemCode", "Payload")
-		VALUES ('ITM-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO', 'ItemName', 'Demo Assembly Kit', 'ItemType', 'material', 'InvntryUom', 'EA', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		VALUES
+			('ITM-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO', 'ItemName', 'Demo Assembly Kit', 'ItemType', 'finished_good', 'InvntryUom', 'EA', 'organization_id', $1::uuid, 'sample_key', $2::text)),
+			('RAW-DEMO', jsonb_build_object('ItemCode', 'RAW-DEMO', 'ItemName', 'Demo Raw Material', 'ItemType', 'raw_material', 'InvntryUom', 'EA', 'organization_id', $1::uuid, 'sample_key', $2::text)),
+			('FG-DEMO', jsonb_build_object('ItemCode', 'FG-DEMO', 'ItemName', 'ERPNext Demo Finished Good', 'ItemType', 'finished_good', 'InvntryUom', 'EA', 'organization_id', $1::uuid, 'sample_key', $2::text))
 		ON CONFLICT ("ItemCode") DO UPDATE SET
 			"Payload" = "MITM"."Payload" || EXCLUDED."Payload",
 			"UpdatedAt" = NOW()
@@ -165,12 +168,51 @@ func bootstrapBusinessClosureSample(ctx context.Context, db DB, input TenantBoot
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO "MITW"("ItemCode", "Payload")
-		VALUES ('ITM-DEMO|WHS-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO|WHS-DEMO', 'BaseItemCode', 'ITM-DEMO', 'WhsCode', 'WHS-DEMO', 'OnHand', 120, 'AvgPrice', 25, 'StockValue', 3000, 'Currency', 'CNY', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		VALUES
+			('ITM-DEMO|WHS-DEMO', jsonb_build_object('ItemCode', 'ITM-DEMO|WHS-DEMO', 'BaseItemCode', 'ITM-DEMO', 'WhsCode', 'WHS-DEMO', 'OnHand', 120, 'AvgPrice', 25, 'StockValue', 3000, 'Currency', 'CNY', 'organization_id', $1::uuid, 'sample_key', $2::text)),
+			('RAW-DEMO|WHS-DEMO', jsonb_build_object('ItemCode', 'RAW-DEMO|WHS-DEMO', 'BaseItemCode', 'RAW-DEMO', 'WhsCode', 'WHS-DEMO', 'OnHand', 240, 'AvgPrice', 8, 'StockValue', 1920, 'Currency', 'CNY', 'organization_id', $1::uuid, 'sample_key', $2::text)),
+			('FG-DEMO|WHS-DEMO', jsonb_build_object('ItemCode', 'FG-DEMO|WHS-DEMO', 'BaseItemCode', 'FG-DEMO', 'WhsCode', 'WHS-DEMO', 'OnHand', 0, 'AvgPrice', 25, 'StockValue', 0, 'Currency', 'CNY', 'organization_id', $1::uuid, 'sample_key', $2::text))
 		ON CONFLICT ("ItemCode") DO UPDATE SET
 			"Payload" = "MITW"."Payload" || EXCLUDED."Payload",
 			"UpdatedAt" = NOW()
 	`, input.OrganizationID, input.SampleKey); err != nil {
 		return fmt.Errorf("bootstrap sample ERP code-table inventory data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO "MBOM"("BOMCode", "Payload")
+		VALUES ('BOM-DEMO-001', jsonb_build_object('BOMCode', 'BOM-DEMO-001', 'Name', 'ERPNext Demo Finished Good BOM', 'Status', 'approved', 'ItemCode', 'FG-DEMO', 'Quantity', 1, 'SourceWhsCode', 'WHS-DEMO', 'WipWhsCode', 'WHS-DEMO', 'FinishedWhsCode', 'WHS-DEMO', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("BOMCode") DO UPDATE SET
+			"Payload" = "MBOM"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
+		return fmt.Errorf("bootstrap sample ERPNext BOM data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO "BOM1"("BOMCode", "LineNum", "Payload")
+		VALUES ('BOM-DEMO-001', 1, jsonb_build_object('ItemCode', 'RAW-DEMO', 'WhsCode', 'WHS-DEMO', 'Quantity', 2, 'Price', 8, 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("BOMCode", "LineNum") DO UPDATE SET
+			"Payload" = "BOM1"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
+		return fmt.Errorf("bootstrap sample ERPNext BOM line data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO "MWOR"("WorkOrderCode", "Payload")
+		VALUES ('WO-DEMO-001', jsonb_build_object('WorkOrderCode', 'WO-DEMO-001', 'Name', 'ERPNext Demo Work Order', 'Status', 'planned', 'BOMCode', 'BOM-DEMO-001', 'ItemCode', 'FG-DEMO', 'Quantity', 10, 'SourceWhsCode', 'WHS-DEMO', 'WipWhsCode', 'WHS-DEMO', 'FinishedWhsCode', 'WHS-DEMO', 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("WorkOrderCode") DO UPDATE SET
+			"Payload" = "MWOR"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
+		return fmt.Errorf("bootstrap sample ERPNext work order data: %w", err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO "WOR1"("WorkOrderCode", "LineNum", "Payload")
+		VALUES ('WO-DEMO-001', 1, jsonb_build_object('ItemCode', 'RAW-DEMO', 'WhsCode', 'WHS-DEMO', 'Quantity', 20, 'Price', 8, 'organization_id', $1::uuid, 'sample_key', $2::text))
+		ON CONFLICT ("WorkOrderCode", "LineNum") DO UPDATE SET
+			"Payload" = "WOR1"."Payload" || EXCLUDED."Payload",
+			"UpdatedAt" = NOW()
+	`, input.OrganizationID, input.SampleKey); err != nil {
+		return fmt.Errorf("bootstrap sample ERPNext work order line data: %w", err)
 	}
 	return nil
 }

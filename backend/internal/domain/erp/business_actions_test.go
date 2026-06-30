@@ -276,6 +276,10 @@ func (r *businessFakeRepository) childCount(parentCode string, parentKey string,
 	return len(r.children[childBucket(parentCode, parentKey, childCode)])
 }
 
+func (r *businessFakeRepository) childRecord(parentCode string, parentKey string, childCode string, index int) Record {
+	return r.children[childBucket(parentCode, parentKey, childCode)][index]
+}
+
 func assertGeneratedTable(t *testing.T, result *ActionResult, tableCode string) {
 	t.Helper()
 	for _, record := range result.GeneratedRecords {
@@ -585,6 +589,224 @@ func TestPOSSaleCloseGeneratesCashInvoiceAndInventoryIssue(t *testing.T) {
 	}
 	if result.Record.Data["DocStatus"] != "C" || result.Record.Data["Posted"] != "Y" {
 		t.Fatalf("POS sale record = %#v, want closed and posted", result.Record.Data)
+	}
+}
+
+func TestBOMApproveRequiresComponentLines(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MBOM", "BOM-1", map[string]any{"BOMCode": "BOM-1", "Status": "draft", "ItemCode": "FG-1", "Quantity": 1})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MBOM", "BOM-1", "approve", ActionInput{IdempotencyKey: "bom-without-lines"})
+	if err == nil {
+		t.Fatalf("approve returned nil error and result %#v, want validation error", result)
+	}
+	if repo.records["MBOM"]["BOM-1"].Data["Status"] != "draft" {
+		t.Fatalf("BOM status = %v, want draft", repo.records["MBOM"]["BOM-1"].Data["Status"])
+	}
+
+	repo.seedChild("MBOM", "BOM-1", "BOM1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "RAW-1", "WhsCode": "RM", "Quantity": 2, "Price": 3}})
+	approved, err := service.RunAction(context.Background(), "MBOM", "BOM-1", "approve", ActionInput{IdempotencyKey: "bom-approve"})
+	if err != nil {
+		t.Fatalf("approve returned error: %v", err)
+	}
+	if approved.Record.Data["Status"] != "approved" {
+		t.Fatalf("BOM status = %v, want approved", approved.Record.Data["Status"])
+	}
+}
+
+func TestBOMMakeWorkOrderCreatesScaledRequiredItems(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MBOM", "BOM-1", map[string]any{"BOMCode": "BOM-1", "Status": "approved", "ItemCode": "FG-1", "Quantity": 1})
+	repo.seedChild("MBOM", "BOM-1", "BOM1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "RAW-1", "WhsCode": "RM", "Quantity": 3, "Price": 5}})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MBOM", "BOM-1", "make-work-order", ActionInput{
+		IdempotencyKey: "make-work-order",
+		Data:           map[string]any{"WorkOrderCode": "WO-1", "Quantity": 2, "SourceWhsCode": "RM", "WipWhsCode": "WIP", "FinishedWhsCode": "FG"},
+	})
+	if err != nil {
+		t.Fatalf("make-work-order returned error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MWOR")
+	if repo.childCount("MWOR", "WO-1", "WOR1") != 1 {
+		t.Fatalf("work order required rows = %d, want 1", repo.childCount("MWOR", "WO-1", "WOR1"))
+	}
+	line := repo.childRecord("MWOR", "WO-1", "WOR1", 0)
+	if line.Data["Quantity"] != float64(6) {
+		t.Fatalf("required quantity = %v, want 6", line.Data["Quantity"])
+	}
+	if repo.records["MWOR"]["WO-1"].Data["Status"] != "planned" {
+		t.Fatalf("work order status = %v, want planned", repo.records["MWOR"]["WO-1"].Data["Status"])
+	}
+}
+
+func TestWorkOrderReleaseBuildsRequiredItemsFromBOM(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MBOM", "BOM-1", map[string]any{"BOMCode": "BOM-1", "Status": "approved", "ItemCode": "FG-1", "Quantity": 1})
+	repo.seedChild("MBOM", "BOM-1", "BOM1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "RAW-1", "WhsCode": "RM", "Quantity": 2}})
+	repo.seed("MWOR", "WO-1", map[string]any{"WorkOrderCode": "WO-1", "Status": "planned", "BOMCode": "BOM-1", "ItemCode": "FG-1", "Quantity": 4, "SourceWhsCode": "RM"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MWOR", "WO-1", "release", ActionInput{IdempotencyKey: "release-work-order"})
+	if err != nil {
+		t.Fatalf("release returned error: %v", err)
+	}
+	if result.Record.Data["Status"] != "released" {
+		t.Fatalf("work order status = %v, want released", result.Record.Data["Status"])
+	}
+	if repo.childCount("MWOR", "WO-1", "WOR1") != 1 {
+		t.Fatalf("required rows = %d, want 1", repo.childCount("MWOR", "WO-1", "WOR1"))
+	}
+	line := repo.childRecord("MWOR", "WO-1", "WOR1", 0)
+	if line.Data["Quantity"] != float64(8) {
+		t.Fatalf("required quantity = %v, want 8", line.Data["Quantity"])
+	}
+}
+
+func TestWorkOrderIssueMaterialDeductsRawInventoryAndGeneratesIssue(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MWOR", "WO-1", map[string]any{"WorkOrderCode": "WO-1", "Status": "released", "ItemCode": "FG-1", "Quantity": 2, "SourceWhsCode": "RM"})
+	repo.seedChild("MWOR", "WO-1", "WOR1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "RAW-1", "WhsCode": "RM", "Quantity": 4}})
+	repo.seed("MITW", "RAW-1|RM", map[string]any{"ItemCode": "RAW-1|RM", "WhsCode": "RM", "OnHand": 10})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MWOR", "WO-1", "issue-material", ActionInput{IdempotencyKey: "issue-material"})
+	if err != nil {
+		t.Fatalf("issue-material returned error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MIGE")
+	if repo.balance("RAW-1", "RM") != 6 {
+		t.Fatalf("raw balance = %v, want 6", repo.balance("RAW-1", "RM"))
+	}
+	if result.Record.Data["Status"] != "in_process" || result.Record.Data["MaterialIssued"] != "Y" {
+		t.Fatalf("work order record = %#v, want in_process with material issued", result.Record.Data)
+	}
+}
+
+func TestWorkOrderCompleteReceivesFinishedGoodsAndCreatesJournal(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	repo.seed("MWOR", "WO-1", map[string]any{"WorkOrderCode": "WO-1", "Status": "in_process", "MaterialIssued": "Y", "ItemCode": "FG-1", "Quantity": 2, "FinishedWhsCode": "FG", "WipWhsCode": "WIP"})
+	service := NewService(repo, DefaultCatalog())
+
+	result, err := service.RunAction(context.Background(), "MWOR", "WO-1", "complete", ActionInput{IdempotencyKey: "complete-work-order"})
+	if err != nil {
+		t.Fatalf("complete returned error: %v", err)
+	}
+	assertGeneratedTable(t, result, "MIGN")
+	assertGeneratedTable(t, result, "MJDT")
+	if repo.balance("FG-1", "FG") != 2 {
+		t.Fatalf("finished balance = %v, want 2", repo.balance("FG-1", "FG"))
+	}
+	if result.Record.Data["Status"] != "completed" || result.Record.Data["Posted"] != "Y" {
+		t.Fatalf("work order record = %#v, want completed and posted", result.Record.Data)
+	}
+}
+
+func TestERPNextManufacturingTenantFullBusinessClosure(t *testing.T) {
+	repo := newBusinessFakeRepository()
+	service := NewService(repo, DefaultCatalog())
+
+	repo.seed("MREQ", "REQ-DEMO", map[string]any{"ReqCode": "REQ-DEMO", "Name": "Demo manufacturing order", "Status": "draft"})
+	if _, err := service.RunAction(context.Background(), "MREQ", "REQ-DEMO", "analyze", ActionInput{IdempotencyKey: "full-req-analyze"}); err != nil {
+		t.Fatalf("analyze requirement: %v", err)
+	}
+	if _, err := service.RunAction(context.Background(), "MREQ", "REQ-DEMO", "approve", ActionInput{IdempotencyKey: "full-req-approve"}); err != nil {
+		t.Fatalf("approve requirement: %v", err)
+	}
+	project, err := service.RunAction(context.Background(), "MREQ", "REQ-DEMO", "convert-to-project", ActionInput{IdempotencyKey: "full-req-convert", Data: map[string]any{"PrjCode": "PRJ-DEMO"}})
+	if err != nil {
+		t.Fatalf("convert requirement: %v", err)
+	}
+	assertGeneratedTable(t, project, "MPRJ")
+	if _, err := service.RunAction(context.Background(), "MPRJ", "PRJ-DEMO", "refresh-cost", ActionInput{IdempotencyKey: "full-cost-refresh"}); err != nil {
+		t.Fatalf("refresh project cost: %v", err)
+	}
+	if _, err := service.RunAction(context.Background(), "MPRJ", "PRJ-DEMO", "close-feedback", ActionInput{IdempotencyKey: "full-feedback-close", Data: map[string]any{"result": "accepted"}}); err != nil {
+		t.Fatalf("close project feedback: %v", err)
+	}
+
+	repo.seed("MPOR", "PO-DEMO", map[string]any{"DocEntry": "PO-DEMO", "DocStatus": "O", "WddStatus": "W", "CardCode": "SUP-DEMO"})
+	if _, err := service.RunAction(context.Background(), "MPOR", "PO-DEMO", "submit", ActionInput{IdempotencyKey: "full-po-submit"}); err != nil {
+		t.Fatalf("submit purchase order: %v", err)
+	}
+	if _, err := service.RunAction(context.Background(), "MPOR", "PO-DEMO", "approve", ActionInput{IdempotencyKey: "full-po-approve"}); err != nil {
+		t.Fatalf("approve purchase order: %v", err)
+	}
+	repo.seed("MPDN", "GRPO-DEMO", map[string]any{"DocEntry": "GRPO-DEMO", "DocStatus": "O", "WddStatus": "A", "CardCode": "SUP-DEMO"})
+	repo.seedChild("MPDN", "GRPO-DEMO", "PDN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "RAW-DEMO", "WhsCode": "RM", "Quantity": 10, "Price": 5}})
+	goodsReceiptPO, err := service.RunAction(context.Background(), "MPDN", "GRPO-DEMO", "post", ActionInput{IdempotencyKey: "full-grpo-post"})
+	if err != nil {
+		t.Fatalf("post goods receipt PO: %v", err)
+	}
+	assertGeneratedTable(t, goodsReceiptPO, "MIGN")
+	assertGeneratedTable(t, goodsReceiptPO, "MPCH")
+	if repo.balance("RAW-DEMO", "RM") != 10 {
+		t.Fatalf("raw material balance after procurement = %v, want 10", repo.balance("RAW-DEMO", "RM"))
+	}
+
+	repo.seed("MBOM", "BOM-DEMO", map[string]any{"BOMCode": "BOM-DEMO", "Status": "draft", "ItemCode": "FG-DEMO", "Quantity": 1, "SourceWhsCode": "RM", "FinishedWhsCode": "FG", "WipWhsCode": "WIP"})
+	repo.seedChild("MBOM", "BOM-DEMO", "BOM1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "RAW-DEMO", "WhsCode": "RM", "Quantity": 2, "Price": 5}})
+	if _, err := service.RunAction(context.Background(), "MBOM", "BOM-DEMO", "approve", ActionInput{IdempotencyKey: "full-bom-approve"}); err != nil {
+		t.Fatalf("approve BOM: %v", err)
+	}
+	workOrder, err := service.RunAction(context.Background(), "MBOM", "BOM-DEMO", "make-work-order", ActionInput{IdempotencyKey: "full-bom-work-order", Data: map[string]any{"WorkOrderCode": "WO-DEMO", "Quantity": 3}})
+	if err != nil {
+		t.Fatalf("make work order: %v", err)
+	}
+	assertGeneratedTable(t, workOrder, "MWOR")
+	if _, err := service.RunAction(context.Background(), "MWOR", "WO-DEMO", "release", ActionInput{IdempotencyKey: "full-wo-release"}); err != nil {
+		t.Fatalf("release work order: %v", err)
+	}
+	issue, err := service.RunAction(context.Background(), "MWOR", "WO-DEMO", "issue-material", ActionInput{IdempotencyKey: "full-wo-issue"})
+	if err != nil {
+		t.Fatalf("issue material: %v", err)
+	}
+	assertGeneratedTable(t, issue, "MIGE")
+	if repo.balance("RAW-DEMO", "RM") != 4 {
+		t.Fatalf("raw material balance after work order issue = %v, want 4", repo.balance("RAW-DEMO", "RM"))
+	}
+	completion, err := service.RunAction(context.Background(), "MWOR", "WO-DEMO", "complete", ActionInput{IdempotencyKey: "full-wo-complete"})
+	if err != nil {
+		t.Fatalf("complete work order: %v", err)
+	}
+	assertGeneratedTable(t, completion, "MIGN")
+	assertGeneratedTable(t, completion, "MJDT")
+	if repo.balance("FG-DEMO", "FG") != 3 {
+		t.Fatalf("finished goods balance after completion = %v, want 3", repo.balance("FG-DEMO", "FG"))
+	}
+	if repo.childCount("MJDT", "JE-WO-DEMO", "JDT1") != 2 {
+		t.Fatalf("production journal rows = %d, want balanced debit/credit rows", repo.childCount("MJDT", "JE-WO-DEMO", "JDT1"))
+	}
+
+	repo.seed("MDLN", "DLV-DEMO", map[string]any{"DocEntry": "DLV-DEMO", "DocStatus": "O", "WddStatus": "A", "CardCode": "CUS-DEMO"})
+	repo.seedChild("MDLN", "DLV-DEMO", "DLN1", map[string]any{"LineNum": "1", "Payload": map[string]any{"ItemCode": "FG-DEMO", "WhsCode": "FG", "Quantity": 2, "Price": 20}})
+	delivery, err := service.RunAction(context.Background(), "MDLN", "DLV-DEMO", "post", ActionInput{IdempotencyKey: "full-delivery-post"})
+	if err != nil {
+		t.Fatalf("post delivery: %v", err)
+	}
+	assertGeneratedTable(t, delivery, "MIGE")
+	assertGeneratedTable(t, delivery, "MINV")
+	if repo.balance("FG-DEMO", "FG") != 1 {
+		t.Fatalf("finished goods balance after delivery = %v, want 1", repo.balance("FG-DEMO", "FG"))
+	}
+	if _, err := service.RunAction(context.Background(), "MINV", "INV-DLV-DEMO", "post", ActionInput{IdempotencyKey: "full-invoice-post"}); err != nil {
+		t.Fatalf("post invoice: %v", err)
+	}
+	repo.seed("MRCT", "PAY-DEMO", map[string]any{"DocEntry": "PAY-DEMO", "DocTotal": 40, "OpenBal": 40})
+	if _, err := service.RunAction(context.Background(), "MRCT", "PAY-DEMO", "allocate", ActionInput{IdempotencyKey: "full-payment-allocate", Data: map[string]any{"TargetTable": "MINV", "TargetKey": "INV-DLV-DEMO", "Amount": 40}}); err != nil {
+		t.Fatalf("allocate incoming payment: %v", err)
+	}
+	if repo.records["MINV"]["INV-DLV-DEMO"].Data["DocStatus"] != "C" {
+		t.Fatalf("invoice status = %v, want closed after payment", repo.records["MINV"]["INV-DLV-DEMO"].Data["DocStatus"])
+	}
+
+	trialBalance, err := service.RunAction(context.Background(), "MGLR", "TB-DEMO", "run", ActionInput{IdempotencyKey: "full-trial-balance", Data: map[string]any{"ReportCode": "TB-DEMO", "Currency": "CNY"}})
+	if err != nil {
+		t.Fatalf("run trial balance: %v", err)
+	}
+	if numericValue(trialBalance.Record.Data, "TotalDebit") <= 0 || numericValue(trialBalance.Record.Data, "TotalDebit") != numericValue(trialBalance.Record.Data, "TotalCredit") {
+		t.Fatalf("trial balance totals = debit %v credit %v, want balanced positive totals", trialBalance.Record.Data["TotalDebit"], trialBalance.Record.Data["TotalCredit"])
 	}
 }
 

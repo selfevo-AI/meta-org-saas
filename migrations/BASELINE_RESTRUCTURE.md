@@ -16,8 +16,8 @@ The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
 and sample validation data, then includes `001_erp_code_baseline.sql` so each
 dedicated tenant database owns its ERP, project, workflow, costing, finance,
-inventory, procurement, sales, and retail runtime tables without cross-database
-foreign keys. Procurement, sales, inventory, warehouse, and retail distribution
+inventory, procurement, sales, retail, and manufacturing runtime tables without cross-database
+foreign keys. Procurement, sales, inventory, warehouse, retail distribution, and ERPNext-style manufacturing
 business objects are represented by ERP code-table master/detail pairs rather
 than by a second set of semantic supply-chain tables.
 
@@ -70,8 +70,8 @@ file.
 Industry module policy must stay aligned with the staged seeds. The `general`
 industry baseline is allowed to enable core organization/governance modules and
 the ERP operating loop modules (`erp`, `finance`, `costing`, `inventory`,
-`procurement`, `sales`, `retail`) so a tenant can adopt the standard ERP and
-retail distribution industry solutions without a policy denial. Any future
+`procurement`, `sales`, `retail`, `manufacturing`) so a tenant can adopt the standard ERP,
+retail distribution, and ERPNext manufacturing industry solutions without a policy denial. Any future
 industry module addition must update both `000_saas_platform_management_baseline.sql`
 seed assets and the backend policy defaults before the UI exposes it.
 
@@ -118,7 +118,7 @@ databases:
   solutions, function modules, API capabilities, AI model profiles, and skills.
 
 The staged baseline seeds a local-development industry solution sample,
-`local_manufacturing_demo`, into `platform.capability_packages` and
+`erpnext_manufacturing_demo`, into `platform.capability_packages` and
 `platform.marketplace_listings`. It is metadata only: the package manifest
 declares a sample tenant database template, the `sample_work_orders` sample
 table, and the `sample.work_order.create` sample function. Physical database
@@ -131,7 +131,7 @@ administrators create it explicitly from the SaaS management console or
 `POST /api/v1/platform/admin/sample-tenants/business-closure`. That flow creates
 the platform organization, enables all currently registered SaaS modules,
 provisions the dedicated tenant database, runs the tenant migration set, and
-bootstraps tenant-local sample projections and ERP/inventory sample records.
+bootstraps tenant-local sample projections plus ERP/inventory/BOM/work-order sample records.
 
 Tenant private deployment export is reserved in this stage as database
 maintenance metadata only through
@@ -186,7 +186,8 @@ are applied.
 
 `001_erp_code_baseline.sql` owns ERP and industry-solution business tables:
 tenant departments, project lifecycle, workflow, finance, costing,
-ERP code-table supply-chain, ERP action execution ledger tables, and other
+ERP code-table supply-chain, ERPNext manufacturing BOM/work-order code tables,
+ERP action execution ledger tables, and other
 ERP-facing domain structures. This file can change when the SaaS platform
 creates or adjusts an industry solution. The ERP action ledger uses `MAEX` and
 `AEX1`; `MACT` remains the ERP G/L account table. Semantic GL runtime tables
@@ -243,7 +244,7 @@ platform control-plane target table, not derive deployment topology only from
 plane copy and synchronize only solution, license, authorization, and settlement
 summaries with the central SaaS platform.
 
-ERP, project, workflow, costing, finance, inventory, procurement, sales, and
+ERP, project, workflow, costing, finance, inventory, procurement, sales, manufacturing, and
 tenant organization runtime repositories route through the tenant database
 router. Provisioned `dedicated_database` tenants use their physical tenant
 database; shared-schema or not-yet-provisioned tenants continue to use the

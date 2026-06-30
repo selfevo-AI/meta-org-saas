@@ -154,6 +154,7 @@ const domainLabels: Record<string, string> = {
   Procurement: '采购',
   Sales: '销售',
   Retail: '零售',
+  Manufacturing: 'Manufacturing',
 }
 
 const domainIcons: Record<string, typeof Gauge> = {
@@ -196,6 +197,7 @@ const domainIcons: Record<string, typeof Gauge> = {
   Inventory: Boxes,
   Procurement: PackageCheck,
   Sales: ShoppingCart,
+  Manufacturing: Boxes,
 }
 
 function defaultSkillComponents(prompt: string): AssistantSkillComponent[] {
@@ -270,6 +272,8 @@ type BusinessTargetType =
   | 'stock_policy'
   | 'store_count'
   | 'special_purchase_request'
+  | 'bill_of_materials'
+  | 'work_order'
   | 'cost_rate_card'
   | 'cost_budget'
   | 'cost_ledger_entry'
@@ -369,7 +373,7 @@ type WorkspaceLayoutWidths = {
 type WorkspaceLayoutPane = keyof WorkspaceLayoutWidths
 
 const lifecycleDomains = ['Requirement', 'Project', 'Delivery', 'Cost', 'Feedback']
-const virtualDomains = ['Costing', 'MetaResource', 'Retail', 'SystemAdmin']
+const virtualDomains = ['Costing', 'MetaResource', 'Retail', 'Manufacturing', 'SystemAdmin']
 const platformOnlyDomainSet = new Set([
   'Capability',
   'Governance',
@@ -401,6 +405,7 @@ const dedicatedDomains = new Set([
   'Procurement',
   'Sales',
   'Retail',
+  'Manufacturing',
   ...lifecycleDomains,
 ])
 const menuStorageKey = 'meta_org.menu.groups.v2'
@@ -444,7 +449,7 @@ const defaultMenuGroups: MenuGroup[] = [
   {
     id: 'supplyChain',
     label: 'nav.group.supplyChain',
-    domains: ['Procurement', 'Sales', 'Inventory', 'Retail'],
+    domains: ['Procurement', 'Sales', 'Inventory', 'Manufacturing', 'Retail'],
   },
   {
     id: 'finance',
@@ -551,6 +556,13 @@ const tenantDocumentMenuItems: Record<string, TenantDocumentMenuItem[]> = {
     { id: 'retail:stock_policy', domain: 'Retail', documentID: 'stock_policy', label: 'erp.document.stockPolicy', targetType: 'stock_policy' },
     { id: 'retail:store_count', domain: 'Retail', documentID: 'store_count', label: 'erp.document.storeCount', targetType: 'store_count' },
     { id: 'retail:special_purchase_request', domain: 'Retail', documentID: 'special_purchase_request', label: 'erp.document.specialPurchaseRequest', targetType: 'special_purchase_request' },
+  ],
+  Manufacturing: [
+    { id: 'manufacturing:bom', domain: 'Manufacturing', documentID: 'bill_of_materials', label: 'erp.document.billOfMaterials', targetType: 'bill_of_materials' },
+    { id: 'manufacturing:work_order', domain: 'Manufacturing', documentID: 'work_order', label: 'erp.document.workOrder', targetType: 'work_order' },
+    { id: 'manufacturing:material_issue', domain: 'Manufacturing', documentID: 'material_issue', label: 'erp.document.goodsIssue', targetType: 'inventory_movement' },
+    { id: 'manufacturing:finished_goods_receipt', domain: 'Manufacturing', documentID: 'finished_goods_receipt', label: 'erp.document.goodsReceipt', targetType: 'inventory_movement' },
+    { id: 'manufacturing:production_journal', domain: 'Manufacturing', documentID: 'production_journal', label: 'erp.document.journalEntry', targetType: 'finance_settlement' },
   ],
   FinanceAccounting: [
     { id: 'finance:gl_account', domain: 'FinanceAccounting', documentID: 'gl_account', label: 'erp.document.glAccount', targetType: 'finance_settlement' },
@@ -2742,6 +2754,8 @@ export default function Home() {
 					<ERPBusinessModuleWorkspace token={token} module="sales" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Retail' ? (
 					<ERPBusinessModuleWorkspace token={token} module="retail" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
+				) : effectiveWorkspaceView === 'domain:Manufacturing' ? (
+					<ERPBusinessModuleWorkspace token={token} module="manufacturing" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
 					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:FinanceReceivables' ? (
