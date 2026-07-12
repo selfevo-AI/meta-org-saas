@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/businessai"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/governance"
@@ -21,10 +23,11 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("not found")
-	ErrValidation = errors.New("validation error")
-	ErrForbidden  = errors.New("forbidden")
-	ErrConflict   = errors.New("conflict")
+	ErrNotFound    = errors.New("not found")
+	ErrValidation  = errors.New("validation error")
+	ErrForbidden   = errors.New("forbidden")
+	ErrConflict    = errors.New("conflict")
+	ErrUnavailable = errors.New("unavailable")
 )
 
 type Service struct {
@@ -35,6 +38,7 @@ type Service struct {
 	workflow     *workflow.Service
 	metaResource *metaresource.Service
 	costRecorder CostRecorder
+	businessAI   *businessai.Service
 }
 
 type ServiceOption func(*Service)
@@ -76,6 +80,12 @@ func WithMetaResourceService(meta *metaresource.Service) ServiceOption {
 func WithCostRecorder(recorder CostRecorder) ServiceOption {
 	return func(s *Service) {
 		s.costRecorder = recorder
+	}
+}
+
+func WithBusinessAI(service *businessai.Service) ServiceOption {
+	return func(s *Service) {
+		s.businessAI = service
 	}
 }
 
@@ -840,6 +850,71 @@ func (s *Service) GetProjectOverview(ctx context.Context, projectID uuid.UUID) (
 		Evaluations:  evaluations,
 		Lifecycle:    buildProjectLifecycle(proj, req, members, workflows, deliverables, costSummary, evaluations),
 	}, nil
+}
+
+func (s *Service) AnalyzeProjectStage(ctx context.Context, projectID uuid.UUID, input AnalyzeProjectStageInput) (*businessai.Run, error) {
+	if s.businessAI == nil {
+		return nil, fmt.Errorf("business stage ai is not configured")
+	}
+	proj, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if proj.OrganizationID == nil {
+		return nil, fmt.Errorf("%w: project organization is required", ErrValidation)
+	}
+	actorID, actorType, err := s.resolveActor(ctx, input.ActorInput)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireAccess(ctx, actorID, actorType, "project.ai.analyze", "project", &projectID,
+		proj.OrganizationID, proj.DepartmentID, nil, proj.RequiredLevel, proj.RiskLevel, nil); err != nil {
+		return nil, err
+	}
+	overview, err := s.GetProjectOverview(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	verifiedContext := map[string]any{"project_overview": overview}
+	if input.Context != nil {
+		verifiedContext["request_context"] = input.Context
+	}
+	run, err := s.businessAI.Analyze(ctx, businessai.AnalyzeInput{
+		OrganizationID:  *proj.OrganizationID,
+		ProjectID:       projectID,
+		RequirementID:   proj.RequirementID,
+		Stage:           input.Stage,
+		RequestedByID:   &actorID,
+		RequestedByType: actorType,
+		ProviderType:    input.ProviderType,
+		Model:           input.Model,
+		Focus:           input.Focus,
+		Context:         verifiedContext,
+	})
+	if errors.Is(err, businessai.ErrValidation) {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	if errors.Is(err, businessai.ErrNotConfigured) || errors.Is(err, aigateway.ErrUnavailable) {
+		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return run, err
+}
+
+func (s *Service) ListProjectStageAIRuns(ctx context.Context, projectID uuid.UUID, limit int) ([]businessai.Run, error) {
+	if s.businessAI == nil {
+		return nil, fmt.Errorf("business stage ai is not configured")
+	}
+	proj, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if proj.OrganizationID == nil {
+		return nil, fmt.Errorf("%w: project organization is required", ErrValidation)
+	}
+	if err := ensureTenantAccess(ctx, proj.OrganizationID); err != nil {
+		return nil, err
+	}
+	return s.businessAI.ListRuns(ctx, *proj.OrganizationID, projectID, limit)
 }
 
 func (s *Service) CreateDeliverable(ctx context.Context, projectID uuid.UUID, input CreateDeliverableInput) (*Deliverable, error) {

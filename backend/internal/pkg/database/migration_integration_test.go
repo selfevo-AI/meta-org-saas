@@ -91,6 +91,15 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 	if !authRateLimitTableExists {
 		t.Fatal("authentication rate limit bucket table missing")
 	}
+	var businessAIStageTableExists bool
+	if err := targetPool.QueryRow(ctx, `
+		SELECT to_regclass('public.business_stage_ai_runs') IS NOT NULL
+	`).Scan(&businessAIStageTableExists); err != nil {
+		t.Fatalf("check business stage ai table: %v", err)
+	}
+	if !businessAIStageTableExists {
+		t.Fatal("business stage ai run table missing")
+	}
 
 	var notValid int
 	if err := targetPool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE NOT convalidated`).Scan(&notValid); err != nil {

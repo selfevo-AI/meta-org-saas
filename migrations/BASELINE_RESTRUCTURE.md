@@ -18,6 +18,7 @@ This directory now uses staged baseline migrations instead of the historical
 13. `013_tenant_event_projection_infrastructure.sql`
 14. `014_platform_migration_checksum_governance.sql`
 15. `015_authentication_rate_limit_buckets.sql`
+16. `016_business_stage_ai_runs.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -323,6 +324,15 @@ Registration consumes a client-only bucket. Forwarded client headers are trusted
 only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Rate-limit storage
 errors fail closed with HTTP 503, threshold blocks return HTTP 429 and
 `Retry-After`, and aggregate counters are exposed from the health endpoint.
+
+`016_business_stage_ai_runs.sql` adds the platform-owned audit record for
+project AI analysis across the Plan, Do, Change, Accept, and Learn stages. Each
+run retains the verified tenant context, requester, AI Gateway invocation,
+resolved model, token/cost usage, strict structured result, proposal approval
+flag, and terminal error. Project and requirement identifiers intentionally do
+not use cross-database foreign keys because their authoritative rows live in a
+physical tenant database. The same schema is part of
+`004_ai_capability_baseline.sql` for fresh platform databases.
 
 `011_ai_module_master_detail_runtime_repair.sql` completes the cross-stage
 contract between the ERP master/detail framework and the AI capability stage.

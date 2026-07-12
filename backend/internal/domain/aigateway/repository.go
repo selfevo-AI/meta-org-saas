@@ -553,7 +553,7 @@ func (r *PostgresRepository) CreateUsageLedger(ctx context.Context, input Create
 			input_cost, output_cost, cache_creation_cost, cache_read_cost, image_output_cost,
 			rate_multiplier, service_tier, reasoning_effort, requested_model, upstream_model, metadata, reason
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE(NULLIF($8, 0), $7), $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, COALESCE(NULLIF($8::numeric, 0::numeric), $7::numeric), $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
 	`, input.InvocationID, input.AccessTokenID, input.ModelGroupID, input.ChannelID, input.ModelPriceVersionID, input.LedgerType, input.Amount, input.ActualAmount, currencyOrDefault(input.Currency),
 		input.Usage.InputTokens, input.Usage.OutputTokens, input.Usage.CacheCreationTokens, input.Usage.CacheReadTokens,
 		input.Usage.CacheCreation5mTokens, input.Usage.CacheCreation1hTokens, input.Usage.ImageOutputTokens,

@@ -408,3 +408,12 @@ type CloseFeedbackInput struct {
 	Conclusion   string         `json:"conclusion,omitempty"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
 }
+
+type AnalyzeProjectStageInput struct {
+	ActorInput
+	Stage        string         `json:"stage"`
+	Focus        string         `json:"focus,omitempty"`
+	ProviderType string         `json:"provider_type,omitempty"`
+	Model        string         `json:"model,omitempty"`
+	Context      map[string]any `json:"context,omitempty"`
+}

@@ -171,7 +171,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `000_saas_platform_management_baseline.sql` | SaaS 管理平台、平台账号、权限治理、订阅、模块、租户和平台主从数据基础。 |
 | `001_erp_code_baseline.sql` | ERP/行业业务基线，包含组织、项目、工作流、财务、成本，以及以 ERP code-table 为主模型的供应链和行业解决方案表。 |
 | `002_erp_platform_integration_baseline.sql` | ERP 与平台管理的运行期投影、模块集成和平台主数据同步。 |
-| `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、上下文、skill、AI 用量，以及跨阶段外键重建。 |
+| `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、业务五阶段 AI 审计、上下文、skill、AI 用量，以及跨阶段外键重建。 |
 | `005_industry_solution_consolidation.sql` | 行业方案存储和历史方案数据归并。 |
 | `006_saas_manufacturing_module_seed.sql` | 制造模块及 ERPNext 风格行业方案种子。 |
 | `007_saas_runtime_organization_target_repair.sql` | SaaS 运行组织和租户数据库目标修复。 |
@@ -183,6 +183,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `013_tenant_event_projection_infrastructure.sql` | 平台事件 inbox、租户运营/工作流/活动投影，以及 Dashboard/Meta-Org 跨库读模型。 |
 | `014_platform_migration_checksum_governance.sql` | 平台迁移 checksum、受控漂移修复和不可变审计历史。 |
 | `015_authentication_rate_limit_buckets.sql` | 多实例共享的认证限流、失败计数和封禁 bucket。 |
+| `016_business_stage_ai_runs.sql` | Plan/Do/Change/Accept/Learn 项目 AI 分析调用、结构化结果、成本和提案审计。 |
 
 租户库按 `migrations/tenant/` 独立迁移：`001_tenant_business_baseline.sql` 建立业务基线，`002_tenant_projection_outbox.sql` 建立带租约、重试和发布状态的事务 outbox。
 
@@ -400,6 +401,9 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | 触发账号或客户端临时封禁的认证失败数。 |
 | `AUTH_RATE_LIMIT_BLOCK_SECONDS` | `300` | 限流或失败阈值触发后的封禁时长。 |
 | `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | 每客户端在窗口内允许的最大注册请求数。 |
+| `BUSINESS_AI_PROVIDER_TYPE` | 空 | 业务五阶段 AI 默认 provider 类型，例如 `openai`；也可在单次请求中指定。 |
+| `BUSINESS_AI_MODEL` | 空 | 业务五阶段 AI 默认模型键；必须对应 AI Gateway 中已启用的模型。 |
+| `BUSINESS_AI_MAX_TOKENS` | `1800` | 单次业务阶段结构化分析允许的最大输出 token。 |
 | `MIGRATIONS_PATH` | `migrations` | SQL 迁移目录；本地从 `backend/` 运行时通常设为 `../migrations`。 |
 | `META_ORG_MODE` | `single_org` | 运行模式；可设为 `saas` 启用多租户/SaaS 语义。 |
 | `META_ORG_DISTRIBUTION_MODE` | 跟随 `META_ORG_MODE` | 分发模式：`saas`、`saas_org_private`、`single_org_commercial` 或 `private_deployment`。 |

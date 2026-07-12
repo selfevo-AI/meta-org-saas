@@ -2995,6 +2995,7 @@ function Topbar({
         <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
+            data-testid="mobile-menu-open"
             onClick={onOpenMenu}
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 lg:hidden"
           >
@@ -3221,6 +3222,7 @@ function NavigationSidebar({
                           active={workspaceView === menuKey}
                           icon={Icon}
                           label={t(domainLabels[domain] ?? domain)}
+                          testId={`domain-nav-${domain}`}
                           count={count}
                           onClick={() => {
                             if (tenantDocuments[0]) {
@@ -3306,6 +3308,7 @@ function SidebarButton({
   badge,
   count,
   onClick,
+  testId,
   draggable,
   onDragStart,
 }: {
@@ -3315,12 +3318,14 @@ function SidebarButton({
   badge?: string
   count?: number
   onClick: () => void
+  testId?: string
   draggable?: boolean
   onDragStart?: (event: DragEvent<HTMLButtonElement>) => void
 }) {
   return (
     <button
       type="button"
+      data-testid={testId}
       draggable={draggable}
       onDragStart={onDragStart}
       onClick={onClick}
@@ -3394,6 +3399,7 @@ function BusinessFunctionTreePanel({
                         <button
                           type="button"
                           key={`${group.id}-${domain}`}
+                          data-testid={`domain-nav-${domain}`}
                           onClick={() => onViewChange(domain === 'MetaOrg' ? 'overview' : (`domain:${domain}` as WorkspaceView))}
                           className={`flex h-10 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-sm font-semibold transition ${
                             active

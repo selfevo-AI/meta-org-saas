@@ -11,6 +11,7 @@ import (
 
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/assistant"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/businessai"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
@@ -250,6 +251,12 @@ func main() {
 	aiRepo := aigateway.NewRepository(db, modelSecretBox)
 	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel))
 	aiHandler := aigateway.NewHandler(aiSvc)
+	businessAIRepo := businessai.NewRepository(db)
+	businessAISvc := businessai.NewService(businessAIRepo, aiSvc, businessai.Config{
+		ProviderType: cfg.BusinessAIProviderType,
+		Model:        cfg.BusinessAIModel,
+		MaxTokens:    cfg.BusinessAIMaxTokens,
+	})
 
 	wfRepo := workflow.NewRepository(tenantBusinessDB)
 	wfSvc := workflow.NewService(wfRepo)
@@ -264,6 +271,7 @@ func main() {
 		project.WithWorkflowService(wfSvc),
 		project.WithMetaResourceService(metaResourceSvc),
 		project.WithCostRecorder(costSvc),
+		project.WithBusinessAI(businessAISvc),
 	)
 	projectHandler := project.NewHandler(projectSvc)
 

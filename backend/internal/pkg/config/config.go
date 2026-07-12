@@ -46,6 +46,9 @@ type Config struct {
 	AuthRateLimitFailureThreshold     int
 	AuthRateLimitBlockSeconds         int
 	AuthRegistrationMaxAttempts       int
+	BusinessAIProviderType            string
+	BusinessAIModel                   string
+	BusinessAIMaxTokens               int
 	MigrationsPath                    string
 	MetaOrgMode                       string
 	MetaOrgDistributionMode           string
@@ -107,6 +110,9 @@ func Load() *Config {
 		AuthRateLimitFailureThreshold:     getEnvInt("AUTH_RATE_LIMIT_FAILURE_THRESHOLD", 5),
 		AuthRateLimitBlockSeconds:         getEnvInt("AUTH_RATE_LIMIT_BLOCK_SECONDS", 300),
 		AuthRegistrationMaxAttempts:       getEnvInt("AUTH_REGISTRATION_MAX_ATTEMPTS", 5),
+		BusinessAIProviderType:            strings.TrimSpace(getEnv("BUSINESS_AI_PROVIDER_TYPE", "")),
+		BusinessAIModel:                   strings.TrimSpace(getEnv("BUSINESS_AI_MODEL", "")),
+		BusinessAIMaxTokens:               getEnvInt("BUSINESS_AI_MAX_TOKENS", 1800),
 		MigrationsPath:                    getEnv("MIGRATIONS_PATH", "migrations"),
 		MetaOrgMode:                       mode,
 		MetaOrgDistributionMode:           normalizedDistributionMode(getEnv("META_ORG_DISTRIBUTION_MODE", mode)),

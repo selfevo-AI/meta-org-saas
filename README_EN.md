@@ -171,7 +171,7 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 | `000_saas_platform_management_baseline.sql` | SaaS management platform, platform accounts, permission governance, subscriptions, modules, tenants, and platform master/detail foundation. |
 | `001_erp_code_baseline.sql` | ERP and industry business baseline, including organization, project, workflow, finance, costing, and supply-chain solution tables. |
 | `002_erp_platform_integration_baseline.sql` | Runtime projection, module integration, and platform master-data synchronization between ERP and platform management. |
-| `004_ai_capability_baseline.sql` | Models, providers/channels, agents, tool runtime, AI Assistant, context, skills, AI usage, and cross-stage foreign-key rebuilds. |
+| `004_ai_capability_baseline.sql` | Models, providers/channels, agents, tool runtime, AI Assistant, five-stage business AI audits, context, skills, AI usage, and cross-stage foreign-key rebuilds. |
 | `005_industry_solution_consolidation.sql` | Industry-solution storage and historical solution-data consolidation. |
 | `006_saas_manufacturing_module_seed.sql` | Manufacturing module and ERPNext-style industry-solution seeds. |
 | `007_saas_runtime_organization_target_repair.sql` | SaaS runtime organization and tenant-database target repair. |
@@ -183,6 +183,7 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 | `013_tenant_event_projection_infrastructure.sql` | Platform event inbox, tenant operational/workflow/activity projections, and cross-database read models for Dashboard and Meta-Org. |
 | `014_platform_migration_checksum_governance.sql` | Platform migration checksums, controlled drift repair, and immutable reconciliation history. |
 | `015_authentication_rate_limit_buckets.sql` | Multi-instance authentication attempt, failure, and blocking buckets. |
+| `016_business_stage_ai_runs.sql` | Plan/Do/Change/Accept/Learn project AI invocations, structured results, costs, and proposal audits. |
 
 Tenant databases migrate independently from `migrations/tenant/`: `001_tenant_business_baseline.sql` establishes the business baseline and `002_tenant_projection_outbox.sql` adds the transactional outbox with leasing, retries, and publication state.
 
@@ -383,6 +384,9 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | Authentication failures that trigger a temporary client or subject block. |
 | `AUTH_RATE_LIMIT_BLOCK_SECONDS` | `300` | Block duration after attempt or failure thresholds are exceeded. |
 | `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | Maximum registration requests per client during the window. |
+| `BUSINESS_AI_PROVIDER_TYPE` | empty | Default provider type for five-stage business AI, such as `openai`; requests may override it. |
+| `BUSINESS_AI_MODEL` | empty | Default five-stage business AI model key; it must match an active AI Gateway model. |
+| `BUSINESS_AI_MAX_TOKENS` | `1800` | Maximum output tokens for one structured business-stage analysis. |
 | `MIGRATIONS_PATH` | `migrations` | SQL migration directory; when running from `backend/`, usually set it to `../migrations`. |
 | `META_ORG_MODE` | `single_org` | Runtime mode; set to `saas` for multi-tenant/SaaS semantics. |
 | `META_ORG_DISTRIBUTION_MODE` | Follows `META_ORG_MODE` | Distribution mode: `saas`, `saas_org_private`, `single_org_commercial`, or `private_deployment`. |

@@ -54,6 +54,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/projects/{id}/match-actors", h.matchProjectActors)
 	r.Post("/projects/{id}/status", h.updateProjectStatus)
 	r.Get("/projects/{id}/overview", h.getProjectOverview)
+	r.Post("/projects/{id}/ai-analyses", h.analyzeProjectStage)
+	r.Get("/projects/{id}/ai-analyses", h.listProjectStageAIRuns)
 
 	r.Post("/projects/{id}/deliverables", h.createDeliverable)
 	r.Get("/projects/{id}/deliverables", h.listDeliverables)
@@ -522,6 +524,28 @@ func (h *Handler) closeFeedback(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, http.StatusOK, result, err)
 }
 
+func (h *Handler) analyzeProjectStage(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseURLID(w, r, "id", "projects")
+	if !ok {
+		return
+	}
+	var input AnalyzeProjectStageInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	run, err := h.service.AnalyzeProjectStage(r.Context(), id, input)
+	writeResult(w, http.StatusCreated, run, err)
+}
+
+func (h *Handler) listProjectStageAIRuns(w http.ResponseWriter, r *http.Request) {
+	id, ok := h.parseURLID(w, r, "id", "projects")
+	if !ok {
+		return
+	}
+	runs, err := h.service.ListProjectStageAIRuns(r.Context(), id, queryLimit(r))
+	writeResult(w, http.StatusOK, runs, err)
+}
+
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {
 	err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(dest)
 	if err == nil || errors.Is(err, io.EOF) {
@@ -582,6 +606,8 @@ func statusFromError(err error) int {
 		return http.StatusForbidden
 	case errors.Is(err, ErrConflict):
 		return http.StatusConflict
+	case errors.Is(err, ErrUnavailable):
+		return http.StatusServiceUnavailable
 	case dberrors.IsUniqueViolation(err):
 		return http.StatusConflict
 	case errors.Is(err, ErrNotFound), errors.Is(err, pgx.ErrNoRows):

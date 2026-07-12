@@ -28,6 +28,7 @@ import {
   type DocumentWorkbenchDefinition,
 } from '@/lib/workbench'
 import { DocumentWorkbench } from './document-workbench'
+import { BusinessAIWorkbench } from './business-ai-workbench'
 
 type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail' | 'manufacturing'
 
@@ -637,6 +638,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
           <button
             key={document.id}
             type="button"
+            data-testid={`erp-document-${document.id}`}
             onClick={() => setActiveID(document.id)}
             className={`rounded-lg border p-4 text-left transition ${
               activeDocument?.id === document.id ? 'border-[#AD4714] bg-[#fff8f3]' : 'border-slate-200 bg-white hover:bg-slate-50'
@@ -821,6 +823,9 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
             )}
           </aside>
           </div>
+          {module === 'project' && activeDocument.id === 'project' && (
+            <BusinessAIWorkbench token={token} projectID={selectedKey} />
+          )}
         </div>
       )}
     </section>
