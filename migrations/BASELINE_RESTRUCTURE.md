@@ -16,6 +16,8 @@ This directory now uses staged baseline migrations instead of the historical
 11. `011_ai_module_master_detail_runtime_repair.sql`
 12. `012_tenant_database_target_state_repair.sql`
 13. `013_tenant_event_projection_infrastructure.sql`
+14. `014_platform_migration_checksum_governance.sql`
+15. `015_authentication_rate_limit_buckets.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -299,6 +301,28 @@ transactionally replaces operational, workflow, and activity projections.
 Dashboard and Meta-Org read these platform projections rather than tenant-owned
 tables through the platform connection. Health reports worker throughput,
 failures, latest lag, and tenant pool usage.
+
+Platform migration history is checksum-enforced. On the first startup after this
+governance is introduced, historical rows with an empty checksum are backfilled
+from the current repository files. Any later content drift is rejected unless a
+later, unapplied repair migration declares
+`-- platformdb:accept-checksum-drift <filename.sql>`. The repair SQL, checksum
+history insert, and tracked-checksum update commit in one transaction. Once that
+repair migration is applied, it cannot authorize another edit to the same
+baseline; a new repair migration is required. `014_platform_migration_checksum_governance.sql`
+repairs existing databases, while the tracking and history structures are also
+part of `000_saas_platform_management_baseline.sql` for fresh databases.
+
+`015_authentication_rate_limit_buckets.sql` adds shared authentication buckets
+for horizontally scaled backend instances. Bucket identifiers are SHA-256 hashes
+of a scope-separated client or subject key; email addresses, Agent IDs, and IP
+addresses are not stored in plaintext. User and Agent authentication consume
+both client and subject buckets. Failures increment both and can extend a
+persistent block; successful authentication resets only the subject bucket.
+Registration consumes a client-only bucket. Forwarded client headers are trusted
+only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Rate-limit storage
+errors fail closed with HTTP 503, threshold blocks return HTTP 429 and
+`Retry-After`, and aggregate counters are exposed from the health endpoint.
 
 `011_ai_module_master_detail_runtime_repair.sql` completes the cross-stage
 contract between the ERP master/detail framework and the AI capability stage.

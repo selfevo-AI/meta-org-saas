@@ -3,6 +3,7 @@ package securitykernel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,6 +19,9 @@ func TestClientAuthorizeSignsRequestAndAllowsDecision(t *testing.T) {
 		}
 		if r.Header.Get("X-Security-Timestamp") == "" {
 			t.Fatalf("missing X-Security-Timestamp")
+		}
+		if r.Header.Get("X-Security-Nonce") == "" {
+			t.Fatalf("missing X-Security-Nonce")
 		}
 		if r.Header.Get("X-Security-Signature") == "" {
 			t.Fatalf("missing X-Security-Signature")
@@ -89,5 +93,29 @@ func TestNoopClientAllowsWhenKernelNotConfigured(t *testing.T) {
 	}
 	if !decision.Allowed {
 		t.Fatalf("decision allowed = false, want true")
+	}
+}
+
+func TestClientFailsClosedWhenRequiredKernelURLMissing(t *testing.T) {
+	client := NewClient(Config{Required: true, EnforcementMode: "blocking"})
+
+	decision, err := client.Authorize(context.Background(), Request{})
+	if err == nil || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Authorize error = %v, want ErrUnavailable", err)
+	}
+	if decision.Allowed || decision.Reason != "security_kernel_url_required" {
+		t.Fatalf("decision = %#v", decision)
+	}
+}
+
+func TestClientFailsClosedWhenConfiguredSecretMissing(t *testing.T) {
+	client := NewClient(Config{URL: "http://security-kernel:8090", EnforcementMode: "blocking"})
+
+	decision, err := client.Authorize(context.Background(), Request{})
+	if err == nil || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("Authorize error = %v, want ErrUnavailable", err)
+	}
+	if decision.Allowed || decision.Reason != "security_kernel_shared_secret_required" {
+		t.Fatalf("decision = %#v", decision)
 	}
 }

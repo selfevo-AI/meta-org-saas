@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/authlimit"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -26,6 +27,14 @@ func (p fakeTenantProjectionStatsProvider) Stats() tenantprojection.WorkerStats 
 	return p.stats
 }
 
+type fakeAuthenticationRateLimitStatsProvider struct {
+	stats authlimit.Stats
+}
+
+func (p fakeAuthenticationRateLimitStatsProvider) Stats() authlimit.Stats {
+	return p.stats
+}
+
 func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	provider := fakeTenantPoolStatsProvider{stats: tenantdb.PoolRouterStats{
 		CachedPools:             3,
@@ -41,7 +50,12 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 		LastProjectionLagMs: 12,
 		Running:             true,
 	}}
-	healthCheck(provider, projectionProvider).ServeHTTP(recorder, request)
+	authLimitProvider := fakeAuthenticationRateLimitStatsProvider{stats: authlimit.Stats{
+		ChecksTotal:      9,
+		RateLimitedTotal: 2,
+		BlocksApplied:    1,
+	}}
+	healthCheck(provider, projectionProvider, authLimitProvider).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -70,5 +84,11 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	}
 	if !response.TenantProjectionWorker.Running || response.TenantProjectionWorker.LastProjectionLagMs != 12 {
 		t.Fatalf("projection worker health = %#v", response.TenantProjectionWorker)
+	}
+	if response.AuthenticationRateLimits == nil {
+		t.Fatal("authentication_rate_limits missing")
+	}
+	if response.AuthenticationRateLimits.ChecksTotal != 9 || response.AuthenticationRateLimits.RateLimitedTotal != 2 || response.AuthenticationRateLimits.BlocksApplied != 1 {
+		t.Fatalf("authentication rate limit stats = %#v", response.AuthenticationRateLimits)
 	}
 }

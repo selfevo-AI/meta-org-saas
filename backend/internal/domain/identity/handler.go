@@ -6,19 +6,46 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/authlimit"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
-type Handler struct {
-	service *Service
+type AuthProtectionConfig struct {
+	AuthenticationPolicy authlimit.Policy
+	RegistrationPolicy   authlimit.Policy
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+type HandlerOption func(*Handler)
+
+type Handler struct {
+	service        *Service
+	limiter        authlimit.Limiter
+	clientIPs      *middleware.ClientIPResolver
+	authPolicy     authlimit.Policy
+	registerPolicy authlimit.Policy
+}
+
+func NewHandler(service *Service, options ...HandlerOption) *Handler {
+	handler := &Handler{service: service}
+	for _, option := range options {
+		option(handler)
+	}
+	return handler
+}
+
+func WithAuthenticationProtection(limiter authlimit.Limiter, clientIPs *middleware.ClientIPResolver, config AuthProtectionConfig) HandlerOption {
+	return func(handler *Handler) {
+		handler.limiter = limiter
+		handler.clientIPs = clientIPs
+		handler.authPolicy = config.AuthenticationPolicy
+		handler.registerPolicy = config.RegistrationPolicy
+	}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -59,12 +86,23 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.AuthenticateUser(r.Context(), req.Email, req.Password)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+	clientKey := h.clientKey(r)
+	subjectKey := strings.ToLower(strings.TrimSpace(req.Email))
+	buckets := []rateLimitBucket{
+		{scope: "user_login_ip", key: clientKey},
+		{scope: "user_login_subject", key: subjectKey},
+	}
+	if !h.consumeBuckets(w, r, buckets, h.authPolicy) {
 		return
 	}
 
+	resp, err := h.service.AuthenticateUser(r.Context(), req.Email, req.Password)
+	if err != nil {
+		h.recordFailures(r, buckets, h.authPolicy)
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	h.resetBucket(r, rateLimitBucket{scope: "user_login_subject", key: subjectKey})
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -78,6 +116,10 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if !h.consumeBuckets(w, r, []rateLimitBucket{{scope: "user_register_ip", key: h.clientKey(r)}}, h.registerPolicy) {
 		return
 	}
 
@@ -174,18 +216,28 @@ func (h *Handler) authenticateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	buckets := []rateLimitBucket{
+		{scope: "agent_login_ip", key: h.clientKey(r)},
+		{scope: "agent_login_subject", key: strings.ToLower(strings.TrimSpace(req.AgentID))},
+	}
+	if !h.consumeBuckets(w, r, buckets, h.authPolicy) {
+		return
+	}
+
 	agentID, err := uuid.Parse(req.AgentID)
 	if err != nil {
+		h.recordFailures(r, buckets, h.authPolicy)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid agent id"})
 		return
 	}
 
 	resp, err := h.service.AuthenticateAgent(r.Context(), agentID, req.APIKey)
 	if err != nil {
+		h.recordFailures(r, buckets, h.authPolicy)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication failed"})
 		return
 	}
-
+	h.resetBucket(r, rateLimitBucket{scope: "agent_login_subject", key: strings.ToLower(strings.TrimSpace(req.AgentID))})
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -212,6 +264,69 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, roles)
+}
+
+type rateLimitBucket struct {
+	scope string
+	key   string
+}
+
+func (h *Handler) consumeBuckets(w http.ResponseWriter, r *http.Request, buckets []rateLimitBucket, policy authlimit.Policy) bool {
+	if h.limiter == nil {
+		return true
+	}
+	for _, bucket := range buckets {
+		decision, err := h.limiter.Consume(r.Context(), bucket.scope, bucket.key, policy)
+		if err != nil {
+			log.Printf("authentication rate limit check failed scope=%s: %v", bucket.scope, err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication protection unavailable"})
+			return false
+		}
+		if !decision.Allowed {
+			seconds := int64((decision.RetryAfter + time.Second - 1) / time.Second)
+			if seconds < 1 {
+				seconds = 1
+			}
+			log.Printf("authentication request rate limited scope=%s attempts=%d retry_after_seconds=%d", bucket.scope, decision.Attempts, seconds)
+			w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication attempts"})
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) recordFailures(r *http.Request, buckets []rateLimitBucket, policy authlimit.Policy) {
+	if h.limiter == nil {
+		return
+	}
+	for _, bucket := range buckets {
+		decision, err := h.limiter.RecordFailure(r.Context(), bucket.scope, bucket.key, policy)
+		if err != nil {
+			log.Printf("authentication failure tracking failed scope=%s: %v", bucket.scope, err)
+			continue
+		}
+		if !decision.Allowed {
+			seconds := int64((decision.RetryAfter + time.Second - 1) / time.Second)
+			log.Printf("authentication failure block applied scope=%s failures=%d retry_after_seconds=%d", bucket.scope, decision.Failures, seconds)
+		}
+	}
+}
+
+func (h *Handler) resetBucket(r *http.Request, bucket rateLimitBucket) {
+	if h.limiter == nil {
+		return
+	}
+	if err := h.limiter.Reset(r.Context(), bucket.scope, bucket.key); err != nil {
+		log.Printf("authentication rate limit reset failed scope=%s: %v", bucket.scope, err)
+	}
+}
+
+func (h *Handler) clientKey(r *http.Request) string {
+	if h.clientIPs != nil {
+		return h.clientIPs.Resolve(r)
+	}
+	return r.RemoteAddr
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

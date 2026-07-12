@@ -28,6 +28,47 @@
 -- AI/模型/agent/工具/助手/skill 能力表归 004_ai_capability_baseline.sql。
 
 -- -----------------------------------------------------------------------------
+-- Platform migration checksum governance
+-- -----------------------------------------------------------------------------
+
+CREATE SCHEMA IF NOT EXISTS platform;
+
+CREATE TABLE IF NOT EXISTS platform.platform_migration_runs (
+    filename   VARCHAR(255) PRIMARY KEY,
+    checksum   TEXT NOT NULL DEFAULT '',
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE platform.platform_migration_runs
+    ADD COLUMN IF NOT EXISTS checksum TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS platform.platform_migration_checksum_history (
+    id                BIGSERIAL PRIMARY KEY,
+    filename          VARCHAR(255) NOT NULL,
+    previous_checksum TEXT NOT NULL,
+    accepted_checksum TEXT NOT NULL,
+    repair_filename   VARCHAR(255) NOT NULL,
+    reconciled_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (filename, previous_checksum, accepted_checksum, repair_filename)
+);
+
+CREATE TABLE IF NOT EXISTS platform.authentication_rate_limit_buckets (
+    bucket_key        TEXT PRIMARY KEY,
+    scope             TEXT NOT NULL,
+    window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    attempt_count     INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    failure_count     INTEGER NOT NULL DEFAULT 0 CHECK (failure_count >= 0),
+    blocked_until     TIMESTAMPTZ,
+    last_attempt_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata          JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_rate_limit_blocked
+    ON platform.authentication_rate_limit_buckets(blocked_until)
+    WHERE blocked_until IS NOT NULL;
+
+-- -----------------------------------------------------------------------------
 -- Folded from historical migration: 001_identity.sql
 -- -----------------------------------------------------------------------------
 

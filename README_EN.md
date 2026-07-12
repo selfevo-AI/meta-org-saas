@@ -181,6 +181,8 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 | `011_ai_module_master_detail_runtime_repair.sql` | Cross-stage canonical tables, source keys, and projection triggers for AI Gateway, Tool Runtime, and Assistant. |
 | `012_tenant_database_target_state_repair.sql` | Prevents repeated onboarding from downgrading provisioned tenant targets and repairs succeeded-job targets stuck in provisioning. |
 | `013_tenant_event_projection_infrastructure.sql` | Platform event inbox, tenant operational/workflow/activity projections, and cross-database read models for Dashboard and Meta-Org. |
+| `014_platform_migration_checksum_governance.sql` | Platform migration checksums, controlled drift repair, and immutable reconciliation history. |
+| `015_authentication_rate_limit_buckets.sql` | Multi-instance authentication attempt, failure, and blocking buckets. |
 
 Tenant databases migrate independently from `migrations/tenant/`: `001_tenant_business_baseline.sql` establishes the business baseline and `002_tenant_projection_outbox.sql` adds the transactional outbox with leasing, retries, and publication state.
 
@@ -375,12 +377,19 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing secret. Replace in production. |
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32-character key for model provider and finance adapter secret encryption. Replace in production. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Frontend origins allowed to call the API. |
+| `TRUSTED_PROXY_CIDRS` | empty | Trusted reverse-proxy CIDRs; forwarded client headers are used only from these peers. |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Attempt window for user login, Agent authentication, and registration. |
+| `AUTH_RATE_LIMIT_MAX_ATTEMPTS` | `10` | Maximum login attempts per client or subject during the window. |
+| `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | Authentication failures that trigger a temporary client or subject block. |
+| `AUTH_RATE_LIMIT_BLOCK_SECONDS` | `300` | Block duration after attempt or failure thresholds are exceeded. |
+| `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | Maximum registration requests per client during the window. |
 | `MIGRATIONS_PATH` | `migrations` | SQL migration directory; when running from `backend/`, usually set it to `../migrations`. |
 | `META_ORG_MODE` | `single_org` | Runtime mode; set to `saas` for multi-tenant/SaaS semantics. |
 | `META_ORG_DISTRIBUTION_MODE` | Follows `META_ORG_MODE` | Distribution mode: `saas`, `saas_org_private`, `single_org_commercial`, or `private_deployment`. |
 | `META_ORG_LICENSE_MODE` | `commercial` | License mode: `community`, `commercial`, `enterprise`, or `private_contract`. |
-| `SECURITY_KERNEL_URL` | empty | External security-kernel authorization service URL; when empty, the client treats it as not configured and allows requests. |
-| `SECURITY_KERNEL_SHARED_SECRET` | empty | Shared secret for calls to the external security kernel. |
+| `SECURITY_KERNEL_URL` | empty | External security-kernel URL; required in SaaS mode, where missing configuration denies protected operations in `blocking` mode. |
+| `SECURITY_KERNEL_SHARED_SECRET` | empty | HMAC shared secret; required when a URL is configured, and the kernel refuses to start with an empty secret. |
+| `SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS` | `60` | Maximum signed-request clock skew and nonce replay-retention window. |
 | `SECURITY_KERNEL_ENFORCEMENT_MODE` | `blocking` | Security-kernel enforcement mode; supports `blocking` and `audit`. |
 
 In SaaS mode, initialize the platform administrator with `META_ORG_PLATFORM_ADMIN_EMAIL` and `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH`. Generate the bcrypt password hash from `backend/`:

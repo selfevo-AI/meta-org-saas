@@ -152,6 +152,7 @@ pub struct VerifyIdentityRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServiceSignatureInput {
     pub timestamp: String,
+    pub nonce: String,
     pub body: Vec<u8>,
 }
 
@@ -263,6 +264,8 @@ pub fn service_signature(
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|_| SecurityError::new("invalid service secret"))?;
     mac.update(input.timestamp.as_bytes());
+    mac.update(b".");
+    mac.update(input.nonce.as_bytes());
     mac.update(b".");
     mac.update(&input.body);
     Ok(hex_encode(&mac.finalize().into_bytes()))

@@ -181,6 +181,8 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `011_ai_module_master_detail_runtime_repair.sql` | 补齐 AI Gateway、Tool Runtime、Assistant 跨阶段主从表、源键与投影触发器。 |
 | `012_tenant_database_target_state_repair.sql` | 防止已开通租户目标被重复 onboarding 降级，并修复“作业成功但目标仍 provisioning”的存量状态。 |
 | `013_tenant_event_projection_infrastructure.sql` | 平台事件 inbox、租户运营/工作流/活动投影，以及 Dashboard/Meta-Org 跨库读模型。 |
+| `014_platform_migration_checksum_governance.sql` | 平台迁移 checksum、受控漂移修复和不可变审计历史。 |
+| `015_authentication_rate_limit_buckets.sql` | 多实例共享的认证限流、失败计数和封禁 bucket。 |
 
 租户库按 `migrations/tenant/` 独立迁移：`001_tenant_business_baseline.sql` 建立业务基线，`002_tenant_projection_outbox.sql` 建立带租约、重试和发布状态的事务 outbox。
 
@@ -392,12 +394,19 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT 签名密钥，生产环境必须替换。 |
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32 字符密钥，用于模型供应商和财务适配器密钥加密，生产环境必须替换。 |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | 允许访问 API 的前端来源。 |
+| `TRUSTED_PROXY_CIDRS` | 空 | 可信反向代理 CIDR；仅来自这些地址的请求可使用 `X-Forwarded-For` / `X-Real-IP`。 |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | 登录、Agent 认证和注册尝试统计窗口。 |
+| `AUTH_RATE_LIMIT_MAX_ATTEMPTS` | `10` | 每个登录客户端或主体在窗口内的最大尝试数。 |
+| `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | 触发账号或客户端临时封禁的认证失败数。 |
+| `AUTH_RATE_LIMIT_BLOCK_SECONDS` | `300` | 限流或失败阈值触发后的封禁时长。 |
+| `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | 每客户端在窗口内允许的最大注册请求数。 |
 | `MIGRATIONS_PATH` | `migrations` | SQL 迁移目录；本地从 `backend/` 运行时通常设为 `../migrations`。 |
 | `META_ORG_MODE` | `single_org` | 运行模式；可设为 `saas` 启用多租户/SaaS 语义。 |
 | `META_ORG_DISTRIBUTION_MODE` | 跟随 `META_ORG_MODE` | 分发模式：`saas`、`saas_org_private`、`single_org_commercial` 或 `private_deployment`。 |
 | `META_ORG_LICENSE_MODE` | `commercial` | 授权模式：`community`、`commercial`、`enterprise` 或 `private_contract`。 |
-| `SECURITY_KERNEL_URL` | 空 | 外部安全内核授权服务地址；为空时客户端按未配置处理并允许通过。 |
-| `SECURITY_KERNEL_SHARED_SECRET` | 空 | 调用外部安全内核的共享密钥。 |
+| `SECURITY_KERNEL_URL` | 空 | 外部安全内核地址；SaaS 模式必填，缺失时 `blocking` 模式拒绝受保护操作。 |
+| `SECURITY_KERNEL_SHARED_SECRET` | 空 | 请求 HMAC 共享密钥；配置 URL 后必填，安全内核自身也拒绝空密钥启动。 |
+| `SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS` | `60` | 签名时间戳允许的最大时钟偏差，也是 nonce 防重放保留窗口。 |
 | `SECURITY_KERNEL_ENFORCEMENT_MODE` | `blocking` | 安全内核执行模式；支持 `blocking` 和 `audit`。 |
 
 SaaS 模式下可通过 `META_ORG_PLATFORM_ADMIN_EMAIL` 和 `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH` 初始化平台管理员。密码哈希可在 `backend/` 下生成：

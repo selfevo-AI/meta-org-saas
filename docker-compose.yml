@@ -22,6 +22,7 @@ services:
     environment:
       SECURITY_KERNEL_PORT: "8090"
       SECURITY_KERNEL_SHARED_SECRET: "dev-security-kernel-shared-secret"
+      SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS: "60"
       RUST_LOG: "info"
     ports:
       - "8090:8090"
@@ -69,6 +70,12 @@ services:
       JWT_SECRET: "dev-secret-change-in-production"
       MODEL_SECRET_KEY: "0123456789abcdef0123456789abcdef"
       CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      TRUSTED_PROXY_CIDRS: ""
+      AUTH_RATE_LIMIT_WINDOW_SECONDS: "60"
+      AUTH_RATE_LIMIT_MAX_ATTEMPTS: "10"
+      AUTH_RATE_LIMIT_FAILURE_THRESHOLD: "5"
+      AUTH_RATE_LIMIT_BLOCK_SECONDS: "300"
+      AUTH_REGISTRATION_MAX_ATTEMPTS: "5"
       MIGRATIONS_PATH: "migrations"
       TENANT_MIGRATIONS_PATH: "migrations/tenant"
       META_ORG_MODE: "saas"

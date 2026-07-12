@@ -38,8 +38,10 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/gateway"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/authlimit"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/config"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/database"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/server"
@@ -63,6 +65,11 @@ func main() {
 	if err := database.RunMigrations(context.Background(), db, cfg.MigrationsPath); err != nil {
 		log.Fatalf("migrations failed: %v", err)
 	}
+	clientIPResolver, err := middleware.NewClientIPResolver(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		log.Fatalf("trusted proxy configuration invalid: %v", err)
+	}
+	authLimiter := authlimit.NewPostgresLimiter(db)
 	tenantBusinessDB := tenantdb.NewPoolRouterWithConfig(db, cfg.TenantDatabaseAdminURL, tenantdb.PoolRouterConfig{
 		MaxCachedPools:        cfg.TenantDatabasePoolMaxEntries,
 		MaxConnectionsPerPool: int32(cfg.TenantDatabasePoolMaxConnections),
@@ -82,6 +89,7 @@ func main() {
 		URL:             cfg.SecurityKernelURL,
 		SharedSecret:    cfg.SecurityKernelSharedSecret,
 		EnforcementMode: cfg.SecurityKernelEnforcementMode,
+		Required:        cfg.MetaOrgMode == saas.ModeSaaS,
 	})
 
 	industryRepo := industry.NewRepository(db)
@@ -160,7 +168,24 @@ func main() {
 
 	identRepo := identity.NewRepository(db)
 	identSvc := identity.NewService(identRepo, cfg.JWTSecret, identity.WithSessionProfileProvider(saasSvc))
-	identHandler := identity.NewHandler(identSvc)
+	identHandler := identity.NewHandler(identSvc, identity.WithAuthenticationProtection(
+		authLimiter,
+		clientIPResolver,
+		identity.AuthProtectionConfig{
+			AuthenticationPolicy: authlimit.Policy{
+				Window:           time.Duration(cfg.AuthRateLimitWindowSeconds) * time.Second,
+				MaxAttempts:      cfg.AuthRateLimitMaxAttempts,
+				FailureThreshold: cfg.AuthRateLimitFailureThreshold,
+				BlockDuration:    time.Duration(cfg.AuthRateLimitBlockSeconds) * time.Second,
+			},
+			RegistrationPolicy: authlimit.Policy{
+				Window:           time.Duration(cfg.AuthRateLimitWindowSeconds) * time.Second,
+				MaxAttempts:      cfg.AuthRegistrationMaxAttempts,
+				FailureThreshold: cfg.AuthRegistrationMaxAttempts,
+				BlockDuration:    time.Duration(cfg.AuthRateLimitBlockSeconds) * time.Second,
+			},
+		},
+	))
 
 	govRepo := governance.NewRepository(db)
 	govSvc := governance.NewService(govRepo)
@@ -324,38 +349,39 @@ func main() {
 
 	router := server.NewRouter(cfg.CorsOrigins)
 	gateway.RegisterRoutes(router, &gateway.Dependencies{
-		JWTSecret:                     cfg.JWTSecret,
-		IdentityHandler:               identHandler,
-		OrganizationHandler:           orgHandler,
-		LayerHandler:                  layerHandler,
-		CapabilityHandler:             capHandler,
-		CostingHandler:                costHandler,
-		DashboardHandler:              dashHandler,
-		MetaOrgHandler:                metaHandler,
-		MetaResourceHandler:           metaResourceHandler,
-		AssistantHandler:              assistantHandler,
-		AIGatewayHandler:              aiHandler,
-		WorkflowHandler:               wfHandler,
-		ProjectHandler:                projectHandler,
-		FinanceHandler:                financeHandler,
-		InventoryHandler:              inventoryHandler,
-		IndustryHandler:               industryHandler,
-		ProcurementHandler:            procurementHandler,
-		SalesHandler:                  salesHandler,
-		RuntimeHandler:                runtimeHandler,
-		ToolRuntimeHandler:            toolHandler,
-		SaaSHandler:                   saasHandler,
-		SystemAdminHandler:            systemAdminHandler,
-		TenantResolver:                saasSvc,
-		PlatformRoleResolver:          systemAdminRepo,
-		ObservabilityHandler:          obsHandler,
-		VerificationHandler:           verHandler,
-		GovernanceHandler:             govHandler,
-		EvolutionHandler:              evoHandler,
-		MonitoringAgentHandler:        monitoringHandler,
-		ErpHandler:                    erpHandler,
-		TenantPoolStatsProvider:       tenantBusinessDB,
-		TenantProjectionStatsProvider: tenantProjectionWorker,
+		JWTSecret:                            cfg.JWTSecret,
+		IdentityHandler:                      identHandler,
+		OrganizationHandler:                  orgHandler,
+		LayerHandler:                         layerHandler,
+		CapabilityHandler:                    capHandler,
+		CostingHandler:                       costHandler,
+		DashboardHandler:                     dashHandler,
+		MetaOrgHandler:                       metaHandler,
+		MetaResourceHandler:                  metaResourceHandler,
+		AssistantHandler:                     assistantHandler,
+		AIGatewayHandler:                     aiHandler,
+		WorkflowHandler:                      wfHandler,
+		ProjectHandler:                       projectHandler,
+		FinanceHandler:                       financeHandler,
+		InventoryHandler:                     inventoryHandler,
+		IndustryHandler:                      industryHandler,
+		ProcurementHandler:                   procurementHandler,
+		SalesHandler:                         salesHandler,
+		RuntimeHandler:                       runtimeHandler,
+		ToolRuntimeHandler:                   toolHandler,
+		SaaSHandler:                          saasHandler,
+		SystemAdminHandler:                   systemAdminHandler,
+		TenantResolver:                       saasSvc,
+		PlatformRoleResolver:                 systemAdminRepo,
+		ObservabilityHandler:                 obsHandler,
+		VerificationHandler:                  verHandler,
+		GovernanceHandler:                    govHandler,
+		EvolutionHandler:                     evoHandler,
+		MonitoringAgentHandler:               monitoringHandler,
+		ErpHandler:                           erpHandler,
+		TenantPoolStatsProvider:              tenantBusinessDB,
+		TenantProjectionStatsProvider:        tenantProjectionWorker,
+		AuthenticationRateLimitStatsProvider: authLimiter,
 	})
 
 	srv := server.New(router, cfg.ServerPort)

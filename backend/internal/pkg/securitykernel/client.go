@@ -25,6 +25,7 @@ type Config struct {
 	URL             string
 	SharedSecret    string
 	EnforcementMode string
+	Required        bool
 }
 
 type Client interface {
@@ -39,6 +40,11 @@ type HTTPClient struct {
 }
 
 type NoopClient struct{}
+
+type UnavailableClient struct {
+	reason          string
+	enforcementMode string
+}
 
 type Actor struct {
 	ActorID         uuid.UUID `json:"actor_id"`
@@ -75,12 +81,18 @@ type Decision struct {
 }
 
 func NewClient(cfg Config) Client {
-	if strings.TrimSpace(cfg.URL) == "" {
-		return NewNoopClient()
-	}
 	mode := strings.TrimSpace(cfg.EnforcementMode)
 	if mode == "" {
 		mode = "blocking"
+	}
+	if strings.TrimSpace(cfg.URL) == "" {
+		if cfg.Required {
+			return UnavailableClient{reason: "security_kernel_url_required", enforcementMode: mode}
+		}
+		return NewNoopClient()
+	}
+	if strings.TrimSpace(cfg.SharedSecret) == "" {
+		return UnavailableClient{reason: "security_kernel_shared_secret_required", enforcementMode: mode}
 	}
 	return &HTTPClient{
 		baseURL:         strings.TrimRight(strings.TrimSpace(cfg.URL), "/"),
@@ -96,6 +108,16 @@ func NewNoopClient() Client {
 
 func (NoopClient) Authorize(context.Context, Request) (Decision, error) {
 	return Decision{Allowed: true, Reason: "security_kernel_not_configured", DecisionType: "allow"}, nil
+}
+
+func (c UnavailableClient) Authorize(context.Context, Request) (Decision, error) {
+	decision := deny(c.reason)
+	if c.enforcementMode == "audit" {
+		decision.Allowed = true
+		decision.DecisionType = "allow"
+		return decision, nil
+	}
+	return decision, fmt.Errorf("%w: %s", ErrUnavailable, c.reason)
 }
 
 func (c *HTTPClient) Authorize(ctx context.Context, request Request) (Decision, error) {
@@ -137,11 +159,15 @@ func (c *HTTPClient) sign(req *http.Request, body []byte) {
 		return
 	}
 	timestamp := fmt.Sprintf("%d", time.Now().Unix())
+	nonce := uuid.NewString()
 	mac := hmac.New(sha256.New, []byte(c.sharedSecret))
 	mac.Write([]byte(timestamp))
 	mac.Write([]byte("."))
+	mac.Write([]byte(nonce))
+	mac.Write([]byte("."))
 	mac.Write(body)
 	req.Header.Set("X-Security-Timestamp", timestamp)
+	req.Header.Set("X-Security-Nonce", nonce)
 	req.Header.Set("X-Security-Signature", hex.EncodeToString(mac.Sum(nil)))
 }
 

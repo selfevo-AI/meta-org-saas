@@ -9,12 +9,13 @@ use axum::{
     Router,
 };
 use security_kernel::{
-    append_hash_event, evaluate_authorization, verify_challenge_signature,
+    append_hash_event, evaluate_authorization, now_unix_seconds, verify_challenge_signature,
     verify_service_signature, AuthorizationRequest, HashEventInput, IdentityChallenge,
     ServiceSignatureInput, VerifyIdentityRequest,
 };
 use serde_json::json;
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
+use tokio::sync::Mutex;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -22,6 +23,8 @@ use uuid::Uuid;
 #[derive(Clone)]
 struct AppState {
     shared_secret: Arc<String>,
+    max_clock_skew_seconds: i64,
+    seen_nonces: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 #[tokio::main]
@@ -37,8 +40,19 @@ async fn main() {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8090);
+    let shared_secret = env::var("SECURITY_KERNEL_SHARED_SECRET").unwrap_or_default();
+    if shared_secret.trim().is_empty() {
+        panic!("SECURITY_KERNEL_SHARED_SECRET must not be empty");
+    }
+    let max_clock_skew_seconds = env::var("SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(60);
     let state = AppState {
-        shared_secret: Arc::new(env::var("SECURITY_KERNEL_SHARED_SECRET").unwrap_or_default()),
+        shared_secret: Arc::new(shared_secret),
+        max_clock_skew_seconds,
+        seen_nonces: Arc::new(Mutex::new(HashMap::new())),
     };
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let app = Router::new()
@@ -74,7 +88,7 @@ async fn verify_service_request(
     req: Request<Body>,
     next: Next,
 ) -> impl IntoResponse {
-    if req.uri().path() == "/healthz" || state.shared_secret.is_empty() {
+    if req.uri().path() == "/healthz" {
         return next.run(req).await;
     }
     let (parts, body) = req.into_parts();
@@ -92,6 +106,24 @@ async fn verify_service_request(
                 .into_response()
         }
     };
+    let nonce = match parts
+        .headers
+        .get("X-Security-Nonce")
+        .and_then(|value| value.to_str().ok())
+    {
+        Some(value) if Uuid::parse_str(value).is_ok() => value.to_string(),
+        _ => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error":"missing or invalid security nonce"})),
+            )
+                .into_response()
+        }
+    };
+    let now = now_unix_seconds() as i64;
+    if let Err(error) = validate_request_timestamp(&timestamp, now, state.max_clock_skew_seconds) {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"error": error}))).into_response();
+    }
     let signature = match parts
         .headers
         .get("X-Security-Signature")
@@ -118,6 +150,7 @@ async fn verify_service_request(
     };
     let input = ServiceSignatureInput {
         timestamp,
+        nonce: nonce.clone(),
         body: bytes.to_vec(),
     };
     if let Err(err) = verify_service_signature(&state.shared_secret, &input, &signature) {
@@ -127,8 +160,39 @@ async fn verify_service_request(
         )
             .into_response();
     }
+    if !claim_nonce(&state, &nonce, now).await {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"security request replay detected"})),
+        )
+            .into_response();
+    }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
+}
+
+fn validate_request_timestamp(
+    timestamp: &str,
+    now: i64,
+    max_clock_skew_seconds: i64,
+) -> Result<i64, String> {
+    let parsed = timestamp
+        .parse::<i64>()
+        .map_err(|_| "invalid security timestamp".to_string())?;
+    if now.abs_diff(parsed) > max_clock_skew_seconds as u64 {
+        return Err("security timestamp outside allowed window".to_string());
+    }
+    Ok(parsed)
+}
+
+async fn claim_nonce(state: &AppState, nonce: &str, now: i64) -> bool {
+    let mut seen = state.seen_nonces.lock().await;
+    seen.retain(|_, seen_at| now.saturating_sub(*seen_at) <= state.max_clock_skew_seconds);
+    if seen.contains_key(nonce) {
+        return false;
+    }
+    seen.insert(nonce.to_string(), now);
+    true
 }
 
 async fn identity_challenge(Json(input): Json<serde_json::Value>) -> impl IntoResponse {
@@ -171,4 +235,30 @@ async fn authorize(Json(input): Json<AuthorizationRequest>) -> impl IntoResponse
 #[allow(dead_code)]
 async fn append_audit_event(Json(input): Json<HashEventInput>) -> impl IntoResponse {
     Json(append_hash_event(input))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamp_validation_enforces_window() {
+        assert!(validate_request_timestamp("100", 120, 30).is_ok());
+        assert!(validate_request_timestamp("80", 120, 30).is_err());
+        assert!(validate_request_timestamp("invalid", 120, 30).is_err());
+    }
+
+    #[tokio::test]
+    async fn nonce_can_only_be_claimed_once_within_window() {
+        let state = AppState {
+            shared_secret: Arc::new("test-secret".to_string()),
+            max_clock_skew_seconds: 60,
+            seen_nonces: Arc::new(Mutex::new(HashMap::new())),
+        };
+        let nonce = Uuid::new_v4().to_string();
+
+        assert!(claim_nonce(&state, &nonce, 100).await);
+        assert!(!claim_nonce(&state, &nonce, 101).await);
+        assert!(claim_nonce(&state, &nonce, 200).await);
+    }
 }

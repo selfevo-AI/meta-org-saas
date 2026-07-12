@@ -40,6 +40,12 @@ type Config struct {
 	JWTSecret                         string
 	ModelSecretKey                    string
 	CorsOrigins                       []string
+	TrustedProxyCIDRs                 []string
+	AuthRateLimitWindowSeconds        int
+	AuthRateLimitMaxAttempts          int
+	AuthRateLimitFailureThreshold     int
+	AuthRateLimitBlockSeconds         int
+	AuthRegistrationMaxAttempts       int
 	MigrationsPath                    string
 	MetaOrgMode                       string
 	MetaOrgDistributionMode           string
@@ -95,6 +101,12 @@ func Load() *Config {
 		JWTSecret:                         getEnv("JWT_SECRET", "dev-secret-change-in-production"),
 		ModelSecretKey:                    getEnv("MODEL_SECRET_KEY", "dev-model-secret-key-32-bytes!!!"),
 		CorsOrigins:                       getEnvSlice("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
+		TrustedProxyCIDRs:                 getEnvSlice("TRUSTED_PROXY_CIDRS", ""),
+		AuthRateLimitWindowSeconds:        getEnvInt("AUTH_RATE_LIMIT_WINDOW_SECONDS", 60),
+		AuthRateLimitMaxAttempts:          getEnvInt("AUTH_RATE_LIMIT_MAX_ATTEMPTS", 10),
+		AuthRateLimitFailureThreshold:     getEnvInt("AUTH_RATE_LIMIT_FAILURE_THRESHOLD", 5),
+		AuthRateLimitBlockSeconds:         getEnvInt("AUTH_RATE_LIMIT_BLOCK_SECONDS", 300),
+		AuthRegistrationMaxAttempts:       getEnvInt("AUTH_REGISTRATION_MAX_ATTEMPTS", 5),
 		MigrationsPath:                    getEnv("MIGRATIONS_PATH", "migrations"),
 		MetaOrgMode:                       mode,
 		MetaOrgDistributionMode:           normalizedDistributionMode(getEnv("META_ORG_DISTRIBUTION_MODE", mode)),

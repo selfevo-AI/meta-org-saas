@@ -64,6 +64,34 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 		t.Fatalf("run fresh migrations: %v", err)
 	}
 
+	var missingChecksums int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform.platform_migration_runs WHERE checksum = ''
+	`).Scan(&missingChecksums); err != nil {
+		t.Fatalf("count platform migrations without checksum: %v", err)
+	}
+	if missingChecksums != 0 {
+		t.Fatalf("platform migrations without checksum = %d, want 0", missingChecksums)
+	}
+	var checksumHistoryExists bool
+	if err := targetPool.QueryRow(ctx, `
+		SELECT to_regclass('platform.platform_migration_checksum_history') IS NOT NULL
+	`).Scan(&checksumHistoryExists); err != nil {
+		t.Fatalf("check platform checksum history table: %v", err)
+	}
+	if !checksumHistoryExists {
+		t.Fatal("platform migration checksum history table missing")
+	}
+	var authRateLimitTableExists bool
+	if err := targetPool.QueryRow(ctx, `
+		SELECT to_regclass('platform.authentication_rate_limit_buckets') IS NOT NULL
+	`).Scan(&authRateLimitTableExists); err != nil {
+		t.Fatalf("check authentication rate limit table: %v", err)
+	}
+	if !authRateLimitTableExists {
+		t.Fatal("authentication rate limit bucket table missing")
+	}
+
 	var notValid int
 	if err := targetPool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE NOT convalidated`).Scan(&notValid); err != nil {
 		t.Fatalf("count unvalidated constraints: %v", err)
@@ -177,4 +205,96 @@ func databaseURLForTestName(adminURL string, databaseName string) (string, error
 	}
 	parsed.Path = "/" + databaseName
 	return parsed.String(), nil
+}
+
+func TestPlatformMigrationChecksumReconciliationAgainstPostgres(t *testing.T) {
+	if os.Getenv("RUN_FRESH_DB_MIGRATION_TEST") != "1" {
+		t.Skip("set RUN_FRESH_DB_MIGRATION_TEST=1 to run platform checksum reconciliation verification")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	adminURL := strings.TrimSpace(os.Getenv("MIGRATION_TEST_ADMIN_URL"))
+	if adminURL == "" {
+		adminURL = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+	}
+	dbName := fmt.Sprintf("meta_org_checksum_check_%d", time.Now().UnixNano())
+	adminPool, err := pgxpool.New(ctx, adminURL)
+	if err != nil {
+		t.Fatalf("connect admin database: %v", err)
+	}
+	var targetPool *pgxpool.Pool
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if targetPool != nil {
+			targetPool.Close()
+		}
+		_, _ = adminPool.Exec(cleanupCtx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1`, dbName)
+		_, _ = adminPool.Exec(cleanupCtx, `DROP DATABASE IF EXISTS "`+dbName+`"`)
+		adminPool.Close()
+	})
+	if _, err := adminPool.Exec(ctx, `CREATE DATABASE "`+dbName+`"`); err != nil {
+		t.Fatalf("create checksum database: %v", err)
+	}
+	targetURL, err := databaseURLForTestName(adminURL, dbName)
+	if err != nil {
+		t.Fatalf("build checksum database URL: %v", err)
+	}
+	targetPool, err = pgxpool.New(ctx, targetURL)
+	if err != nil {
+		t.Fatalf("connect checksum database: %v", err)
+	}
+
+	dir := t.TempDir()
+	baselinePath := filepath.Join(dir, "001_baseline.sql")
+	if err := os.WriteFile(baselinePath, []byte("CREATE TABLE checksum_probe(id integer PRIMARY KEY);\n"), 0o600); err != nil {
+		t.Fatalf("write initial baseline: %v", err)
+	}
+	if err := RunMigrations(ctx, targetPool, dir); err != nil {
+		t.Fatalf("run initial platform migration: %v", err)
+	}
+
+	if err := os.WriteFile(baselinePath, []byte("CREATE TABLE checksum_probe(id integer PRIMARY KEY, label text);\n"), 0o600); err != nil {
+		t.Fatalf("write drifted baseline: %v", err)
+	}
+	repairPath := filepath.Join(dir, "002_checksum_repair.sql")
+	repairSQL := "-- platformdb:accept-checksum-drift 001_baseline.sql\nALTER TABLE checksum_probe ADD COLUMN label text;\n"
+	if err := os.WriteFile(repairPath, []byte(repairSQL), 0o600); err != nil {
+		t.Fatalf("write checksum repair: %v", err)
+	}
+	if err := RunMigrations(ctx, targetPool, dir); err != nil {
+		t.Fatalf("run checksum reconciliation: %v", err)
+	}
+
+	files, err := loadPlatformMigrationFiles(dir)
+	if err != nil {
+		t.Fatalf("reload platform migrations: %v", err)
+	}
+	var trackedChecksum string
+	if err := targetPool.QueryRow(ctx, `
+		SELECT checksum FROM platform.platform_migration_runs WHERE filename = '001_baseline.sql'
+	`).Scan(&trackedChecksum); err != nil {
+		t.Fatalf("read reconciled checksum: %v", err)
+	}
+	if trackedChecksum != files[0].Checksum {
+		t.Fatalf("tracked checksum = %q, want %q", trackedChecksum, files[0].Checksum)
+	}
+	var historyCount int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM platform.platform_migration_checksum_history
+		WHERE filename = '001_baseline.sql' AND repair_filename = '002_checksum_repair.sql'
+	`).Scan(&historyCount); err != nil {
+		t.Fatalf("count checksum history: %v", err)
+	}
+	if historyCount != 1 {
+		t.Fatalf("checksum history count = %d, want 1", historyCount)
+	}
+
+	if err := os.WriteFile(baselinePath, []byte("CREATE TABLE checksum_probe(id integer PRIMARY KEY, label text, note text);\n"), 0o600); err != nil {
+		t.Fatalf("write second drift: %v", err)
+	}
+	if err := RunMigrations(ctx, targetPool, dir); err == nil || !strings.Contains(err.Error(), "checksum drift") {
+		t.Fatalf("second drift error = %v, want checksum drift rejection", err)
+	}
 }

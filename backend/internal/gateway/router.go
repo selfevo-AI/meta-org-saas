@@ -34,6 +34,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/authlimit"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
@@ -76,6 +77,9 @@ type Dependencies struct {
 	TenantProjectionStatsProvider interface {
 		Stats() tenantprojection.WorkerStats
 	}
+	AuthenticationRateLimitStatsProvider interface {
+		Stats() authlimit.Stats
+	}
 }
 
 func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
@@ -86,7 +90,11 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		deps.AIGatewayHandler.RegisterCompatibleRoutes(r)
 	}
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", healthCheck(deps.TenantPoolStatsProvider, deps.TenantProjectionStatsProvider))
+		r.Get("/health", healthCheck(
+			deps.TenantPoolStatsProvider,
+			deps.TenantProjectionStatsProvider,
+			deps.AuthenticationRateLimitStatsProvider,
+		))
 		if deps.IdentityHandler != nil {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
 		}
@@ -240,15 +248,18 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 }
 
 type healthResponse struct {
-	Status                 string                        `json:"status"`
-	TenantDatabasePools    *tenantdb.PoolRouterStats     `json:"tenant_database_pools,omitempty"`
-	TenantProjectionWorker *tenantprojection.WorkerStats `json:"tenant_projection_worker,omitempty"`
+	Status                   string                        `json:"status"`
+	TenantDatabasePools      *tenantdb.PoolRouterStats     `json:"tenant_database_pools,omitempty"`
+	TenantProjectionWorker   *tenantprojection.WorkerStats `json:"tenant_projection_worker,omitempty"`
+	AuthenticationRateLimits *authlimit.Stats              `json:"authentication_rate_limits,omitempty"`
 }
 
 func healthCheck(poolProvider interface {
 	Stats() tenantdb.PoolRouterStats
 }, projectionProvider interface {
 	Stats() tenantprojection.WorkerStats
+}, authLimitProvider interface {
+	Stats() authlimit.Stats
 }) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		response := healthResponse{Status: "ok"}
@@ -259,6 +270,10 @@ func healthCheck(poolProvider interface {
 		if projectionProvider != nil {
 			stats := projectionProvider.Stats()
 			response.TenantProjectionWorker = &stats
+		}
+		if authLimitProvider != nil {
+			stats := authLimitProvider.Stats()
+			response.AuthenticationRateLimits = &stats
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {
