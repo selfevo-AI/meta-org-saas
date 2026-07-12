@@ -1,9 +1,11 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
@@ -84,6 +86,9 @@ type Dependencies struct {
 	AuditRetentionStatsProvider interface {
 		Stats() auditretention.WorkerStats
 	}
+	SecurityKernelHealthProvider interface {
+		CheckHealth(context.Context) error
+	}
 	PublicInvitationRateLimit    func(http.Handler) http.Handler
 	AuthenticatedSensitiveLimit  func(http.Handler) http.Handler
 	AIGatewayCompatibleRateLimit func(http.Handler) http.Handler
@@ -102,6 +107,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			deps.TenantProjectionStatsProvider,
 			deps.AuthenticationRateLimitStatsProvider,
 			deps.AuditRetentionStatsProvider,
+			deps.SecurityKernelHealthProvider,
 		))
 		if deps.IdentityHandler != nil {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
@@ -272,6 +278,12 @@ type healthResponse struct {
 	RequestRateLimits        *authlimit.Stats              `json:"request_rate_limits,omitempty"`
 	AuthenticationRateLimits *authlimit.Stats              `json:"authentication_rate_limits,omitempty"`
 	AuditRetentionWorker     *auditretention.WorkerStats   `json:"audit_retention_worker,omitempty"`
+	SecurityKernel           *dependencyHealth             `json:"security_kernel,omitempty"`
+}
+
+type dependencyHealth struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
 }
 
 func healthCheck(poolProvider interface {
@@ -282,9 +294,12 @@ func healthCheck(poolProvider interface {
 	Stats() authlimit.Stats
 }, retentionProvider interface {
 	Stats() auditretention.WorkerStats
+}, securityKernelProvider interface {
+	CheckHealth(context.Context) error
 }) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		response := healthResponse{Status: "ok"}
+		statusCode := http.StatusOK
 		if poolProvider != nil {
 			stats := poolProvider.Stats()
 			response.TenantDatabasePools = &stats
@@ -302,7 +317,21 @@ func healthCheck(poolProvider interface {
 			stats := retentionProvider.Stats()
 			response.AuditRetentionWorker = &stats
 		}
+		if securityKernelProvider != nil {
+			healthCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			err := securityKernelProvider.CheckHealth(healthCtx)
+			cancel()
+			if err != nil {
+				log.Printf("security kernel health check failed: %v", err)
+				response.Status = "unavailable"
+				response.SecurityKernel = &dependencyHealth{Status: "unavailable", Reason: "security_kernel_unavailable"}
+				statusCode = http.StatusServiceUnavailable
+			} else {
+				response.SecurityKernel = &dependencyHealth{Status: "ok"}
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
 		if err := json.NewEncoder(w).Encode(response); err != nil {
 			log.Printf("health check write error: %v", err)
 		}

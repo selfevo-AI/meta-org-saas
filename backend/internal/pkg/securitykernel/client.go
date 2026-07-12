@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -30,6 +31,10 @@ type Config struct {
 
 type Client interface {
 	Authorize(ctx context.Context, request Request) (Decision, error)
+}
+
+type HealthChecker interface {
+	CheckHealth(context.Context) error
 }
 
 type HTTPClient struct {
@@ -102,12 +107,45 @@ func NewClient(cfg Config) Client {
 	}
 }
 
+func ValidateConfig(cfg Config) error {
+	configuredURL := strings.TrimSpace(cfg.URL)
+	secret := strings.TrimSpace(cfg.SharedSecret)
+	mode := strings.ToLower(strings.TrimSpace(cfg.EnforcementMode))
+	if mode == "" {
+		mode = "blocking"
+	}
+	if cfg.Required && configuredURL == "" {
+		return fmt.Errorf("security kernel url is required")
+	}
+	if configuredURL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(configuredURL)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return fmt.Errorf("security kernel url must be an absolute http or https URL")
+	}
+	if len(secret) < 32 {
+		return fmt.Errorf("security kernel shared secret must contain at least 32 characters")
+	}
+	if cfg.Required && mode != "blocking" {
+		return fmt.Errorf("required security kernel must use blocking enforcement")
+	}
+	if mode != "blocking" && mode != "audit" {
+		return fmt.Errorf("security kernel enforcement mode must be blocking or audit")
+	}
+	return nil
+}
+
 func NewNoopClient() Client {
 	return NoopClient{}
 }
 
 func (NoopClient) Authorize(context.Context, Request) (Decision, error) {
 	return Decision{Allowed: true, Reason: "security_kernel_not_configured", DecisionType: "allow"}, nil
+}
+
+func (NoopClient) CheckHealth(context.Context) error {
+	return nil
 }
 
 func (c UnavailableClient) Authorize(context.Context, Request) (Decision, error) {
@@ -118,6 +156,10 @@ func (c UnavailableClient) Authorize(context.Context, Request) (Decision, error)
 		return decision, nil
 	}
 	return decision, fmt.Errorf("%w: %s", ErrUnavailable, c.reason)
+}
+
+func (c UnavailableClient) CheckHealth(context.Context) error {
+	return fmt.Errorf("%w: %s", ErrUnavailable, c.reason)
 }
 
 func (c *HTTPClient) Authorize(ctx context.Context, request Request) (Decision, error) {
@@ -152,6 +194,22 @@ func (c *HTTPClient) Authorize(ctx context.Context, request Request) (Decision, 
 		return decision, fmt.Errorf("%w: %s", ErrDenied, decision.Reason)
 	}
 	return decision, nil
+}
+
+func (c *HTTPClient) CheckHealth(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
+	if err != nil {
+		return fmt.Errorf("%w: create health request: %v", ErrUnavailable, err)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("%w: health status %d", ErrUnavailable, resp.StatusCode)
+	}
+	return nil
 }
 
 func (c *HTTPClient) sign(req *http.Request, body []byte) {

@@ -129,12 +129,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("model secret key invalid: %v", err)
 	}
-	securityKernel := securitykernel.NewClient(securitykernel.Config{
+	securityKernelConfig := securitykernel.Config{
 		URL:             cfg.SecurityKernelURL,
 		SharedSecret:    cfg.SecurityKernelSharedSecret,
 		EnforcementMode: cfg.SecurityKernelEnforcementMode,
 		Required:        cfg.MetaOrgMode == saas.ModeSaaS,
-	})
+	}
+	if err := securitykernel.ValidateConfig(securityKernelConfig); err != nil {
+		log.Fatalf("security kernel configuration invalid: %v", err)
+	}
+	securityKernel := securitykernel.NewClient(securityKernelConfig)
 
 	industryRepo := industry.NewRepository(db)
 	industrySvc := industry.NewService(industryRepo)
@@ -436,6 +440,7 @@ func main() {
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,
 		AuditRetentionStatsProvider:          retentionWorker,
+		SecurityKernelHealthProvider:         securityKernel.(securitykernel.HealthChecker),
 		PublicInvitationRateLimit:            publicInvitationRateLimit,
 		AuthenticatedSensitiveLimit:          sensitiveOperationRateLimit,
 		AIGatewayCompatibleRateLimit:         aiGatewayCompatibleRateLimit,

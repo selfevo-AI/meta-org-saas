@@ -130,6 +130,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -140,7 +141,9 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Start backend
+      - name: Build security kernel
+        run: cargo build -p security-kernel
+      - name: Start security kernel and backend
         working-directory: backend
         env:
           SERVER_PORT: "8080"
@@ -155,7 +158,14 @@ jobs:
           JWT_SECRET: e2e-jwt-secret
           MODEL_SECRET_KEY: 0123456789abcdef0123456789abcdef
           CORS_ORIGINS: http://127.0.0.1:3000
+          SECURITY_KERNEL_URL: http://127.0.0.1:8090
+          SECURITY_KERNEL_SHARED_SECRET: e2e-security-kernel-shared-secret-2026
+          SECURITY_KERNEL_ENFORCEMENT_MODE: blocking
+          SECURITY_KERNEL_PORT: "8090"
+          SECURITY_KERNEL_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable
+          SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS: "60"
         run: |
+          ../target/debug/security-kernel > /tmp/meta-org-security-kernel.log 2>&1 &
           go run ./cmd/server > /tmp/meta-org-backend.log 2>&1 &
           for attempt in {1..90}; do
             if curl --fail --silent http://127.0.0.1:8080/api/v1/health >/dev/null; then
@@ -164,6 +174,7 @@ jobs:
             sleep 2
           done
           cat /tmp/meta-org-backend.log
+          cat /tmp/meta-org-security-kernel.log
           exit 1
       - name: Start frontend
         working-directory: frontend

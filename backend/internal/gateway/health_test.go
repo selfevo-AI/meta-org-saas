@@ -1,7 +1,9 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,6 +38,14 @@ type fakeAuditRetentionStatsProvider struct {
 	stats auditretention.WorkerStats
 }
 
+type fakeSecurityKernelHealthProvider struct {
+	err error
+}
+
+func (p fakeSecurityKernelHealthProvider) CheckHealth(context.Context) error {
+	return p.err
+}
+
 func (p fakeAuditRetentionStatsProvider) Stats() auditretention.WorkerStats {
 	return p.stats
 }
@@ -67,7 +77,7 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	retentionProvider := fakeAuditRetentionStatsProvider{stats: auditretention.WorkerStats{
 		Running: true, RunsTotal: 3, RowsRedactedTotal: 42,
 	}}
-	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider).ServeHTTP(recorder, request)
+	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider, fakeSecurityKernelHealthProvider{}).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -108,5 +118,24 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	}
 	if response.AuditRetentionWorker == nil || !response.AuditRetentionWorker.Running || response.AuditRetentionWorker.RunsTotal != 3 || response.AuditRetentionWorker.RowsRedactedTotal != 42 {
 		t.Fatalf("audit retention worker stats = %#v", response.AuditRetentionWorker)
+	}
+	if response.SecurityKernel == nil || response.SecurityKernel.Status != "ok" {
+		t.Fatalf("security kernel health = %#v", response.SecurityKernel)
+	}
+}
+
+func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthCheck(nil, nil, nil, nil, fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	var response healthResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Status != "unavailable" || response.SecurityKernel == nil || response.SecurityKernel.Reason != "security_kernel_unavailable" {
+		t.Fatalf("response = %#v", response)
 	}
 }
