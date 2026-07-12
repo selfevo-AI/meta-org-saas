@@ -213,6 +213,21 @@ func (r *PostgresRepository) ListModels(ctx context.Context, providerID *uuid.UU
 	return scanModels(rows)
 }
 
+func (r *PostgresRepository) ListActiveModels(ctx context.Context) ([]Model, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT id, provider_id, model_key, display_name, context_window, max_output_tokens,
+			capabilities, status, metadata, created_at, updated_at
+		FROM models
+		WHERE status = 'active'
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("list active models: %w", err)
+	}
+	defer rows.Close()
+	return scanModels(rows)
+}
+
 func (r *PostgresRepository) UpdateModel(ctx context.Context, id uuid.UUID, input UpdateModelInput) (*Model, error) {
 	capsJSON, metaJSON, err := modelJSON(input.Capabilities, input.Metadata)
 	if err != nil {

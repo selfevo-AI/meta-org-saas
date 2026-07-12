@@ -173,10 +173,11 @@ func (h *Handler) compatibleChatCompletions(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) compatibleListModels(w http.ResponseWriter, r *http.Request) {
-	if _, ok := bearerToken(w, r); !ok {
+	token, ok := bearerToken(w, r)
+	if !ok {
 		return
 	}
-	models, err := h.service.ListModels(r.Context(), nil, queryLimit(r))
+	models, err := h.service.ListModelsWithAccessToken(r.Context(), token, queryLimit(r))
 	if err != nil {
 		writeJSON(w, statusFromError(err), map[string]any{"error": map[string]string{"message": err.Error(), "type": "ai_gateway_error"}})
 		return
@@ -208,7 +209,12 @@ func bearerToken(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 func (h *Handler) compatibleUnsupportedOperation(operation string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := bearerToken(w, r); !ok {
+		token, ok := bearerToken(w, r)
+		if !ok {
+			return
+		}
+		if _, err := h.service.AuthenticateAccessToken(r.Context(), token); err != nil {
+			writeJSON(w, statusFromError(err), map[string]any{"error": map[string]string{"message": err.Error(), "type": "authentication_error"}})
 			return
 		}
 		writeJSON(w, http.StatusNotImplemented, map[string]any{

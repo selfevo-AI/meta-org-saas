@@ -328,6 +328,9 @@ code or schema mutation.
 - Sensitive management writes use shared actor and client-IP buckets; public
   invitation acceptance uses IP and invitation-token buckets; compatible AI
   Gateway traffic uses access-token and IP buckets. Storage failure fails closed.
+- OpenAI-compatible discovery and unsupported-operation responses authenticate
+  the same access-token lifecycle used for invocation and filter model discovery
+  by token policy plus model-group channel abilities.
 - Audit records use structured events, tamper evidence and retention policy.
 - Sensitive context and logs use field classification and redaction.
 

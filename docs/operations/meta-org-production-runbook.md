@@ -192,6 +192,12 @@ Aggregate checks, blocks, and storage failures are exposed as
 `request_rate_limits` in `/api/v1/health`; the legacy
 `authentication_rate_limits` field remains during the compatibility window.
 
+Every OpenAI-compatible endpoint authenticates the presented AI access token,
+including `/v1/models` and endpoints that currently return 501. `/v1/models`
+returns only active models allowed by the token's exact/pattern allowlist and,
+when assigned, its model-group channel abilities. A non-empty arbitrary Bearer
+value is not sufficient authentication.
+
 Meta Resource sync intentionally reads existing source tables without owning them. If sync fails after a schema change, check these source assumptions first:
 
 - `ai_agents` uses `is_active`, `service_class`, `risk_level`, `capabilities`, and `metadata`; the governance fields come from migration `012`.

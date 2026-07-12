@@ -55,6 +55,7 @@ type CatalogRepository interface {
 	GetProviderSecret(ctx context.Context, id uuid.UUID) (ProviderSecret, error)
 	CreateModel(ctx context.Context, input CreateModelInput) (*Model, error)
 	ListModels(ctx context.Context, providerID *uuid.UUID, limit int) ([]Model, error)
+	ListActiveModels(ctx context.Context) ([]Model, error)
 	UpdateModel(ctx context.Context, id uuid.UUID, input UpdateModelInput) (*Model, error)
 	ListInvocations(ctx context.Context, limit int) ([]Invocation, error)
 	GetInvocation(ctx context.Context, id uuid.UUID) (*Invocation, error)
@@ -631,13 +632,57 @@ func (s *Service) Invoke(ctx context.Context, input InvokeInput) (*InvokeOutput,
 	return s.invokeSync(ctx, input, nil)
 }
 
-func (s *Service) InvokeWithAccessToken(ctx context.Context, token string, input InvokeInput) (*InvokeOutput, error) {
+func (s *Service) AuthenticateAccessToken(ctx context.Context, token string) (AccessTokenContext, error) {
 	accessToken, err := s.repo.AuthenticateAccessToken(ctx, token)
+	if err != nil {
+		return AccessTokenContext{}, err
+	}
+	if accessToken.Status != "" && accessToken.Status != "active" {
+		return AccessTokenContext{}, fmt.Errorf("%w: ai access token is not active", ErrForbidden)
+	}
+	return accessToken, nil
+}
+
+func (s *Service) ListModelsWithAccessToken(ctx context.Context, token string, limit int) ([]Model, error) {
+	accessToken, err := s.AuthenticateAccessToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	if accessToken.Status != "" && accessToken.Status != "active" {
-		return nil, fmt.Errorf("%w: ai access token is not active", ErrForbidden)
+	models, err := s.catalogRepo().ListActiveModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var abilities []ModelChannelAbility
+	if accessToken.ModelGroupID != nil {
+		abilities, err = s.catalogRepo().ListModelChannelAbilities(ctx, accessToken.ModelGroupID, 100)
+		if err != nil {
+			return nil, err
+		}
+	}
+	limit = normalizeLimit(limit)
+	allowed := make([]Model, 0, min(limit, len(models)))
+	for _, model := range models {
+		if model.Status != "" && model.Status != "active" {
+			continue
+		}
+		if !accessTokenAllowsModel(accessToken, model.ModelKey) {
+			continue
+		}
+		if accessToken.ModelGroupID != nil && !modelAllowedByAbilities(abilities, model.ModelKey) {
+			continue
+		}
+		allowed = append(allowed, model)
+		if len(allowed) >= limit {
+			break
+		}
+	}
+	return allowed, nil
+}
+
+func (s *Service) InvokeWithAccessToken(ctx context.Context, token string, input InvokeInput) (*InvokeOutput, error) {
+	accessToken, err := s.AuthenticateAccessToken(ctx, token)
+	if err != nil {
+		return nil, err
 	}
 	if !accessTokenAllowsModel(accessToken, input.Model) {
 		return nil, fmt.Errorf("%w: model %q is not allowed for this ai access token", ErrForbidden, input.Model)
@@ -1298,6 +1343,21 @@ func accessTokenAllowsModel(token AccessTokenContext, model string) bool {
 	}
 	for _, pattern := range patterns {
 		if wildcardMatch(pattern, model) {
+			return true
+		}
+	}
+	return false
+}
+
+func modelAllowedByAbilities(abilities []ModelChannelAbility, model string) bool {
+	for _, ability := range abilities {
+		if !ability.Enabled {
+			continue
+		}
+		if requested := strings.TrimSpace(ability.RequestedModel); requested != "" && !strings.EqualFold(requested, model) {
+			continue
+		}
+		if wildcardMatch(firstNonEmpty(ability.ModelPattern, "*"), model) {
 			return true
 		}
 	}

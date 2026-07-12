@@ -66,8 +66,10 @@ func TestCompatibleChatCompletionsRequiresBearerToken(t *testing.T) {
 }
 
 func TestCompatibleEmbeddingEndpointReturnsStructuredUnsupportedOperation(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{ID: uuid.New(), OrganizationID: uuid.New(), Status: "active"}
 	router := chi.NewRouter()
-	NewHandler(NewService(newFakeGatewayRepo(), nil)).RegisterCompatibleRoutes(router)
+	NewHandler(NewService(repo, nil)).RegisterCompatibleRoutes(router)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"gpt-test","input":"hi"}`))
 	req.Header.Set("Authorization", "Bearer ak-org")
@@ -80,6 +82,56 @@ func TestCompatibleEmbeddingEndpointReturnsStructuredUnsupportedOperation(t *tes
 	}
 	if !strings.Contains(rec.Body.String(), `"type":"unsupported_operation"`) {
 		t.Fatalf("response body = %s, want unsupported_operation error", rec.Body.String())
+	}
+}
+
+func TestCompatibleListModelsAuthenticatesAndFiltersAccessTokenModels(t *testing.T) {
+	groupID := uuid.New()
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{
+		ID:                   uuid.New(),
+		OrganizationID:       uuid.New(),
+		ModelGroupID:         &groupID,
+		AllowedModelPatterns: []string{"gpt-*"},
+		Status:               "active",
+	}
+	repo.catalogModels = []Model{
+		{ID: uuid.New(), ProviderID: uuid.New(), ModelKey: "gpt-allowed", Status: "active"},
+		{ID: uuid.New(), ProviderID: uuid.New(), ModelKey: "gpt-no-channel", Status: "active"},
+		{ID: uuid.New(), ProviderID: uuid.New(), ModelKey: "claude-hidden", Status: "active"},
+		{ID: uuid.New(), ProviderID: uuid.New(), ModelKey: "gpt-disabled", Status: "inactive"},
+	}
+	repo.abilities = []ModelChannelAbility{{ModelGroupID: &groupID, ModelPattern: "gpt-allowed", Enabled: true}}
+	router := chi.NewRouter()
+	NewHandler(NewService(repo, nil)).RegisterCompatibleRoutes(router)
+	request := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	request.Header.Set("Authorization", "Bearer ak-org")
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"id":"gpt-allowed"`) || strings.Contains(recorder.Body.String(), "gpt-no-channel") || strings.Contains(recorder.Body.String(), "claude-hidden") || strings.Contains(recorder.Body.String(), "gpt-disabled") {
+		t.Fatalf("filtered model response = %s", recorder.Body.String())
+	}
+}
+
+func TestCompatibleCatalogAndUnsupportedRoutesRejectInvalidAccessToken(t *testing.T) {
+	router := chi.NewRouter()
+	NewHandler(NewService(newFakeGatewayRepo(), nil)).RegisterCompatibleRoutes(router)
+	for _, path := range []string{"/v1/models", "/v1/embeddings"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		if path != "/v1/models" {
+			request = httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		}
+		request.Header.Set("Authorization", "Bearer invalid-token")
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d, body = %s, want 403", path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

@@ -30,6 +30,8 @@ type fakeGatewayRepo struct {
 	lastSettle      SettleBalanceInput
 	lastTokenStore  CreateAccessTokenStoreInput
 	lastAdjustment  AdjustGatewayBalanceInput
+	catalogModels   []Model
+	abilities       []ModelChannelAbility
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -115,6 +117,17 @@ func TestServiceInvokeWithAccessTokenRejectsDisallowedModelBeforeReserve(t *test
 	}
 	if repo.recorded {
 		t.Fatalf("invocation was recorded for disallowed model")
+	}
+}
+
+func TestServiceAuthenticateAccessTokenRejectsInactiveToken(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{ID: uuid.New(), OrganizationID: uuid.New(), Status: "revoked"}
+	service := NewService(repo, nil)
+
+	_, err := service.AuthenticateAccessToken(context.Background(), "ak-revoked")
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("AuthenticateAccessToken() error = %v, want ErrForbidden", err)
 	}
 }
 
@@ -488,7 +501,17 @@ func (f *fakeGatewayRepo) CreateModel(context.Context, CreateModelInput) (*Model
 }
 
 func (f *fakeGatewayRepo) ListModels(context.Context, *uuid.UUID, int) ([]Model, error) {
-	return nil, errors.New("unexpected catalog call")
+	if f.catalogModels == nil {
+		return nil, errors.New("unexpected catalog call")
+	}
+	return f.catalogModels, nil
+}
+
+func (f *fakeGatewayRepo) ListActiveModels(context.Context) ([]Model, error) {
+	if f.catalogModels == nil {
+		return nil, errors.New("unexpected catalog call")
+	}
+	return f.catalogModels, nil
 }
 
 func (f *fakeGatewayRepo) UpdateModel(context.Context, uuid.UUID, UpdateModelInput) (*Model, error) {
@@ -574,7 +597,10 @@ func (f *fakeGatewayRepo) CreateModelChannelAbility(context.Context, CreateModel
 }
 
 func (f *fakeGatewayRepo) ListModelChannelAbilities(context.Context, *uuid.UUID, int) ([]ModelChannelAbility, error) {
-	return nil, errors.New("unexpected catalog call")
+	if f.abilities == nil {
+		return nil, errors.New("unexpected catalog call")
+	}
+	return f.abilities, nil
 }
 
 func (f *fakeGatewayRepo) GetGatewayBalance(context.Context, uuid.UUID, string) (*GatewayBalance, error) {
