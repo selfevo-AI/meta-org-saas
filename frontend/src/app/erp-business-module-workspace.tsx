@@ -670,10 +670,10 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
               onRefresh={() => void loadRecords(activeDocument)}
               onCreateHeader={handleWorkbenchCreateHeader}
               onUpdateHeader={handleWorkbenchUpdateHeader}
-              onDeleteHeader={handleWorkbenchDeleteHeader}
-              onCreateLine={handleWorkbenchCreateLine}
-              onUpdateLine={handleWorkbenchUpdateLine}
-              onDeleteLine={handleWorkbenchDeleteLine}
+              onDeleteHeader={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchDeleteHeader}
+              onCreateLine={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchCreateLine}
+              onUpdateLine={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchUpdateLine}
+              onDeleteLine={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchDeleteLine}
               busy={busy}
             />
           )}
@@ -739,7 +739,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
               </section>
             )}
 
-            {activeDocument.kind !== 'report' && activeDocument.childCode && (
+            {activeDocument.kind !== 'report' && activeDocument.childCode && activeDocument.tableCode !== 'MPRJ' && (
               <section className="rounded-lg border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.createLine')}</h3>
                 <div className="mt-3 space-y-2">

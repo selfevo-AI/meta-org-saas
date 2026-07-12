@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 2 {
-		t.Fatalf("tenant migration file count = %d, want 2", len(files))
+	if len(files) != 4 {
+		t.Fatalf("tenant migration file count = %d, want 4", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -122,6 +122,28 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 	for _, snippet := range []string{"tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql", "CREATE TABLE IF NOT EXISTS tenant_integration_outbox", "emit_tenant_projection_outbox_event"} {
 		if !strings.Contains(projectionSQL, snippet) {
 			t.Fatalf("tenant projection migration SQL missing %q", snippet)
+		}
+	}
+	projectProjectionSQL := files[2].SQL
+	for _, snippet := range []string{
+		"tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql",
+		`ALTER TABLE "MPRJ" RENAME TO "MPRJ_legacy"`,
+		`CREATE OR REPLACE VIEW "MPRJ"`,
+		`CREATE OR REPLACE VIEW "APRJ"`,
+		"write_mprj_project_projection",
+	} {
+		if !strings.Contains(projectProjectionSQL, snippet) {
+			t.Fatalf("tenant project projection migration SQL missing %q", snippet)
+		}
+	}
+	organizationScopeSQL := files[3].SQL
+	for _, snippet := range []string{
+		"tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql",
+		"v_organization_id UUID",
+		"SET organization_id = tenant_org.id",
+	} {
+		if !strings.Contains(organizationScopeSQL, snippet) {
+			t.Fatalf("tenant project organization scope migration SQL missing %q", snippet)
 		}
 	}
 }

@@ -210,6 +210,26 @@ such as `gl_accounts`, `gl_cost_centers`, `gl_journal_entries`, and
 structures behind the compatible ERP table codes (`MACT`, `MPRC`, `MJDT`,
 `JDT1`, `MGLR`).
 
+Project lifecycle tables are authoritative for project data. `MPRJ` is an
+updatable compatibility view over `projects`, and `APRJ` is a read-only member
+projection over `project_members`. ERP project creation, editing, cost refresh,
+and feedback actions therefore update the lifecycle domain directly. Project
+deletion and member mutation retain lifecycle-specific semantics instead of
+writing a second generic store. Existing physical tables are retained as
+`MPRJ_legacy` and `APRJ_legacy`; tenant repair migration
+`003_project_erp_authoritative_projection.sql` imports legacy project masters
+before installing the projections. Root repair migration
+`018_project_erp_authoritative_projection.sql` accepts the staged baseline
+checksum change and aligns platform-era schemas that previously carried ERP
+tables before tenant data-plane separation.
+
+ERP compatibility creation must assign `projects.organization_id`. In a tenant
+database, the projection accepts a valid `OrganizationID` payload and otherwise
+uses the active tenant organization. Tenant repair `004_project_erp_organization_scope.sql`
+and platform repair `019_project_erp_organization_scope.sql` update the writer
+and backfill earlier compatibility-created rows so project APIs and ERP views
+apply the same organization scope.
+
 Supply-chain domain ownership is now code-table-only for fresh tenant
 databases:
 

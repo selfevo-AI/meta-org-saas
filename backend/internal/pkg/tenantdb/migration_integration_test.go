@@ -58,8 +58,8 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run fresh tenant migrations: %v", err)
 	}
-	if result.Version != "002_tenant_projection_outbox" {
-		t.Fatalf("tenant migration version = %q, want 002_tenant_projection_outbox", result.Version)
+	if result.Version != "004_project_erp_organization_scope" {
+		t.Fatalf("tenant migration version = %q, want 004_project_erp_organization_scope", result.Version)
 	}
 
 	targetPool, err = pgxpool.New(ctx, targetURL)
@@ -80,6 +80,8 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 		`public."MRPS"`,
 		`public."MDRQ"`,
 		`public."MCNT"`,
+		`public."MPRJ"`,
+		`public."APRJ"`,
 	} {
 		assertTenantTableExists(t, ctx, targetPool, tableRef)
 	}
@@ -112,6 +114,69 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	}
 	if sampleWorkOrders != 1 {
 		t.Fatalf("sample work order count = %d, want 1", sampleWorkOrders)
+	}
+
+	assertProjectERPProjection(t, ctx, targetPool, orgID)
+}
+
+func assertProjectERPProjection(t *testing.T, ctx context.Context, db *pgxpool.Pool, orgID uuid.UUID) {
+	t.Helper()
+	projectID := uuid.New()
+	if _, err := db.Exec(ctx, `
+		INSERT INTO projects(id, organization_id, name, status, metadata)
+		VALUES ($1, $2, 'Lifecycle Project', 'active', '{}')`, projectID, orgID); err != nil {
+		t.Fatalf("create lifecycle project: %v", err)
+	}
+
+	var projectedName string
+	if err := db.QueryRow(ctx, `SELECT "Payload"->>'Name' FROM "MPRJ" WHERE "PrjCode" = $1`, projectID.String()).Scan(&projectedName); err != nil {
+		t.Fatalf("read lifecycle project through MPRJ: %v", err)
+	}
+	if projectedName != "Lifecycle Project" {
+		t.Fatalf("MPRJ lifecycle project name = %q, want Lifecycle Project", projectedName)
+	}
+
+	if _, err := db.Exec(ctx, `
+		INSERT INTO "MPRJ"("PrjCode", "Payload")
+		VALUES ('PRJ-COMPAT', '{"Active":"Y","Payload":{"Name":"ERP Compatibility Project"}}')`); err != nil {
+		t.Fatalf("create project through MPRJ: %v", err)
+	}
+	var compatibilityProjectID uuid.UUID
+	var compatibilityOrganizationID uuid.UUID
+	if err := db.QueryRow(ctx, `SELECT id, organization_id FROM projects WHERE metadata->>'erp_project_code' = 'PRJ-COMPAT'`).Scan(&compatibilityProjectID, &compatibilityOrganizationID); err != nil {
+		t.Fatalf("read MPRJ-created authoritative project: %v", err)
+	}
+	if compatibilityOrganizationID != orgID {
+		t.Fatalf("MPRJ project organization = %s, want %s", compatibilityOrganizationID, orgID)
+	}
+
+	if _, err := db.Exec(ctx, `
+		UPDATE "MPRJ"
+		SET "Payload" = "Payload" || '{"Name":"Updated Compatibility Project","LastCostCode":"COST-PRJ-COMPAT"}'::JSONB
+		WHERE "PrjCode" = 'PRJ-COMPAT'`); err != nil {
+		t.Fatalf("update project through MPRJ: %v", err)
+	}
+	var updatedName, lastCostCode string
+	if err := db.QueryRow(ctx, `SELECT name, metadata->>'LastCostCode' FROM projects WHERE id = $1`, compatibilityProjectID).Scan(&updatedName, &lastCostCode); err != nil {
+		t.Fatalf("read MPRJ-updated authoritative project: %v", err)
+	}
+	if updatedName != "Updated Compatibility Project" || lastCostCode != "COST-PRJ-COMPAT" {
+		t.Fatalf("MPRJ update = (%q, %q), want updated name and cost code", updatedName, lastCostCode)
+	}
+
+	memberID := uuid.New()
+	actorID := uuid.MustParse("123e4567-e89b-12d3-a456-426614174001")
+	if _, err := db.Exec(ctx, `
+		INSERT INTO project_members(id, project_id, actor_id, actor_type, role)
+		VALUES ($1, $2, $3, 'internal_human', 'owner')`, memberID, compatibilityProjectID, actorID); err != nil {
+		t.Fatalf("create lifecycle project member: %v", err)
+	}
+	var projectedMemberID string
+	if err := db.QueryRow(ctx, `SELECT "Payload"->>'ProjectMemberID' FROM "APRJ" WHERE "PrjCode" = 'PRJ-COMPAT'`).Scan(&projectedMemberID); err != nil {
+		t.Fatalf("read project member through APRJ: %v", err)
+	}
+	if projectedMemberID != memberID.String() {
+		t.Fatalf("APRJ member id = %q, want %q", projectedMemberID, memberID)
 	}
 }
 
