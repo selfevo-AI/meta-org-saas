@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
@@ -21,6 +22,7 @@ import (
 type Repository struct {
 	db                     *pgxpool.Pool
 	tenantDatabaseDefaults tenantdb.Defaults
+	newOrganizationID      func() uuid.UUID
 }
 
 type RepositoryOption func(*Repository)
@@ -33,7 +35,8 @@ type membershipRecord struct {
 
 func NewRepository(db *pgxpool.Pool, opts ...RepositoryOption) *Repository {
 	r := &Repository{
-		db: db,
+		db:                db,
+		newOrganizationID: uuid.New,
 		tenantDatabaseDefaults: tenantdb.Defaults{
 			DeploymentMode: tenantdb.DeploymentModeSharedSchema,
 			ClusterKey:     "local-primary",
@@ -49,6 +52,14 @@ func NewRepository(db *pgxpool.Pool, opts ...RepositoryOption) *Repository {
 func WithTenantDatabaseDefaults(defaults tenantdb.Defaults) RepositoryOption {
 	return func(r *Repository) {
 		r.tenantDatabaseDefaults = defaults
+	}
+}
+
+func withOrganizationIDGenerator(generator func() uuid.UUID) RepositoryOption {
+	return func(r *Repository) {
+		if generator != nil {
+			r.newOrganizationID = generator
+		}
 	}
 }
 
@@ -376,7 +387,15 @@ func (r *Repository) ListDefaultModuleKeys(ctx context.Context) ([]string, error
 	return keys, nil
 }
 
+const tenantDatabaseNameAllocationAttempts = 16
+
 func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, input OnboardingOrganizationInput, enabledModules []string) (*OrganizationAccount, error) {
+	return allocateOrganizationID(r, func(organizationID uuid.UUID) (*OrganizationAccount, error) {
+		return r.completeOnboardingAttempt(ctx, userID, organizationID, input, enabledModules)
+	})
+}
+
+func (r *Repository) completeOnboardingAttempt(ctx context.Context, userID uuid.UUID, organizationID uuid.UUID, input OnboardingOrganizationInput, enabledModules []string) (*OrganizationAccount, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin onboarding: %w", err)
@@ -396,10 +415,10 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 	var org OrganizationAccount
 	var createdBy pgtype.UUID
 	err = tx.QueryRow(ctx, `
-		INSERT INTO organizations (name, description, created_by)
-		VALUES ($1, $2, $3)
+		INSERT INTO organizations (id, name, description, created_by)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id, name, COALESCE(description, ''), created_by
-	`, input.OrganizationName, input.Description, userID).Scan(&org.ID, &org.Name, &org.Description, &createdBy)
+	`, organizationID, input.OrganizationName, input.Description, userID).Scan(&org.ID, &org.Name, &org.Description, &createdBy)
 	if err != nil {
 		return nil, fmt.Errorf("create onboarding organization: %w", err)
 	}
@@ -493,6 +512,12 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 }
 
 func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, record CreateSampleTenantRecord) (*CreatedSampleTenant, error) {
+	return allocateOrganizationID(r, func(organizationID uuid.UUID) (*CreatedSampleTenant, error) {
+		return r.createBusinessClosureSampleTenantAttempt(ctx, organizationID, record)
+	})
+}
+
+func (r *Repository) createBusinessClosureSampleTenantAttempt(ctx context.Context, organizationID uuid.UUID, record CreateSampleTenantRecord) (*CreatedSampleTenant, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin sample tenant creation: %w", err)
@@ -534,10 +559,10 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 	if existingOrgID == uuid.Nil {
 		var createdBy pgtype.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO organizations (name, description, created_by)
-			VALUES ($1, $2, $3)
+			INSERT INTO organizations (id, name, description, created_by)
+			VALUES ($1, $2, $3, $4)
 			RETURNING id, name, COALESCE(description, ''), created_by
-		`, record.OrganizationName, record.Description, record.ActorID).Scan(&org.ID, &org.Name, &org.Description, &createdBy); err != nil {
+		`, organizationID, record.OrganizationName, record.Description, record.ActorID).Scan(&org.ID, &org.Name, &org.Description, &createdBy); err != nil {
 			return nil, fmt.Errorf("create sample tenant organization: %w", err)
 		}
 	} else {
@@ -1293,6 +1318,31 @@ func unmarshalMap(data []byte) map[string]any {
 		return map[string]any{}
 	}
 	return out
+}
+
+func allocateOrganizationID[T any](r *Repository, operation func(uuid.UUID) (T, error)) (T, error) {
+	var zero T
+	attempts := 1
+	if r.tenantDatabaseDefaults.TargetForOrganization(uuid.Nil).DeploymentMode == tenantdb.DeploymentModeDedicatedDatabase {
+		attempts = tenantDatabaseNameAllocationAttempts
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		result, err := operation(r.newOrganizationID())
+		if err == nil {
+			return result, nil
+		}
+		if !isTenantDatabaseNameConflict(err) {
+			return zero, err
+		}
+	}
+	return zero, fmt.Errorf("%w: no available tenant database name after %d attempts", ErrConflict, attempts)
+}
+
+func isTenantDatabaseNameConflict(err error) bool {
+	var postgresError *pgconn.PgError
+	return errors.As(err, &postgresError) &&
+		postgresError.Code == "23505" &&
+		postgresError.ConstraintName == "uq_tenant_database_targets_physical_name"
 }
 
 func (r *Repository) upsertTenantDatabaseTarget(ctx context.Context, tx pgx.Tx, target tenantdb.Target) error {
