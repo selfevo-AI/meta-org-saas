@@ -184,6 +184,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `014_platform_migration_checksum_governance.sql` | 平台迁移 checksum、受控漂移修复和不可变审计历史。 |
 | `015_authentication_rate_limit_buckets.sql` | 多实例共享的认证限流、失败计数和封禁 bucket。 |
 | `016_business_stage_ai_runs.sql` | Plan/Do/Change/Accept/Learn 项目 AI 分析调用、结构化结果、成本和提案审计。 |
+| `017_business_ai_tool_proposal_execution.sql` | AI 提案到 Tool Runtime 强制审批、幂等执行及结果回写闭环。 |
 
 租户库按 `migrations/tenant/` 独立迁移：`001_tenant_business_baseline.sql` 建立业务基线，`002_tenant_projection_outbox.sql` 建立带租约、重试和发布状态的事务 outbox。
 

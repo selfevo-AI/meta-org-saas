@@ -27,8 +27,8 @@ class Handler(BaseHTTPRequestHandler):
                 'mitigation': 'Require human review before execution',
             }],
             'proposal': {
-                'action': 'Review project status',
-                'tool_name': 'project.bind_workflow',
+                'action': 'Estimate current project cost',
+                'tool_name': 'project.estimate_cost',
                 'arguments': {'stage': stage},
                 'requires_approval': True,
             },

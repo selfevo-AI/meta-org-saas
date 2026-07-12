@@ -114,6 +114,15 @@ func InternalToolsWithPlatform(projectSvc ProjectService, financeSvc FinanceServ
 	return tools
 }
 
+func ContextProposalTools(service ContextProposalService) map[string]ToolAdapter {
+	if service == nil {
+		return map[string]ToolAdapter{}
+	}
+	return map[string]ToolAdapter{
+		"context.proposal.apply": contextProposalApplyTool(service),
+	}
+}
+
 func DefaultToolDefinitions() []CreateToolInput {
 	return []CreateToolInput{
 		{Name: "requirement.analyze", Description: "Analyze a requirement", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},

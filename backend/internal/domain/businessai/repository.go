@@ -27,7 +27,9 @@ func (r *Repository) CreateRun(ctx context.Context, input AnalyzeInput) (*Run, e
 		RETURNING id, organization_id, project_id, requirement_id, stage, status,
 			requested_by_id, requested_by_type, provider_type, requested_model,
 			invocation_id, resolved_model, input_context, result, cost_amount::float8,
-			currency, input_tokens, output_tokens, error_message, created_at, completed_at
+			currency, input_tokens, output_tokens, error_message, proposal_status,
+			tool_execution_id, tool_approval_id, proposal_result, proposal_error,
+			proposal_submitted_at, proposal_completed_at, created_at, completed_at
 	`, input.OrganizationID, input.ProjectID, input.RequirementID, input.Stage, input.RequestedByID,
 		input.RequestedByType, input.ProviderType, input.Model, mustJSON(input.Context)), run)
 	if err != nil {
@@ -57,7 +59,9 @@ func (r *Repository) CompleteRun(ctx context.Context, id uuid.UUID, input Comple
 		RETURNING id, organization_id, project_id, requirement_id, stage, status,
 			requested_by_id, requested_by_type, provider_type, requested_model,
 			invocation_id, resolved_model, input_context, result, cost_amount::float8,
-			currency, input_tokens, output_tokens, error_message, created_at, completed_at
+			currency, input_tokens, output_tokens, error_message, proposal_status,
+			tool_execution_id, tool_approval_id, proposal_result, proposal_error,
+			proposal_submitted_at, proposal_completed_at, created_at, completed_at
 	`, id, input.InvocationID, input.ResolvedModel, mustJSON(input.Analysis), input.CostAmount,
 		input.Currency, input.InputTokens, input.OutputTokens), run)
 	if err != nil {
@@ -86,7 +90,9 @@ func (r *Repository) ListRuns(ctx context.Context, organizationID, projectID uui
 		SELECT id, organization_id, project_id, requirement_id, stage, status,
 			requested_by_id, requested_by_type, provider_type, requested_model,
 			invocation_id, resolved_model, input_context, result, cost_amount::float8,
-			currency, input_tokens, output_tokens, error_message, created_at, completed_at
+			currency, input_tokens, output_tokens, error_message, proposal_status,
+			tool_execution_id, tool_approval_id, proposal_result, proposal_error,
+			proposal_submitted_at, proposal_completed_at, created_at, completed_at
 		FROM business_stage_ai_runs
 		WHERE organization_id = $1 AND project_id = $2
 		ORDER BY created_at DESC LIMIT $3
@@ -106,16 +112,102 @@ func (r *Repository) ListRuns(ctx context.Context, organizationID, projectID uui
 	return runs, rows.Err()
 }
 
+func (r *Repository) GetRun(ctx context.Context, organizationID, projectID, runID uuid.UUID) (*Run, error) {
+	run := &Run{}
+	err := scanRun(r.db.QueryRow(ctx, `
+		SELECT id, organization_id, project_id, requirement_id, stage, status,
+			requested_by_id, requested_by_type, provider_type, requested_model,
+			invocation_id, resolved_model, input_context, result, cost_amount::float8,
+			currency, input_tokens, output_tokens, error_message, proposal_status,
+			tool_execution_id, tool_approval_id, proposal_result, proposal_error,
+			proposal_submitted_at, proposal_completed_at, created_at, completed_at
+		FROM business_stage_ai_runs
+		WHERE id = $1 AND organization_id = $2 AND project_id = $3
+	`, runID, organizationID, projectID), run)
+	if err != nil {
+		return nil, fmt.Errorf("get business stage ai run: %w", err)
+	}
+	return run, nil
+}
+
+func (r *Repository) BeginProposalSubmission(ctx context.Context, organizationID, projectID, runID uuid.UUID) (*Run, error) {
+	run := &Run{}
+	err := scanRun(r.db.QueryRow(ctx, `
+		UPDATE business_stage_ai_runs
+		SET proposal_status = 'submitting', proposal_error = '', proposal_submitted_at = NOW()
+		WHERE id = $1 AND organization_id = $2 AND project_id = $3
+		  AND status = 'completed' AND proposal_status IN ('not_submitted', 'failed')
+		RETURNING id, organization_id, project_id, requirement_id, stage, status,
+			requested_by_id, requested_by_type, provider_type, requested_model,
+			invocation_id, resolved_model, input_context, result, cost_amount::float8,
+			currency, input_tokens, output_tokens, error_message, proposal_status,
+			tool_execution_id, tool_approval_id, proposal_result, proposal_error,
+			proposal_submitted_at, proposal_completed_at, created_at, completed_at
+	`, runID, organizationID, projectID), run)
+	if err != nil {
+		return nil, fmt.Errorf("begin business ai proposal submission: %w", err)
+	}
+	return run, nil
+}
+
+func (r *Repository) LinkProposalExecution(ctx context.Context, runID uuid.UUID, output ProposalExecutionOutput) (*Run, error) {
+	run := &Run{}
+	err := scanRun(r.db.QueryRow(ctx, `
+		UPDATE business_stage_ai_runs
+		SET proposal_status = $2, tool_execution_id = $3, tool_approval_id = $4,
+			proposal_result = $5, proposal_error = $6,
+			proposal_completed_at = CASE WHEN $2 IN ('completed', 'failed', 'rejected', 'denied') THEN NOW() ELSE NULL END
+		WHERE id = $1
+		RETURNING id, organization_id, project_id, requirement_id, stage, status,
+			requested_by_id, requested_by_type, provider_type, requested_model,
+			invocation_id, resolved_model, input_context, result, cost_amount::float8,
+			currency, input_tokens, output_tokens, error_message, proposal_status,
+			tool_execution_id, tool_approval_id, proposal_result, proposal_error,
+			proposal_submitted_at, proposal_completed_at, created_at, completed_at
+	`, runID, output.Status, output.ExecutionID, output.ApprovalID, mustJSON(output.Result), output.Error), run)
+	if err != nil {
+		return nil, fmt.Errorf("link business ai proposal execution: %w", err)
+	}
+	return run, nil
+}
+
+func (r *Repository) FailProposalSubmission(ctx context.Context, runID uuid.UUID, message string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE business_stage_ai_runs
+		SET proposal_status = 'failed', proposal_error = $2, proposal_completed_at = NOW()
+		WHERE id = $1
+	`, runID, message)
+	if err != nil {
+		return fmt.Errorf("fail business ai proposal submission: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) UpdateProposalExecution(ctx context.Context, update ProposalExecutionUpdate) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE business_stage_ai_runs
+		SET proposal_status = $2, proposal_result = $3, proposal_error = $4,
+			proposal_completed_at = CASE WHEN $2 IN ('completed', 'failed', 'rejected', 'denied') THEN NOW() ELSE proposal_completed_at END
+		WHERE tool_execution_id = $1
+	`, update.ExecutionID, update.Status, mustJSON(update.Result), update.Error)
+	if err != nil {
+		return fmt.Errorf("update business ai proposal execution: %w", err)
+	}
+	return nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanRun(row rowScanner, run *Run) error {
-	var contextJSON, resultJSON []byte
+	var contextJSON, resultJSON, proposalResultJSON []byte
 	if err := row.Scan(&run.ID, &run.OrganizationID, &run.ProjectID, &run.RequirementID, &run.Stage,
 		&run.Status, &run.RequestedByID, &run.RequestedByType, &run.ProviderType, &run.RequestedModel,
 		&run.InvocationID, &run.ResolvedModel, &contextJSON, &resultJSON, &run.CostAmount, &run.Currency,
-		&run.InputTokens, &run.OutputTokens, &run.ErrorMessage, &run.CreatedAt, &run.CompletedAt); err != nil {
+		&run.InputTokens, &run.OutputTokens, &run.ErrorMessage, &run.ProposalStatus,
+		&run.ToolExecutionID, &run.ToolApprovalID, &proposalResultJSON, &run.ProposalError,
+		&run.ProposalSubmittedAt, &run.ProposalCompletedAt, &run.CreatedAt, &run.CompletedAt); err != nil {
 		return err
 	}
 	run.InputContext = map[string]any{}
@@ -127,6 +219,8 @@ func scanRun(row rowScanner, run *Run) error {
 		}
 		run.Analysis = &analysis
 	}
+	run.ProposalResult = map[string]any{}
+	_ = json.Unmarshal(proposalResultJSON, &run.ProposalResult)
 	return nil
 }
 

@@ -891,13 +891,7 @@ func (s *Service) AnalyzeProjectStage(ctx context.Context, projectID uuid.UUID, 
 		Focus:           input.Focus,
 		Context:         verifiedContext,
 	})
-	if errors.Is(err, businessai.ErrValidation) {
-		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
-	}
-	if errors.Is(err, businessai.ErrNotConfigured) || errors.Is(err, aigateway.ErrUnavailable) {
-		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	return run, err
+	return run, mapBusinessAIError(err)
 }
 
 func (s *Service) ListProjectStageAIRuns(ctx context.Context, projectID uuid.UUID, limit int) ([]businessai.Run, error) {
@@ -915,6 +909,47 @@ func (s *Service) ListProjectStageAIRuns(ctx context.Context, projectID uuid.UUI
 		return nil, err
 	}
 	return s.businessAI.ListRuns(ctx, *proj.OrganizationID, projectID, limit)
+}
+
+func (s *Service) SubmitProjectAIProposal(ctx context.Context, projectID, runID uuid.UUID) (*businessai.Run, error) {
+	if s.businessAI == nil {
+		return nil, fmt.Errorf("%w: business stage ai is not configured", ErrUnavailable)
+	}
+	proj, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if proj.OrganizationID == nil {
+		return nil, fmt.Errorf("%w: project organization is required", ErrValidation)
+	}
+	actorID, actorType, err := s.resolveActor(ctx, ActorInput{})
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireAccess(ctx, actorID, actorType, "project.ai.proposal.submit", "project", &projectID,
+		proj.OrganizationID, proj.DepartmentID, nil, proj.RequiredLevel, proj.RiskLevel, nil); err != nil {
+		return nil, err
+	}
+	run, err := s.businessAI.SubmitProposal(ctx, businessai.SubmitProposalInput{
+		OrganizationID: *proj.OrganizationID, ProjectID: projectID, RunID: runID,
+		ActorID: actorID, ActorType: actorType,
+	})
+	return run, mapBusinessAIError(err)
+}
+
+func mapBusinessAIError(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, businessai.ErrValidation):
+		return fmt.Errorf("%w: %v", ErrValidation, err)
+	case errors.Is(err, businessai.ErrConflict):
+		return fmt.Errorf("%w: %v", ErrConflict, err)
+	case errors.Is(err, businessai.ErrNotConfigured), errors.Is(err, aigateway.ErrUnavailable):
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	default:
+		return err
+	}
 }
 
 func (s *Service) CreateDeliverable(ctx context.Context, projectID uuid.UUID, input CreateDeliverableInput) (*Deliverable, error) {

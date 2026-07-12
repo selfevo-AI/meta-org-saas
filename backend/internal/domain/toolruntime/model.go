@@ -107,17 +107,18 @@ type InterfaceFile struct {
 }
 
 type ExecuteToolInput struct {
-	ToolName       string         `json:"tool_name"`
-	InvocationID   *uuid.UUID     `json:"invocation_id,omitempty"`
-	ActorID        uuid.UUID      `json:"actor_id"`
-	ActorType      string         `json:"actor_type"`
-	OrganizationID *uuid.UUID     `json:"organization_id,omitempty"`
-	DepartmentID   *uuid.UUID     `json:"department_id,omitempty"`
-	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
-	WorkflowID     *uuid.UUID     `json:"workflow_id,omitempty"`
-	TaskID         *uuid.UUID     `json:"task_id,omitempty"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	Arguments      map[string]any `json:"arguments"`
+	ToolName        string         `json:"tool_name"`
+	InvocationID    *uuid.UUID     `json:"invocation_id,omitempty"`
+	ActorID         uuid.UUID      `json:"actor_id"`
+	ActorType       string         `json:"actor_type"`
+	OrganizationID  *uuid.UUID     `json:"organization_id,omitempty"`
+	DepartmentID    *uuid.UUID     `json:"department_id,omitempty"`
+	ProjectID       *uuid.UUID     `json:"project_id,omitempty"`
+	WorkflowID      *uuid.UUID     `json:"workflow_id,omitempty"`
+	TaskID          *uuid.UUID     `json:"task_id,omitempty"`
+	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
+	RequireApproval bool           `json:"require_approval,omitempty"`
+	Arguments       map[string]any `json:"arguments"`
 }
 
 type ExecuteToolOutput struct {

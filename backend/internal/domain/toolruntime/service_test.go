@@ -44,6 +44,15 @@ func TestEffectivePolicyForExecutionApprovesRuntimeWrites(t *testing.T) {
 	}
 }
 
+func TestEffectivePolicyForExecutionHonorsForcedApproval(t *testing.T) {
+	policy := EffectivePolicyForExecution(ToolDefinition{
+		Name: "project.estimate_cost", DefaultPolicy: PolicyNotify,
+	}, ExecuteToolInput{RequireApproval: true}, GovernanceResult{Decision: "notify", Allowed: true})
+	if policy != PolicyApprove {
+		t.Fatalf("policy = %q, want %q", policy, PolicyApprove)
+	}
+}
+
 func TestEffectivePolicyForExecutionKeepsRuntimeReadsNotify(t *testing.T) {
 	policy := EffectivePolicyForExecution(ToolDefinition{
 		Name:          "runtime.operation.execute",
@@ -241,6 +250,7 @@ func TestApproveRunsApprovedToolOnce(t *testing.T) {
 		tier: ApprovalTierReviewer,
 	}
 	calls := 0
+	observer := &capturingExecutionObserver{}
 	svc := NewService(repo, nil, map[string]ToolAdapter{
 		"project.summarize": func(_ context.Context, input ExecuteToolInput) (ToolResult, error) {
 			calls++
@@ -249,7 +259,7 @@ func TestApproveRunsApprovedToolOnce(t *testing.T) {
 			}
 			return ToolResult{Summary: "summarized", Data: map[string]any{"ok": true}}, nil
 		},
-	})
+	}, WithExecutionObserver(observer))
 
 	first, err := svc.Approve(ctx, approvalID, &reviewerID, "looks good")
 	if err != nil {
@@ -264,6 +274,9 @@ func TestApproveRunsApprovedToolOnce(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("adapter calls = %d, want 1", calls)
 	}
+	if observer.execution == nil || observer.execution.Status != ExecutionCompleted {
+		t.Fatalf("observer execution = %#v, want completed", observer.execution)
+	}
 
 	second, err := svc.Approve(ctx, approvalID, &reviewerID, "duplicate")
 	if err != nil {
@@ -275,6 +288,15 @@ func TestApproveRunsApprovedToolOnce(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("adapter calls after duplicate = %d, want 1", calls)
 	}
+}
+
+type capturingExecutionObserver struct {
+	execution *ToolExecution
+}
+
+func (o *capturingExecutionObserver) ToolExecutionUpdated(_ context.Context, execution *ToolExecution) error {
+	o.execution = execution
+	return nil
 }
 
 func TestCreateInterfaceFileValidation(t *testing.T) {

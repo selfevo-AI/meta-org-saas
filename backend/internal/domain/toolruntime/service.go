@@ -54,12 +54,17 @@ type ObservabilityRecorder interface {
 	CompleteTrace(ctx context.Context, id uuid.UUID, status string) error
 }
 
+type ExecutionObserver interface {
+	ToolExecutionUpdated(context.Context, *ToolExecution) error
+}
+
 type Service struct {
-	repo           Repository
-	governance     GovernanceService
-	adapters       map[string]ToolAdapter
-	observability  ObservabilityRecorder
-	securityKernel securitykernel.Client
+	repo              Repository
+	governance        GovernanceService
+	adapters          map[string]ToolAdapter
+	observability     ObservabilityRecorder
+	securityKernel    securitykernel.Client
+	executionObserver ExecutionObserver
 }
 
 type ServiceOption func(*Service)
@@ -73,6 +78,12 @@ func WithObservability(recorder ObservabilityRecorder) ServiceOption {
 func WithSecurityKernel(client securitykernel.Client) ServiceOption {
 	return func(s *Service) {
 		s.securityKernel = client
+	}
+}
+
+func WithExecutionObserver(observer ExecutionObserver) ServiceOption {
+	return func(s *Service) {
+		s.executionObserver = observer
 	}
 }
 
@@ -140,8 +151,11 @@ func EffectivePolicy(defaultPolicy string, governance GovernanceResult) string {
 
 func EffectivePolicyForExecution(tool ToolDefinition, input ExecuteToolInput, governance GovernanceResult) string {
 	policy := EffectivePolicy(tool.DefaultPolicy, governance)
-	if policy == PolicyDeny || policy == PolicyApprove {
+	if policy == PolicyDeny {
 		return policy
+	}
+	if input.RequireApproval || policy == PolicyApprove {
+		return PolicyApprove
 	}
 	switch tool.Name {
 	case "erp.action.execute", "context.proposal.apply", "finance.prepare_export_batch":
@@ -347,6 +361,9 @@ func (s *Service) ExecuteTool(ctx context.Context, input ExecuteToolInput) (*Exe
 		if err != nil {
 			return nil, err
 		}
+		if observerErr := s.notifyExecutionObserver(ctx, completed); observerErr != nil {
+			return &ExecuteToolOutput{Execution: completed}, observerErr
+		}
 		s.recordToolMetric(ctx, "tool_governance_denied", execution.ID, 1, map[string]any{"tool_name": tool.Name, "risk_level": tool.RiskLevel})
 		s.recordToolSpan(ctx, trace, tool, completed, input, ExecutionDenied, governanceResult.Reason, 0)
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
@@ -404,6 +421,9 @@ func (s *Service) Approve(ctx context.Context, id uuid.UUID, reviewedBy *uuid.UU
 		if err != nil {
 			return nil, err
 		}
+		if observerErr := s.notifyExecutionObserver(ctx, expiredExecution); observerErr != nil {
+			return &ApprovalReviewOutput{Approval: expired, Execution: expiredExecution}, observerErr
+		}
 		return &ApprovalReviewOutput{Approval: expired, Execution: expiredExecution}, fmt.Errorf("%w: approval expired", ErrValidation)
 	}
 	approved, err := s.repo.UpdateApproval(ctx, id, ApprovalApproved, reviewedBy, reason)
@@ -429,6 +449,9 @@ func (s *Service) Reject(ctx context.Context, id uuid.UUID, reviewedBy *uuid.UUI
 	execution, err := s.repo.GetExecution(ctx, approval.ExecutionID)
 	if err != nil {
 		return nil, err
+	}
+	if err := s.notifyExecutionObserver(ctx, execution); err != nil {
+		return &ApprovalReviewOutput{Approval: approval, Execution: execution}, err
 	}
 	return &ApprovalReviewOutput{Approval: approval, Execution: execution}, nil
 }
@@ -508,6 +531,9 @@ func (s *Service) runAdapter(ctx context.Context, tool *ToolDefinition, executio
 			s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 			return nil, err
 		}
+		if observerErr := s.notifyExecutionObserver(ctx, completed); observerErr != nil {
+			return &ExecuteToolOutput{Execution: completed}, observerErr
+		}
 		s.recordToolSpan(ctx, trace, tool, completed, input, ExecutionFailed, "tool adapter is not configured", 0)
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return &ExecuteToolOutput{Execution: completed}, fmt.Errorf("%w: tool adapter is not configured", ErrNotFound)
@@ -522,6 +548,9 @@ func (s *Service) runAdapter(ctx context.Context, tool *ToolDefinition, executio
 		})
 		if updateErr != nil {
 			return nil, updateErr
+		}
+		if observerErr := s.notifyExecutionObserver(ctx, completed); observerErr != nil {
+			return &ExecuteToolOutput{Execution: completed}, observerErr
 		}
 		durationMS := int(time.Since(started).Milliseconds())
 		s.recordToolSpan(ctx, trace, tool, completed, input, ExecutionFailed, err.Error(), durationMS)
@@ -539,9 +568,22 @@ func (s *Service) runAdapter(ctx context.Context, tool *ToolDefinition, executio
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
+	if observerErr := s.notifyExecutionObserver(ctx, completed); observerErr != nil {
+		return &ExecuteToolOutput{Execution: completed}, observerErr
+	}
 	s.recordToolSpan(ctx, trace, tool, completed, input, ExecutionCompleted, "", durationMS)
 	s.completeObservationTrace(ctx, trace, observability.TraceComplete)
 	return &ExecuteToolOutput{Execution: completed}, nil
+}
+
+func (s *Service) notifyExecutionObserver(ctx context.Context, execution *ToolExecution) error {
+	if s.executionObserver == nil || execution == nil {
+		return nil
+	}
+	if err := s.executionObserver.ToolExecutionUpdated(ctx, execution); err != nil {
+		return fmt.Errorf("notify tool execution observer: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) decide(ctx context.Context, tool *ToolDefinition, input ExecuteToolInput) (GovernanceResult, error) {

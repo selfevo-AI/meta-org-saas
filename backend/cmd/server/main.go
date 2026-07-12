@@ -12,6 +12,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/assistant"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/businessai"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/businessaibridge"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
@@ -257,6 +258,7 @@ func main() {
 		Model:        cfg.BusinessAIModel,
 		MaxTokens:    cfg.BusinessAIMaxTokens,
 	})
+	businessAIBridge := businessaibridge.New(businessAISvc)
 
 	wfRepo := workflow.NewRepository(tenantBusinessDB)
 	wfSvc := workflow.NewService(wfRepo)
@@ -318,7 +320,10 @@ func main() {
 		}),
 		toolruntime.WithObservability(obsSvc),
 		toolruntime.WithSecurityKernel(securityKernel),
+		toolruntime.WithExecutionObserver(businessAIBridge),
 	)
+	businessAIBridge.SetToolService(toolSvc)
+	businessAISvc.SetProposalExecutor(businessAIBridge)
 	toolHandler := toolruntime.NewHandler(toolSvc)
 
 	assistantRepo := assistant.NewRepository(db)
@@ -346,9 +351,7 @@ func main() {
 	eventSink := assistant.NewMemoryEventSink(assistantRepo)
 	assistantRuntime := assistant.NewAssistantRuntime(assistantSvc, contextEngine, toolRunner, eventSink)
 	assistantSvc.SetRuntime(assistantRuntime)
-	toolSvc.RegisterAdapters(toolruntime.InternalToolsWithPlatform(nil, nil, nil, toolruntime.PlatformToolServices{
-		ContextProposal: assistantSvc,
-	}))
+	toolSvc.RegisterAdapters(toolruntime.ContextProposalTools(assistantSvc))
 	assistantHandler := assistant.NewHandler(assistantSvc)
 
 	verRepo := verification.NewRepository(db)

@@ -184,6 +184,7 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 | `014_platform_migration_checksum_governance.sql` | Platform migration checksums, controlled drift repair, and immutable reconciliation history. |
 | `015_authentication_rate_limit_buckets.sql` | Multi-instance authentication attempt, failure, and blocking buckets. |
 | `016_business_stage_ai_runs.sql` | Plan/Do/Change/Accept/Learn project AI invocations, structured results, costs, and proposal audits. |
+| `017_business_ai_tool_proposal_execution.sql` | Forced approval, idempotent Tool Runtime execution, and result writeback for AI proposals. |
 
 Tenant databases migrate independently from `migrations/tenant/`: `001_tenant_business_baseline.sql` establishes the business baseline and `002_tenant_projection_outbox.sql` adds the transactional outbox with leasing, retries, and publication state.
 

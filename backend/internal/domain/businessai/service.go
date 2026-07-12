@@ -16,10 +16,15 @@ var (
 	ErrValidation    = errors.New("validation error")
 	ErrInvalidOutput = errors.New("invalid ai output")
 	ErrNotConfigured = errors.New("business ai is not configured")
+	ErrConflict      = errors.New("conflict")
 )
 
 type AIInvoker interface {
 	Invoke(context.Context, aigateway.InvokeInput) (*aigateway.InvokeOutput, error)
+}
+
+type ProposalExecutor interface {
+	ExecuteProposal(context.Context, ProposalExecutionRequest) (*ProposalExecutionOutput, error)
 }
 
 type Config struct {
@@ -33,12 +38,22 @@ type RunRepository interface {
 	CompleteRun(context.Context, uuid.UUID, CompleteRunInput) (*Run, error)
 	FailRun(context.Context, uuid.UUID, string) error
 	ListRuns(context.Context, uuid.UUID, uuid.UUID, int) ([]Run, error)
+	GetRun(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*Run, error)
+	BeginProposalSubmission(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*Run, error)
+	LinkProposalExecution(context.Context, uuid.UUID, ProposalExecutionOutput) (*Run, error)
+	FailProposalSubmission(context.Context, uuid.UUID, string) error
+	UpdateProposalExecution(context.Context, ProposalExecutionUpdate) error
 }
 
 type Service struct {
-	repo RunRepository
-	ai   AIInvoker
-	cfg  Config
+	repo             RunRepository
+	ai               AIInvoker
+	cfg              Config
+	proposalExecutor ProposalExecutor
+}
+
+func (s *Service) SetProposalExecutor(executor ProposalExecutor) {
+	s.proposalExecutor = executor
 }
 
 func NewService(repo RunRepository, ai AIInvoker, cfg Config) *Service {
@@ -112,6 +127,58 @@ func (s *Service) Analyze(ctx context.Context, input AnalyzeInput) (*Run, error)
 
 func (s *Service) ListRuns(ctx context.Context, organizationID, projectID uuid.UUID, limit int) ([]Run, error) {
 	return s.repo.ListRuns(ctx, organizationID, projectID, limit)
+}
+
+func (s *Service) SubmitProposal(ctx context.Context, input SubmitProposalInput) (*Run, error) {
+	run, err := s.repo.GetRun(ctx, input.OrganizationID, input.ProjectID, input.RunID)
+	if err != nil {
+		return nil, err
+	}
+	if run.ToolExecutionID != nil {
+		return run, nil
+	}
+	if run.Status != StatusCompleted || run.Analysis == nil {
+		return nil, fmt.Errorf("%w: AI analysis must be completed before submitting its proposal", ErrConflict)
+	}
+	toolName := strings.TrimSpace(run.Analysis.Proposal.ToolName)
+	if toolName == "" {
+		return nil, fmt.Errorf("%w: AI analysis did not propose an executable tool", ErrValidation)
+	}
+	if s.proposalExecutor == nil {
+		return nil, fmt.Errorf("%w: proposal executor is not configured", ErrNotConfigured)
+	}
+	run, err = s.repo.BeginProposalSubmission(ctx, input.OrganizationID, input.ProjectID, input.RunID)
+	if err != nil {
+		current, getErr := s.repo.GetRun(ctx, input.OrganizationID, input.ProjectID, input.RunID)
+		if getErr == nil && current.ToolExecutionID != nil {
+			return current, nil
+		}
+		return nil, fmt.Errorf("%w: proposal is already being submitted or is terminal", ErrConflict)
+	}
+	arguments := copyArguments(run.Analysis.Proposal.Arguments)
+	arguments["project_id"] = input.ProjectID.String()
+	output, err := s.proposalExecutor.ExecuteProposal(ctx, ProposalExecutionRequest{
+		ToolName: toolName, InvocationID: run.InvocationID, ActorID: input.ActorID, ActorType: input.ActorType,
+		OrganizationID: input.OrganizationID, ProjectID: input.ProjectID,
+		IdempotencyKey: "business-ai-proposal:" + input.RunID.String(), RequireApproval: true, Arguments: arguments,
+	})
+	if err != nil {
+		_ = s.repo.FailProposalSubmission(ctx, run.ID, err.Error())
+		return nil, err
+	}
+	return s.repo.LinkProposalExecution(ctx, run.ID, *output)
+}
+
+func (s *Service) UpdateProposalExecution(ctx context.Context, update ProposalExecutionUpdate) error {
+	return s.repo.UpdateProposalExecution(ctx, update)
+}
+
+func copyArguments(input map[string]any) map[string]any {
+	result := make(map[string]any, len(input)+1)
+	for key, value := range input {
+		result[key] = value
+	}
+	return result
 }
 
 func parseAnalysis(content string) (Analysis, error) {

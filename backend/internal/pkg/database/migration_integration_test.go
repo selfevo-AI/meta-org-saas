@@ -100,6 +100,17 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 	if !businessAIStageTableExists {
 		t.Fatal("business stage ai run table missing")
 	}
+	var proposalColumns int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'business_stage_ai_runs'
+		  AND column_name IN ('proposal_status', 'tool_execution_id', 'tool_approval_id', 'proposal_result')
+	`).Scan(&proposalColumns); err != nil {
+		t.Fatalf("check business AI proposal columns: %v", err)
+	}
+	if proposalColumns != 4 {
+		t.Fatalf("business AI proposal columns = %d, want 4", proposalColumns)
+	}
 
 	var notValid int
 	if err := targetPool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE NOT convalidated`).Scan(&notValid); err != nil {

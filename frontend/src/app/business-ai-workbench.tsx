@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, Loader2 } from 'lucide-react'
+import { Bot, CheckCircle2, Loader2, Send, XCircle } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 import { apiRequest } from '@/lib/api'
@@ -30,6 +30,11 @@ interface BusinessAIRun {
   input_tokens: number
   output_tokens: number
   error_message?: string
+  proposal_status: 'not_submitted' | 'submitting' | 'approval_required' | 'completed' | 'rejected' | 'failed' | 'denied'
+  tool_execution_id?: string
+  tool_approval_id?: string
+  proposal_result: Record<string, unknown>
+  proposal_error?: string
 }
 
 interface ModelProvider {
@@ -147,6 +152,44 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
     }
   }
 
+  async function refreshRuns() {
+    if (!activeProjectID) return
+    const data = await apiRequest<BusinessAIRun[]>(`/projects/${encodeURIComponent(activeProjectID)}/ai-analyses?limit=30`, { token })
+    setRuns(Array.isArray(data) ? data : [])
+  }
+
+  async function submitProposal() {
+    if (!activeProjectID || !latest) return
+    setLoading(true)
+    setError('')
+    try {
+      const run = await apiRequest<BusinessAIRun>(`/projects/${encodeURIComponent(activeProjectID)}/ai-analyses/${latest.id}/submit-proposal`, {
+        method: 'POST', token, body: {},
+      })
+      setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)])
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function reviewProposal(decision: 'approve' | 'reject') {
+    if (!latest?.tool_approval_id) return
+    setLoading(true)
+    setError('')
+    try {
+      await apiRequest(`/tool-approvals/${latest.tool_approval_id}/${decision}`, {
+        method: 'POST', token, body: { reason: 'business_ai_workspace_review' },
+      })
+      await refreshRuns()
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <section data-testid="business-ai-workbench" className="border-t border-slate-200 bg-white px-4 py-5 sm:px-5">
       <div className="flex items-center gap-2">
@@ -211,6 +254,28 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
               <p className="text-sm font-semibold text-amber-950">{t('businessAI.proposal')}: {latest.analysis.proposal.action}</p>
               <p className="mt-1 break-all text-xs text-amber-800">{latest.analysis.proposal.tool_name || t('businessAI.noTool')} · {latest.analysis.proposal.requires_approval ? t('businessAI.approvalRequired') : t('businessAI.advisory')}</p>
             </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {latest.proposal_status === 'not_submitted' && latest.analysis.proposal.tool_name && (
+              <button data-testid="business-ai-submit-proposal" type="button" onClick={() => void submitProposal()} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-white hover:bg-[#B84F18] disabled:opacity-50">
+                <Send className="h-4 w-4" />{t('businessAI.submitProposal')}
+              </button>
+            )}
+            {latest.proposal_status === 'approval_required' && latest.tool_approval_id && (
+              <>
+                <button data-testid="business-ai-approve-proposal" type="button" onClick={() => void reviewProposal('approve')} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50">
+                  <CheckCircle2 className="h-4 w-4" />{t('businessAI.approveProposal')}
+                </button>
+                <button type="button" onClick={() => void reviewProposal('reject')} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md border border-red-300 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">
+                  <XCircle className="h-4 w-4" />{t('businessAI.rejectProposal')}
+                </button>
+              </>
+            )}
+            <span data-testid="business-ai-proposal-status" className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{t(`businessAI.proposalStatus.${latest.proposal_status || 'not_submitted'}`)}</span>
+          </div>
+          {latest.proposal_error && <p className="border-l-4 border-red-400 bg-red-50 px-4 py-3 text-sm text-red-700">{latest.proposal_error}</p>}
+          {latest.proposal_status === 'completed' && (
+            <pre className="max-h-48 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(latest.proposal_result, null, 2)}</pre>
           )}
           <p className="break-all text-xs text-slate-500">{t('businessAI.audit')}: {latest.invocation_id} · {latest.input_tokens + latest.output_tokens} tokens · {latest.cost_amount.toFixed(6)} {latest.currency}</p>
         </div>

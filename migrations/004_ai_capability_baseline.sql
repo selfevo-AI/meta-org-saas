@@ -160,6 +160,14 @@ CREATE TABLE IF NOT EXISTS business_stage_ai_runs (
     input_tokens      INT NOT NULL DEFAULT 0,
     output_tokens     INT NOT NULL DEFAULT 0,
     error_message     TEXT NOT NULL DEFAULT '',
+    proposal_status   TEXT NOT NULL DEFAULT 'not_submitted'
+        CHECK (proposal_status IN ('not_submitted', 'submitting', 'approval_required', 'completed', 'rejected', 'failed', 'denied')),
+    tool_execution_id UUID,
+    tool_approval_id  UUID,
+    proposal_result   JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(proposal_result) = 'object'),
+    proposal_error    TEXT NOT NULL DEFAULT '',
+    proposal_submitted_at TIMESTAMPTZ,
+    proposal_completed_at TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at      TIMESTAMPTZ
 );
@@ -245,6 +253,15 @@ CREATE TABLE IF NOT EXISTS tool_approvals (
 CREATE INDEX IF NOT EXISTS idx_tool_definitions_active ON tool_definitions(is_active, source_type, name);
 CREATE INDEX IF NOT EXISTS idx_tool_executions_status ON tool_executions(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_approvals_status ON tool_approvals(status, created_at DESC);
+
+ALTER TABLE business_stage_ai_runs
+    ADD CONSTRAINT fk_business_stage_ai_tool_execution
+    FOREIGN KEY (tool_execution_id) REFERENCES tool_executions(id) ON DELETE SET NULL;
+ALTER TABLE business_stage_ai_runs
+    ADD CONSTRAINT fk_business_stage_ai_tool_approval
+    FOREIGN KEY (tool_approval_id) REFERENCES tool_approvals(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_business_stage_ai_tool_execution
+    ON business_stage_ai_runs(tool_execution_id) WHERE tool_execution_id IS NOT NULL;
 
 INSERT INTO tool_definitions (name, description, source_type, default_policy, risk_level, required_level)
 VALUES

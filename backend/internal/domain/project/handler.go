@@ -56,6 +56,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/projects/{id}/overview", h.getProjectOverview)
 	r.Post("/projects/{id}/ai-analyses", h.analyzeProjectStage)
 	r.Get("/projects/{id}/ai-analyses", h.listProjectStageAIRuns)
+	r.Post("/projects/{id}/ai-analyses/{runID}/submit-proposal", h.submitProjectAIProposal)
 
 	r.Post("/projects/{id}/deliverables", h.createDeliverable)
 	r.Get("/projects/{id}/deliverables", h.listDeliverables)
@@ -544,6 +545,20 @@ func (h *Handler) listProjectStageAIRuns(w http.ResponseWriter, r *http.Request)
 	}
 	runs, err := h.service.ListProjectStageAIRuns(r.Context(), id, queryLimit(r))
 	writeResult(w, http.StatusOK, runs, err)
+}
+
+func (h *Handler) submitProjectAIProposal(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := h.parseURLID(w, r, "id", "projects")
+	if !ok {
+		return
+	}
+	runID, err := uuid.Parse(chi.URLParam(r, "runID"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid AI run id"})
+		return
+	}
+	run, err := h.service.SubmitProjectAIProposal(r.Context(), projectID, runID)
+	writeResult(w, http.StatusAccepted, run, err)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dest any) bool {

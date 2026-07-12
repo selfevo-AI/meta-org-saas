@@ -77,6 +77,33 @@ func TestAttributionActorSeparatesHumanAndAgentForeignKeys(t *testing.T) {
 	}
 }
 
+func TestSubmitProposalForcesApprovalAndAddsProjectContext(t *testing.T) {
+	projectID, orgID, runID := uuid.New(), uuid.New(), uuid.New()
+	repo := &fakeRunRepository{run: Run{
+		ID: runID, OrganizationID: orgID, ProjectID: projectID, Status: StatusCompleted,
+		ProposalStatus: ProposalNotSubmitted,
+		Analysis:       &Analysis{Proposal: Proposal{ToolName: "project.estimate_cost", Arguments: map[string]any{"project_id": uuid.New().String()}}},
+	}}
+	executor := &fakeProposalExecutor{}
+	svc := NewService(repo, nil, Config{})
+	svc.SetProposalExecutor(executor)
+	run, err := svc.SubmitProposal(context.Background(), SubmitProposalInput{
+		OrganizationID: orgID, ProjectID: projectID, RunID: runID, ActorID: uuid.New(), ActorType: "human",
+	})
+	if err != nil {
+		t.Fatalf("SubmitProposal() error = %v", err)
+	}
+	if !executor.input.RequireApproval {
+		t.Fatal("proposal execution did not force approval")
+	}
+	if executor.input.Arguments["project_id"] != projectID.String() {
+		t.Fatalf("project_id argument = %v", executor.input.Arguments["project_id"])
+	}
+	if run.ProposalStatus != ProposalApprovalRequired || run.ToolExecutionID == nil {
+		t.Fatalf("run = %#v, want linked approval-required execution", run)
+	}
+}
+
 func validAnalysisJSON(t *testing.T) string {
 	t.Helper()
 	data, err := json.Marshal(Analysis{
@@ -112,7 +139,7 @@ type fakeRunRepository struct {
 }
 
 func (f *fakeRunRepository) CreateRun(_ context.Context, input AnalyzeInput) (*Run, error) {
-	f.run = Run{ID: uuid.New(), OrganizationID: input.OrganizationID, ProjectID: input.ProjectID, Stage: input.Stage, Status: StatusRunning}
+	f.run = Run{ID: uuid.New(), OrganizationID: input.OrganizationID, ProjectID: input.ProjectID, Stage: input.Stage, Status: StatusRunning, ProposalStatus: ProposalNotSubmitted}
 	return &f.run, nil
 }
 
@@ -133,4 +160,42 @@ func (f *fakeRunRepository) FailRun(_ context.Context, _ uuid.UUID, message stri
 
 func (f *fakeRunRepository) ListRuns(context.Context, uuid.UUID, uuid.UUID, int) ([]Run, error) {
 	return []Run{f.run}, nil
+}
+
+func (f *fakeRunRepository) GetRun(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*Run, error) {
+	return &f.run, nil
+}
+
+func (f *fakeRunRepository) BeginProposalSubmission(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*Run, error) {
+	f.run.ProposalStatus = ProposalSubmitting
+	return &f.run, nil
+}
+
+func (f *fakeRunRepository) LinkProposalExecution(_ context.Context, _ uuid.UUID, output ProposalExecutionOutput) (*Run, error) {
+	f.run.ProposalStatus = output.Status
+	f.run.ToolExecutionID = &output.ExecutionID
+	f.run.ToolApprovalID = output.ApprovalID
+	return &f.run, nil
+}
+
+func (f *fakeRunRepository) FailProposalSubmission(_ context.Context, _ uuid.UUID, message string) error {
+	f.run.ProposalStatus = ProposalFailed
+	f.run.ProposalError = message
+	return nil
+}
+
+func (f *fakeRunRepository) UpdateProposalExecution(context.Context, ProposalExecutionUpdate) error {
+	return nil
+}
+
+type fakeProposalExecutor struct {
+	input ProposalExecutionRequest
+}
+
+func (f *fakeProposalExecutor) ExecuteProposal(_ context.Context, input ProposalExecutionRequest) (*ProposalExecutionOutput, error) {
+	f.input = input
+	approvalID := uuid.New()
+	return &ProposalExecutionOutput{
+		ExecutionID: uuid.New(), ApprovalID: &approvalID, Status: ProposalApprovalRequired, Result: map[string]any{},
+	}, nil
 }

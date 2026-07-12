@@ -19,6 +19,7 @@ This directory now uses staged baseline migrations instead of the historical
 14. `014_platform_migration_checksum_governance.sql`
 15. `015_authentication_rate_limit_buckets.sql`
 16. `016_business_stage_ai_runs.sql`
+17. `017_business_ai_tool_proposal_execution.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -333,6 +334,14 @@ flag, and terminal error. Project and requirement identifiers intentionally do
 not use cross-database foreign keys because their authoritative rows live in a
 physical tenant database. The same schema is part of
 `004_ai_capability_baseline.sql` for fresh platform databases.
+
+`017_business_ai_tool_proposal_execution.sql` links a structured business-stage
+AI proposal to exactly one Tool Runtime execution and optional human approval.
+Submission always forces approval regardless of the tool's default policy,
+uses the AI run ID as the idempotency key, and records approval, completion,
+rejection, denial, result, and error states back on the originating AI run.
+Project IDs remain cross-database identifiers while tool execution and approval
+links use platform-local foreign keys.
 
 `011_ai_module_master_detail_runtime_repair.sql` completes the cross-stage
 contract between the ERP master/detail framework and the AI capability stage.

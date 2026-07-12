@@ -2077,6 +2077,22 @@ const allApiOperations: ApiOperation[] = [
     assistantEligible: true,
   },
   {
+    id: 'project-business-ai-submit-proposal',
+    domain: 'Project',
+    title: 'operation.project.businessAISubmitProposal',
+    method: 'POST',
+    path: '/projects/{id}/ai-analyses/{runID}/submit-proposal',
+    pathParams: [
+      { name: 'id', label: 'operation.project.projectId' },
+      { name: 'runID', label: 'operation.project.businessAIRunId' },
+    ],
+    bodyTemplate: {},
+    operationKind: 'agent_assisted',
+    dangerLevel: 'high',
+    resultView: 'audit',
+    assistantEligible: true,
+  },
+  {
     id: 'project-update',
     domain: 'Project',
     title: '更新项目',
