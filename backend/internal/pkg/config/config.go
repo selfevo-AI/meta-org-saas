@@ -8,6 +8,7 @@ import (
 )
 
 type Config struct {
+	Environment                       string
 	ServerPort                        int
 	DatabaseURL                       string
 	PlatformDatabaseURL               string
@@ -84,6 +85,7 @@ func Load() *Config {
 	databaseURL := getEnv("DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable")
 	platformDatabaseURL := getEnv("PLATFORM_DATABASE_URL", databaseURL)
 	return &Config{
+		Environment:                       normalizedEnvironment(getEnv("META_ORG_ENVIRONMENT", "development")),
 		ServerPort:                        getEnvInt("SERVER_PORT", 8080),
 		DatabaseURL:                       databaseURL,
 		PlatformDatabaseURL:               platformDatabaseURL,
@@ -151,6 +153,14 @@ func Load() *Config {
 		MonitoringAgentLookbackHours:      getEnvInt("MONITORING_AGENT_LOOKBACK_HOURS", 24),
 		MonitoringAgentMaxSignalsPerRun:   getEnvInt("MONITORING_AGENT_MAX_SIGNALS_PER_RUN", 100),
 	}
+}
+
+func normalizedEnvironment(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "development"
+	}
+	return value
 }
 
 func normalizedTenantDatabaseMode(value string) string {

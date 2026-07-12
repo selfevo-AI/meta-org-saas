@@ -46,6 +46,7 @@ jobs:
           MODEL_SECRET_KEY: 0123456789abcdef0123456789abcdef
           RUN_FRESH_DB_MIGRATION_TEST: "1"
           RUN_FRESH_TENANT_DB_MIGRATION_TEST: "1"
+          META_ORG_ENVIRONMENT: test
         run: |
           go test ./...
           go vet ./...
@@ -152,10 +153,11 @@ jobs:
           TENANT_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
           TENANT_MIGRATIONS_PATH: ../migrations/tenant
           MIGRATIONS_PATH: ../migrations
+          META_ORG_ENVIRONMENT: test
           META_ORG_MODE: saas
           META_ORG_PLATFORM_ADMIN_EMAIL: platform-admin@local.test
           META_ORG_PLATFORM_ADMIN_PASSWORD_HASH: $2a$10$/Dou0gOhCVFNGMitu8IUu.92HzEaG6iYWGxTTVUrSA1pkFvogvj22
-          JWT_SECRET: e2e-jwt-secret
+          JWT_SECRET: e2e-jwt-secret-0123456789abcdef
           MODEL_SECRET_KEY: 0123456789abcdef0123456789abcdef
           CORS_ORIGINS: http://127.0.0.1:3000
           SECURITY_KERNEL_URL: http://127.0.0.1:8090

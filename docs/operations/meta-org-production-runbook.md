@@ -8,6 +8,7 @@ Backend:
 
 | Variable | Required | Notes |
 |---|---:|---|
+| `META_ORG_ENVIRONMENT` | yes | Set to `production`. Startup rejects repository development secrets, malformed integer/boolean values, and invalid worker, pool, rate-limit, or scheduler bounds before connecting to PostgreSQL. |
 | `DATABASE_URL` | yes | PostgreSQL URL for the SaaS platform database, for example `postgres://user:pass@host:5432/meta_org_saas?sslmode=require`. |
 | `PLATFORM_DATABASE_URL` | SaaS deployments | Explicit SaaS platform control database URL. If unset, follows `DATABASE_URL`. |
 | `TENANT_DATABASE_ADMIN_URL` | dedicated tenant DB deployments | Administrative PostgreSQL URL for creating and migrating tenant databases. Point it at an admin database such as `postgres`, not at `meta_org_saas`. |
@@ -21,9 +22,9 @@ Backend:
 | `META_ORG_MODE` | no | Defaults to `single_org`; set to `saas` for multi-tenant semantics. |
 | `META_ORG_DISTRIBUTION_MODE` | no | Distribution mode for licensing/deployment policy. |
 | `META_ORG_LICENSE_MODE` | no | Defaults to `commercial`; choose the deployment license mode deliberately. |
-| `SECURITY_KERNEL_URL` | no | External authorization service URL. Empty means the client is not configured and allows requests. |
-| `SECURITY_KERNEL_SHARED_SECRET` | if kernel enabled | Shared secret for security-kernel calls. |
-| `SECURITY_KERNEL_ENFORCEMENT_MODE` | no | Defaults to `blocking`; use `audit` only for controlled rollout. |
+| `SECURITY_KERNEL_URL` | SaaS deployments | Absolute external authorization service URL. SaaS startup fails when it is missing. |
+| `SECURITY_KERNEL_SHARED_SECRET` | if kernel enabled | Shared secret of at least 32 characters. Production rejects the Compose development key. |
+| `SECURITY_KERNEL_ENFORCEMENT_MODE` | no | Defaults to `blocking`; SaaS deployments must use `blocking`. |
 | `SECURITY_KERNEL_DATABASE_URL` | security-kernel service | PostgreSQL URL for the `meta_org_saas` platform database. All replicas use its shared nonce ledger for replay protection. |
 | `SENSITIVE_RATE_LIMIT_WINDOW_SECONDS` | no | Shared window for invitation creation, access-token creation, model configuration, key rotation, account administration, balance adjustment, and database maintenance writes. Defaults to `60`. |
 | `SENSITIVE_RATE_LIMIT_MAX_ATTEMPTS` | no | Maximum sensitive writes per actor and client IP in the window. Defaults to `20`. |
@@ -64,7 +65,7 @@ Keep both values in the deployment secret manager. Do not commit them.
 ## Fresh Setup
 
 1. Create an empty PostgreSQL database named `meta_org_saas`.
-2. Set backend environment variables, including `DATABASE_URL`, `PLATFORM_DATABASE_URL`, `TENANT_DATABASE_ADMIN_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, `MIGRATIONS_PATH`, and `TENANT_MIGRATIONS_PATH`.
+2. Set `META_ORG_ENVIRONMENT=production` and backend environment variables including `DATABASE_URL`, `PLATFORM_DATABASE_URL`, `TENANT_DATABASE_ADMIN_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, `MIGRATIONS_PATH`, and `TENANT_MIGRATIONS_PATH`.
 3. If using an external security kernel, set `SECURITY_KERNEL_URL`, `SECURITY_KERNEL_SHARED_SECRET`, and choose `SECURITY_KERNEL_ENFORCEMENT_MODE`. Configure every security-kernel replica with the same `SECURITY_KERNEL_DATABASE_URL` for `meta_org_saas`.
 4. Start the backend. It applies the staged SQL baselines automatically in filename order: `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`.
 5. For SaaS mode, bootstrap the platform administrator with `META_ORG_PLATFORM_ADMIN_EMAIL` and `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH`.

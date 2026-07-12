@@ -389,6 +389,7 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `BUSINESS_AI_MODEL` | empty | Default five-stage business AI model key; it must match an active AI Gateway model. |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | Maximum output tokens for one structured business-stage analysis. |
 | `MIGRATIONS_PATH` | `migrations` | SQL migration directory; when running from `backend/`, usually set it to `../migrations`. |
+| `META_ORG_ENVIRONMENT` | `development` | Deployment environment: `development`, `test`, or `production`. Production mode rejects development secrets and invalid runtime bounds before connecting to PostgreSQL. |
 | `META_ORG_MODE` | `single_org` | Runtime mode; set to `saas` for multi-tenant/SaaS semantics. |
 | `META_ORG_DISTRIBUTION_MODE` | Follows `META_ORG_MODE` | Distribution mode: `saas`, `saas_org_private`, `single_org_commercial`, or `private_deployment`. |
 | `META_ORG_LICENSE_MODE` | `commercial` | License mode: `community`, `commercial`, `enterprise`, or `private_contract`. |

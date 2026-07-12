@@ -94,6 +94,7 @@ services:
       BUSINESS_AI_MAX_TOKENS: ${BUSINESS_AI_MAX_TOKENS:-1800}
       MIGRATIONS_PATH: "migrations"
       TENANT_MIGRATIONS_PATH: "migrations/tenant"
+      META_ORG_ENVIRONMENT: "development"
       META_ORG_MODE: "saas"
       META_ORG_DISTRIBUTION_MODE: "saas"
       META_ORG_LICENSE_MODE: "commercial"

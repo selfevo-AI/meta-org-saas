@@ -406,6 +406,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `BUSINESS_AI_MODEL` | 空 | 业务五阶段 AI 默认模型键；必须对应 AI Gateway 中已启用的模型。 |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | 单次业务阶段结构化分析允许的最大输出 token。 |
 | `MIGRATIONS_PATH` | `migrations` | SQL 迁移目录；本地从 `backend/` 运行时通常设为 `../migrations`。 |
+| `META_ORG_ENVIRONMENT` | `development` | 部署环境：`development`、`test` 或 `production`。生产模式会在连接数据库前拒绝默认开发密钥和无效运行参数。 |
 | `META_ORG_MODE` | `single_org` | 运行模式；可设为 `saas` 启用多租户/SaaS 语义。 |
 | `META_ORG_DISTRIBUTION_MODE` | 跟随 `META_ORG_MODE` | 分发模式：`saas`、`saas_org_private`、`single_org_commercial` 或 `private_deployment`。 |
 | `META_ORG_LICENSE_MODE` | `commercial` | 授权模式：`community`、`commercial`、`enterprise` 或 `private_contract`。 |

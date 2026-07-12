@@ -52,7 +52,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.LoadValidated()
+	if err != nil {
+		log.Fatalf("configuration invalid: %v", err)
+	}
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 
