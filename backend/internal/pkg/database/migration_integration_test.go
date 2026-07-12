@@ -109,6 +109,29 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 	if !businessAIStageTableExists {
 		t.Fatal("business stage ai run table missing")
 	}
+	var retentionRunTableExists bool
+	if err := targetPool.QueryRow(ctx, `
+		SELECT to_regclass('platform.audit_retention_runs') IS NOT NULL
+	`).Scan(&retentionRunTableExists); err != nil {
+		t.Fatalf("check audit retention run table: %v", err)
+	}
+	if !retentionRunTableExists {
+		t.Fatal("audit retention run table missing")
+	}
+	var retentionColumns int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND column_name = 'retention_redacted_at'
+		  AND table_name IN (
+		    'ai_invocations', 'business_stage_ai_runs', 'tool_executions',
+		    'assistant_sessions', 'assistant_messages', 'assistant_steps'
+		  )
+	`).Scan(&retentionColumns); err != nil {
+		t.Fatalf("check audit retention marker columns: %v", err)
+	}
+	if retentionColumns != 6 {
+		t.Fatalf("audit retention marker columns = %d, want 6", retentionColumns)
+	}
 	var proposalColumns int
 	if err := targetPool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM information_schema.columns

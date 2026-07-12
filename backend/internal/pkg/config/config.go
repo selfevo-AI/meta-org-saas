@@ -53,6 +53,11 @@ type Config struct {
 	AIGatewayRateLimitWindowSeconds   int
 	AIGatewayRateLimitMaxRequests     int
 	AIGatewayRateLimitBlockSeconds    int
+	AuditRetentionWorkerEnabled       bool
+	AuditRetentionDays                int
+	AuditRetentionPollSeconds         int
+	AuditRetentionBatchSize           int
+	AuditRetentionMaxBatches          int
 	BusinessAIProviderType            string
 	BusinessAIModel                   string
 	BusinessAIMaxTokens               int
@@ -124,6 +129,11 @@ func Load() *Config {
 		AIGatewayRateLimitWindowSeconds:   getEnvInt("AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS", 60),
 		AIGatewayRateLimitMaxRequests:     getEnvInt("AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS", 120),
 		AIGatewayRateLimitBlockSeconds:    getEnvInt("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", 60),
+		AuditRetentionWorkerEnabled:       getEnvBool("AUDIT_RETENTION_WORKER_ENABLED", true),
+		AuditRetentionDays:                getEnvInt("AUDIT_RETENTION_DAYS", 365),
+		AuditRetentionPollSeconds:         getEnvInt("AUDIT_RETENTION_POLL_SECONDS", 86400),
+		AuditRetentionBatchSize:           getEnvInt("AUDIT_RETENTION_BATCH_SIZE", 500),
+		AuditRetentionMaxBatches:          getEnvInt("AUDIT_RETENTION_MAX_BATCHES", 20),
 		BusinessAIProviderType:            strings.TrimSpace(getEnv("BUSINESS_AI_PROVIDER_TYPE", "")),
 		BusinessAIModel:                   strings.TrimSpace(getEnv("BUSINESS_AI_MODEL", "")),
 		BusinessAIMaxTokens:               getEnvInt("BUSINESS_AI_MAX_TOKENS", 1800),

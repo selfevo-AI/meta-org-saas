@@ -11,6 +11,7 @@ import (
 
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/assistant"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/auditretention"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/businessai"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/businessaibridge"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
@@ -67,6 +68,17 @@ func main() {
 	if err := database.RunMigrations(context.Background(), db, cfg.MigrationsPath); err != nil {
 		log.Fatalf("migrations failed: %v", err)
 	}
+	retentionWorker := auditretention.NewWorker(
+		auditretention.NewRepository(db),
+		auditretention.WorkerConfig{
+			Enabled:       cfg.AuditRetentionWorkerEnabled,
+			RetentionDays: cfg.AuditRetentionDays,
+			PollInterval:  time.Duration(cfg.AuditRetentionPollSeconds) * time.Second,
+			BatchSize:     cfg.AuditRetentionBatchSize,
+			MaxBatches:    cfg.AuditRetentionMaxBatches,
+		},
+	)
+	retentionWorker.Start(appCtx)
 	clientIPResolver, err := middleware.NewClientIPResolver(cfg.TrustedProxyCIDRs)
 	if err != nil {
 		log.Fatalf("trusted proxy configuration invalid: %v", err)
@@ -423,6 +435,7 @@ func main() {
 		TenantPoolStatsProvider:              tenantBusinessDB,
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,
+		AuditRetentionStatsProvider:          retentionWorker,
 		PublicInvitationRateLimit:            publicInvitationRateLimit,
 		AuthenticatedSensitiveLimit:          sensitiveOperationRateLimit,
 		AIGatewayCompatibleRateLimit:         aiGatewayCompatibleRateLimit,

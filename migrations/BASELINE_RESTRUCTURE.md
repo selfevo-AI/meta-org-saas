@@ -26,6 +26,7 @@ This directory now uses staged baseline migrations instead of the historical
 21. `021_project_requirement_business_key_link.sql`
 22. `022_business_ai_stage_tool_contract.sql`
 23. `023_security_kernel_replay_ledger.sql`
+24. `024_ai_audit_retention.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -460,6 +461,24 @@ fingerprint index used to suppress duplicate unacknowledged findings. The agent
 may write signals and pending context proposals, but it must not apply database changes,
 activate context rules, bypass tool approvals, or execute repository code
 changes.
+
+## AI Audit Retention
+
+`004_ai_capability_baseline.sql` owns the governed AI audit-retention schema.
+`024_ai_audit_retention.sql` repairs databases that already applied the earlier
+AI baseline. Retention must preserve `ai_usage_ledger`, tool approval status,
+tool execution identity, business-run identity, token/cost totals, request
+hashes, actor attribution, and timestamps. These records are financial,
+governance, or tamper-evidence anchors and must not be bulk deleted.
+
+The retention worker may redact only payload-bearing fields on terminal records
+older than the configured cutoff: invocation metadata and provider errors,
+business analysis context/results, tool arguments/results, assistant working
+memory, messages, and step data. Every affected row receives
+`retention_redacted_at`. Processing uses bounded batches with `SKIP LOCKED` so
+multiple service instances can cooperate without blocking normal traffic. Each
+run writes counts, cutoff, status, and failures to
+`platform.audit_retention_runs`; silent cleanup is not permitted.
 
 ## Foreign-Key Rule
 

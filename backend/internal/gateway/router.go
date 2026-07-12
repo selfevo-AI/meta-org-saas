@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/assistant"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/auditretention"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
@@ -80,6 +81,9 @@ type Dependencies struct {
 	AuthenticationRateLimitStatsProvider interface {
 		Stats() authlimit.Stats
 	}
+	AuditRetentionStatsProvider interface {
+		Stats() auditretention.WorkerStats
+	}
 	PublicInvitationRateLimit    func(http.Handler) http.Handler
 	AuthenticatedSensitiveLimit  func(http.Handler) http.Handler
 	AIGatewayCompatibleRateLimit func(http.Handler) http.Handler
@@ -97,6 +101,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			deps.TenantPoolStatsProvider,
 			deps.TenantProjectionStatsProvider,
 			deps.AuthenticationRateLimitStatsProvider,
+			deps.AuditRetentionStatsProvider,
 		))
 		if deps.IdentityHandler != nil {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
@@ -266,6 +271,7 @@ type healthResponse struct {
 	TenantProjectionWorker   *tenantprojection.WorkerStats `json:"tenant_projection_worker,omitempty"`
 	RequestRateLimits        *authlimit.Stats              `json:"request_rate_limits,omitempty"`
 	AuthenticationRateLimits *authlimit.Stats              `json:"authentication_rate_limits,omitempty"`
+	AuditRetentionWorker     *auditretention.WorkerStats   `json:"audit_retention_worker,omitempty"`
 }
 
 func healthCheck(poolProvider interface {
@@ -274,6 +280,8 @@ func healthCheck(poolProvider interface {
 	Stats() tenantprojection.WorkerStats
 }, authLimitProvider interface {
 	Stats() authlimit.Stats
+}, retentionProvider interface {
+	Stats() auditretention.WorkerStats
 }) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		response := healthResponse{Status: "ok"}
@@ -289,6 +297,10 @@ func healthCheck(poolProvider interface {
 			stats := authLimitProvider.Stats()
 			response.RequestRateLimits = &stats
 			response.AuthenticationRateLimits = &stats
+		}
+		if retentionProvider != nil {
+			stats := retentionProvider.Stats()
+			response.AuditRetentionWorker = &stats
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(response); err != nil {

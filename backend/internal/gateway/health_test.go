@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/auditretention"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/authlimit"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
@@ -29,6 +30,14 @@ func (p fakeTenantProjectionStatsProvider) Stats() tenantprojection.WorkerStats 
 
 type fakeAuthenticationRateLimitStatsProvider struct {
 	stats authlimit.Stats
+}
+
+type fakeAuditRetentionStatsProvider struct {
+	stats auditretention.WorkerStats
+}
+
+func (p fakeAuditRetentionStatsProvider) Stats() auditretention.WorkerStats {
+	return p.stats
 }
 
 func (p fakeAuthenticationRateLimitStatsProvider) Stats() authlimit.Stats {
@@ -55,7 +64,10 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 		RateLimitedTotal: 2,
 		BlocksApplied:    1,
 	}}
-	healthCheck(provider, projectionProvider, authLimitProvider).ServeHTTP(recorder, request)
+	retentionProvider := fakeAuditRetentionStatsProvider{stats: auditretention.WorkerStats{
+		Running: true, RunsTotal: 3, RowsRedactedTotal: 42,
+	}}
+	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -93,5 +105,8 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	}
 	if response.AuthenticationRateLimits.ChecksTotal != 9 || response.AuthenticationRateLimits.RateLimitedTotal != 2 || response.AuthenticationRateLimits.BlocksApplied != 1 {
 		t.Fatalf("authentication rate limit stats = %#v", response.AuthenticationRateLimits)
+	}
+	if response.AuditRetentionWorker == nil || !response.AuditRetentionWorker.Running || response.AuditRetentionWorker.RunsTotal != 3 || response.AuditRetentionWorker.RowsRedactedTotal != 42 {
+		t.Fatalf("audit retention worker stats = %#v", response.AuditRetentionWorker)
 	}
 }

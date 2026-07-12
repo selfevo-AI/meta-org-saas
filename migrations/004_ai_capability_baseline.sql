@@ -112,7 +112,8 @@ CREATE TABLE IF NOT EXISTS ai_invocations (
     error_message TEXT NOT NULL DEFAULT '',
     metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    retention_redacted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS ai_usage_ledger (
@@ -169,7 +170,8 @@ CREATE TABLE IF NOT EXISTS business_stage_ai_runs (
     proposal_submitted_at TIMESTAMPTZ,
     proposal_completed_at TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at      TIMESTAMPTZ
+    completed_at      TIMESTAMPTZ,
+    retention_redacted_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_business_stage_ai_runs_project
@@ -231,7 +233,8 @@ CREATE TABLE IF NOT EXISTS tool_executions (
     error_message TEXT NOT NULL DEFAULT '',
     duration_ms INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMPTZ
+    completed_at TIMESTAMPTZ,
+    retention_redacted_at TIMESTAMPTZ
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tool_execution_idempotency
@@ -558,7 +561,8 @@ CREATE TABLE IF NOT EXISTS assistant_sessions (
     metadata JSONB NOT NULL DEFAULT '{}',
     last_error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    retention_redacted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS assistant_messages (
@@ -569,7 +573,8 @@ CREATE TABLE IF NOT EXISTS assistant_messages (
     tool_call_id TEXT NOT NULL DEFAULT '',
     tool_name TEXT NOT NULL DEFAULT '',
     metadata JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    retention_redacted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS assistant_steps (
@@ -588,7 +593,8 @@ CREATE TABLE IF NOT EXISTS assistant_steps (
     summary TEXT NOT NULL DEFAULT '',
     data JSONB NOT NULL DEFAULT '{}',
     turn INT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    retention_redacted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS assistant_memories (
@@ -628,6 +634,34 @@ CREATE INDEX IF NOT EXISTS idx_assistant_memories_scope
     ON assistant_memories(module_key, organization_id, department_id, position_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_assistant_memories_actor
     ON assistant_memories(actor_id, actor_type, module_key, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ai_invocations_retention
+    ON ai_invocations(created_at) WHERE retention_redacted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_business_stage_ai_runs_retention
+    ON business_stage_ai_runs(created_at) WHERE retention_redacted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_tool_executions_retention
+    ON tool_executions(created_at) WHERE retention_redacted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_assistant_sessions_retention
+    ON assistant_sessions(updated_at) WHERE retention_redacted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_assistant_messages_retention
+    ON assistant_messages(created_at) WHERE retention_redacted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_assistant_steps_retention
+    ON assistant_steps(created_at) WHERE retention_redacted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS platform.audit_retention_runs (
+    id              BIGSERIAL PRIMARY KEY,
+    started_at      TIMESTAMPTZ NOT NULL,
+    completed_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    cutoff_at       TIMESTAMPTZ NOT NULL,
+    retention_days  INT NOT NULL CHECK (retention_days > 0),
+    batch_size      INT NOT NULL CHECK (batch_size > 0),
+    status          TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+    redaction_counts JSONB NOT NULL DEFAULT '{}',
+    error_message   TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_retention_runs_completed
+    ON platform.audit_retention_runs(completed_at DESC);
 
 INSERT INTO tool_definitions (name, description, source_type, default_policy, risk_level, required_level, input_schema)
 VALUES
