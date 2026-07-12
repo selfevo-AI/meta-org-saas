@@ -18,7 +18,7 @@ const sources = {
   stream: read('src/lib/stream.ts'),
   assistant: read('src/app/ai-assistant.tsx'),
   systemAdmin: read('src/app/system-admin-workspace.tsx'),
-  i18n: read('src/lib/i18n.tsx'),
+  i18n: `${read('src/lib/i18n.tsx')}\n${read('src/lib/i18n.en.ts')}`,
   docs: read('../docs/operations/unified-workbench-governance.md'),
 }
 

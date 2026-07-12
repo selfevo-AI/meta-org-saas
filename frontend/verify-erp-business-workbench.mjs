@@ -7,6 +7,7 @@ const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
 const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
+const englishI18nSource = readFileSync(`${frontendRoot}src/lib/i18n.en.ts`, 'utf8')
 const packageSource = readFileSync(`${frontendRoot}package.json`, 'utf8')
 
 const requiredWorkspaceSnippets = [
@@ -71,12 +72,13 @@ const requiredI18nKeys = [
 ]
 
 function dictionarySlice(name, nextName) {
-  const start = i18nSource.indexOf(`const ${name}: Record<string, string> = {`)
-  const end = i18nSource.indexOf(nextName, start)
+  const source = name === 'en' ? englishI18nSource : i18nSource
+  const start = source.indexOf(`const ${name}:`)
+  const end = source.indexOf(nextName, start)
   if (start === -1 || end === -1) {
     throw new Error(`Could not locate ${name} dictionary`)
   }
-  return i18nSource.slice(start, end)
+  return source.slice(start, end)
 }
 
 function hasDictionaryKey(dictionary, key) {
@@ -84,8 +86,8 @@ function hasDictionaryKey(dictionary, key) {
   return new RegExp(`(?:'${quoted}'|${quoted})\\s*:`).test(dictionary)
 }
 
-const enDictionary = dictionarySlice('en', 'const zh')
-const zhDictionary = dictionarySlice('zh', 'const dictionaries')
+const enDictionary = dictionarySlice('en', 'export default en')
+const zhDictionary = dictionarySlice('zh', 'let englishDictionaryPromise')
 const failures = []
 
 const missingWorkspaceSnippets = requiredWorkspaceSnippets.filter((snippet) => !workspaceSource.includes(snippet))

@@ -44,11 +44,11 @@ const sizes = initialChunks.map((chunk) => ({
 const totalBytes = sizes.reduce((total, item) => total + item.bytes, 0)
 const largestBytes = Math.max(...sizes.map((item) => item.bytes))
 
-if (totalBytes > 600_000) {
-  throw new Error(`initial page JS is ${totalBytes} bytes, expected at most 600000`)
+if (totalBytes > 450_000) {
+  throw new Error(`initial page JS is ${totalBytes} bytes, expected at most 450000`)
 }
-if (largestBytes > 250_000) {
-  throw new Error(`largest initial page chunk is ${largestBytes} bytes, expected at most 250000`)
+if (largestBytes > 150_000) {
+  throw new Error(`largest initial page chunk is ${largestBytes} bytes, expected at most 150000`)
 }
 
 console.log(`Verified ${dynamicModules.length} lazy workspace modules; initial page JS ${totalBytes} bytes, largest chunk ${largestBytes} bytes.`)

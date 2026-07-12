@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
+const englishI18nSource = readFileSync(`${frontendRoot}src/lib/i18n.en.ts`, 'utf8')
 
 const requiredRoutes = [
   ['POST', '/inventory/partners'],
@@ -72,16 +73,17 @@ const supplyChainOperations = operations.filter((operation) =>
 const untranslatedSupplyChainTitles = supplyChainOperations.filter((operation) => !operation.title.startsWith('operation.'))
 
 function dictionarySlice(name, nextName) {
-  const start = i18nSource.indexOf(`const ${name}: Record<string, string> = {`)
-  const end = i18nSource.indexOf(nextName, start)
+  const source = name === 'en' ? englishI18nSource : i18nSource
+  const start = source.indexOf(`const ${name}:`)
+  const end = source.indexOf(nextName, start)
   if (start === -1 || end === -1) {
     throw new Error(`Could not locate ${name} dictionary`)
   }
-  return i18nSource.slice(start, end)
+  return source.slice(start, end)
 }
 
-const enDictionary = dictionarySlice('en', 'const zh')
-const zhDictionary = dictionarySlice('zh', 'const dictionaries')
+const enDictionary = dictionarySlice('en', 'export default en')
+const zhDictionary = dictionarySlice('zh', 'let englishDictionaryPromise')
 const operationKeys = Array.from(
   new Set([...operationsSource.matchAll(/(?:title|label):\s*'(operation\.[^']+)'/g)].map((match) => match[1])),
 )

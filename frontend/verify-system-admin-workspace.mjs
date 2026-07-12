@@ -8,6 +8,7 @@ const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
 const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 'utf8')
 const apiWorkbenchSource = readFileSync(`${frontendRoot}src/app/api-workbench.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
+const englishI18nSource = readFileSync(`${frontendRoot}src/lib/i18n.en.ts`, 'utf8')
 const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
 const workspacePath = `${frontendRoot}src/app/system-admin-workspace.tsx`
 const workspaceSource = existsSync(workspacePath) ? readFileSync(workspacePath, 'utf8') : ''
@@ -317,12 +318,13 @@ const forbiddenApiSnippets = [
 ]
 
 function dictionarySlice(name, nextName) {
-  const start = i18nSource.indexOf(`const ${name}: Record<string, string> = {`)
-  const end = i18nSource.indexOf(nextName, start)
+  const source = name === 'en' ? englishI18nSource : i18nSource
+  const start = source.indexOf(`const ${name}:`)
+  const end = source.indexOf(nextName, start)
   if (start === -1 || end === -1) {
     throw new Error(`Could not locate ${name} dictionary`)
   }
-  return i18nSource.slice(start, end)
+  return source.slice(start, end)
 }
 
 function hasDictionaryKey(dictionary, key) {
@@ -330,8 +332,8 @@ function hasDictionaryKey(dictionary, key) {
   return new RegExp(`(?:'${quoted}'|${quoted})\\s*:`).test(dictionary)
 }
 
-const enDictionary = dictionarySlice('en', 'const zh')
-const zhDictionary = dictionarySlice('zh', 'const dictionaries')
+const enDictionary = dictionarySlice('en', 'export default en')
+const zhDictionary = dictionarySlice('zh', 'let englishDictionaryPromise')
 
 const failures = []
 
@@ -408,7 +410,8 @@ if (!platformDomainsMatch) {
   failures.push('API Workbench platform domain menu must not include DeveloperTools; AI model/API access belongs in the dedicated platform settings workspace.')
 }
 
-const missingI18nValueSnippets = requiredI18nValueSnippets.filter((snippet) => !i18nSource.includes(snippet))
+const combinedI18nSource = `${i18nSource}\n${englishI18nSource}`
+const missingI18nValueSnippets = requiredI18nValueSnippets.filter((snippet) => !combinedI18nSource.includes(snippet))
 if (missingI18nValueSnippets.length > 0) {
   failures.push(`Missing exact AI model/API access labels:\n${missingI18nValueSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
