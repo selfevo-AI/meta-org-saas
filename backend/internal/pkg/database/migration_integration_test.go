@@ -111,6 +111,23 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 	if proposalColumns != 4 {
 		t.Fatalf("business AI proposal columns = %d, want 4", proposalColumns)
 	}
+	var effectiveStageTools int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tool_definitions
+		WHERE name IN ('project.update_status', 'project.create_deliverable', 'project.accept_deliverable', 'project.close_feedback')
+		  AND is_active
+		  AND default_policy = 'approve'
+		  AND tool_category = 'business_approval'
+		  AND approval_tier_required = 'reviewer'
+		  AND metadata ? 'label_zh'
+		  AND metadata ? 'label_en'
+		  AND metadata ? 'business_ai_stages'
+	`).Scan(&effectiveStageTools); err != nil {
+		t.Fatalf("check effective business AI stage tools: %v", err)
+	}
+	if effectiveStageTools != 4 {
+		t.Fatalf("effective business AI stage tools = %d, want 4", effectiveStageTools)
+	}
 
 	var notValid int
 	if err := targetPool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE NOT convalidated`).Scan(&notValid); err != nil {

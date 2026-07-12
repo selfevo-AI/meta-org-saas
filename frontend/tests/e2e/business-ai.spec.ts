@@ -31,7 +31,7 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
   expect(run.status).toBe('completed')
   await expect(workbench.getByText(run.analysis.summary)).toBeVisible({ timeout: 30_000 })
   await expect(workbench.getByText(new RegExp(run.invocation_id))).toBeVisible()
-  await expect(workbench.getByText(/project\.estimate_cost/)).toBeVisible()
+  await expect(workbench.getByText(/project\.(create_deliverable|create_cost_entry|estimate_cost|update_status)/)).toBeVisible()
   const proposalResponse = page.waitForResponse((candidate) => (
     candidate.request().method() === 'POST' && candidate.url().endsWith('/submit-proposal')
   ))

@@ -270,6 +270,10 @@ VALUES
     ('project.bind_workflow', 'Bind workflow to project', 'internal_api', 'approve', 'high', 'L3'),
     ('project.estimate_cost', 'Estimate project cost', 'internal_api', 'notify', 'medium', 'L2'),
     ('project.create_cost_entry', 'Create project cost entry', 'internal_api', 'approve', 'high', 'L3'),
+    ('project.update_status', 'Update project lifecycle status', 'internal_api', 'approve', 'high', 'L3'),
+    ('project.create_deliverable', 'Create a project deliverable', 'internal_api', 'approve', 'high', 'L3'),
+    ('project.accept_deliverable', 'Accept a submitted project deliverable', 'internal_api', 'approve', 'high', 'L3'),
+    ('project.close_feedback', 'Close the project feedback loop', 'internal_api', 'approve', 'high', 'L3'),
     ('governance.explain_decision', 'Explain governance decision', 'internal_api', 'notify', 'low', 'L1'),
     ('finance.prepare_export_batch', 'Prepare finance export batch', 'manual_approval', 'approve', 'high', 'L3')
 ON CONFLICT (name) DO NOTHING;
@@ -1715,7 +1719,42 @@ WHERE name LIKE '%.approve%'
    OR name LIKE 'workflow.%'
    OR name LIKE 'stage.%'
    OR name LIKE 'finance.%'
-   OR name IN ('project.bind_workflow', 'project.create_cost_entry', 'evolution.propose_experiment');
+   OR name IN ('project.bind_workflow', 'project.create_cost_entry', 'project.update_status',
+               'project.create_deliverable', 'project.accept_deliverable', 'project.close_feedback',
+               'evolution.propose_experiment');
+
+UPDATE tool_definitions
+SET metadata = metadata || CASE name
+        WHEN 'project.update_status' THEN '{"label_zh":"更新项目生命周期状态","label_en":"Update project lifecycle status","description_zh":"更新项目生命周期状态","description_en":"Update project lifecycle status"}'::JSONB
+        WHEN 'project.create_deliverable' THEN '{"label_zh":"创建项目交付物","label_en":"Create a project deliverable","description_zh":"创建项目交付物","description_en":"Create a project deliverable"}'::JSONB
+        WHEN 'project.accept_deliverable' THEN '{"label_zh":"验收已提交的项目交付物","label_en":"Accept a submitted project deliverable","description_zh":"验收已提交的项目交付物","description_en":"Accept a submitted project deliverable"}'::JSONB
+        WHEN 'project.close_feedback' THEN '{"label_zh":"关闭项目反馈闭环","label_en":"Close the project feedback loop","description_zh":"关闭项目反馈闭环","description_en":"Close the project feedback loop"}'::JSONB
+        ELSE '{}'::JSONB
+    END,
+    updated_at = NOW()
+WHERE name IN ('project.update_status', 'project.create_deliverable', 'project.accept_deliverable', 'project.close_feedback');
+
+UPDATE tool_definitions
+SET metadata = metadata || CASE name
+        WHEN 'project.match_members' THEN '{"business_ai_stages":["plan","change"]}'::JSONB
+        WHEN 'project.bind_workflow' THEN '{"business_ai_stages":["plan","change"]}'::JSONB
+        WHEN 'project.estimate_cost' THEN '{"business_ai_stages":["plan","do","accept"]}'::JSONB
+        WHEN 'project.create_cost_entry' THEN '{"business_ai_stages":["do"]}'::JSONB
+        WHEN 'project.update_status' THEN '{"business_ai_stages":["do","change"]}'::JSONB
+        WHEN 'project.create_deliverable' THEN '{"business_ai_stages":["do"]}'::JSONB
+        WHEN 'project.accept_deliverable' THEN '{"business_ai_stages":["accept"]}'::JSONB
+        WHEN 'project.close_feedback' THEN '{"business_ai_stages":["accept"]}'::JSONB
+        WHEN 'evolution.create_knowledge' THEN '{"business_ai_stages":["learn"]}'::JSONB
+        WHEN 'evolution.create_signal' THEN '{"business_ai_stages":["learn"]}'::JSONB
+        WHEN 'evolution.propose_experiment' THEN '{"business_ai_stages":["learn"]}'::JSONB
+        ELSE '{}'::JSONB
+    END,
+    updated_at = NOW()
+WHERE name IN (
+    'project.match_members', 'project.bind_workflow', 'project.estimate_cost', 'project.create_cost_entry',
+    'project.update_status', 'project.create_deliverable', 'project.accept_deliverable', 'project.close_feedback',
+    'evolution.create_knowledge', 'evolution.create_signal', 'evolution.propose_experiment'
+);
 
 UPDATE tool_definitions
 SET tool_category = 'execution_operation',

@@ -21,6 +21,10 @@ type ProjectService interface {
 	BindProjectWorkflow(context.Context, uuid.UUID, project.BindProjectWorkflowInput) (*project.ProjectWorkflow, error)
 	GetCostSummary(context.Context, uuid.UUID) (*project.CostSummary, error)
 	CreateCostEntry(context.Context, uuid.UUID, project.CreateCostEntryInput) (*project.CostEntry, error)
+	UpdateProjectStatus(context.Context, uuid.UUID, project.UpdateProjectStatusInput) (*project.Project, error)
+	CreateDeliverable(context.Context, uuid.UUID, project.CreateDeliverableInput) (*project.Deliverable, error)
+	AcceptDeliverable(context.Context, uuid.UUID, project.DeliverableActionInput) (*project.Deliverable, error)
+	CloseFeedback(context.Context, uuid.UUID, project.CloseFeedbackInput) (map[string]any, error)
 }
 
 type FinanceService interface {
@@ -84,12 +88,20 @@ func InternalToolsWithPlatform(projectSvc ProjectService, financeSvc FinanceServ
 		tools["project.bind_workflow"] = notConfiguredTool("project service is not configured")
 		tools["project.estimate_cost"] = notConfiguredTool("project service is not configured")
 		tools["project.create_cost_entry"] = notConfiguredTool("project service is not configured")
+		tools["project.update_status"] = notConfiguredTool("project service is not configured")
+		tools["project.create_deliverable"] = notConfiguredTool("project service is not configured")
+		tools["project.accept_deliverable"] = notConfiguredTool("project service is not configured")
+		tools["project.close_feedback"] = notConfiguredTool("project service is not configured")
 	} else {
 		tools["requirement.analyze"] = analyzeRequirementTool(projectSvc)
 		tools["project.match_members"] = matchMembersTool(projectSvc)
 		tools["project.bind_workflow"] = bindWorkflowTool(projectSvc)
 		tools["project.estimate_cost"] = estimateCostTool(projectSvc)
 		tools["project.create_cost_entry"] = createCostEntryTool(projectSvc)
+		tools["project.update_status"] = updateProjectStatusTool(projectSvc)
+		tools["project.create_deliverable"] = createDeliverableTool(projectSvc)
+		tools["project.accept_deliverable"] = acceptDeliverableTool(projectSvc)
+		tools["project.close_feedback"] = closeProjectFeedbackTool(projectSvc)
 	}
 	if platform.ERP == nil {
 		tools["erp.action.execute"] = notConfiguredTool("ERP action service is not configured")
@@ -130,6 +142,10 @@ func DefaultToolDefinitions() []CreateToolInput {
 		{Name: "project.bind_workflow", Description: "Bind workflow to project", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
 		{Name: "project.estimate_cost", Description: "Estimate project cost", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "project.create_cost_entry", Description: "Create project cost entry", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
+		{Name: "project.update_status", Description: "Update project lifecycle status", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer, Metadata: bilingualToolMetadata("更新项目生命周期状态", "Update project lifecycle status")},
+		{Name: "project.create_deliverable", Description: "Create a project deliverable", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer, Metadata: bilingualToolMetadata("创建项目交付物", "Create a project deliverable")},
+		{Name: "project.accept_deliverable", Description: "Accept a submitted project deliverable", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer, Metadata: bilingualToolMetadata("验收已提交的项目交付物", "Accept a submitted project deliverable")},
+		{Name: "project.close_feedback", Description: "Close the project feedback loop", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer, Metadata: bilingualToolMetadata("关闭项目反馈闭环", "Close the project feedback loop")},
 		{Name: "governance.explain_decision", Description: "Explain governance decision", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "low", RequiredLevel: "L1", ToolCategory: ToolCategoryCoreData, ApprovalTierRequired: ApprovalTierOrganizationCreator},
 		{Name: "finance.prepare_export_batch", Description: "Prepare finance export batch", SourceType: SourceManualApproval, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
 		{Name: "evolution.create_knowledge", Description: "Create evolution knowledge entry", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
@@ -140,6 +156,10 @@ func DefaultToolDefinitions() []CreateToolInput {
 		{Name: "runtime.operation.execute", Description: "Execute a platform runtime operation", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "context.proposal.apply", Description: "Apply an approved context change proposal", SourceType: SourceManualApproval, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
 	}
+}
+
+func bilingualToolMetadata(zh, en string) map[string]any {
+	return map[string]any{"label_zh": zh, "label_en": en, "description_zh": zh, "description_en": en}
 }
 
 func analyzeRequirementTool(projectSvc ProjectService) ToolAdapter {
@@ -239,6 +259,85 @@ func createCostEntryTool(projectSvc ProjectService) ToolAdapter {
 			return ToolResult{}, err
 		}
 		return ToolResult{Summary: "Project cost entry created", Data: map[string]any{"cost_entry": entry}}, nil
+	}
+}
+
+func updateProjectStatusTool(projectSvc ProjectService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		projectID, err := uuidArg(input.Arguments, "project_id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		result, err := projectSvc.UpdateProjectStatus(ctx, projectID, project.UpdateProjectStatusInput{
+			ActorInput: project.ActorInput{ActorID: &input.ActorID, ActorType: input.ActorType},
+			Status:     stringArg(input.Arguments, "status"),
+			Note:       stringArg(input.Arguments, "note"),
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Project status updated", Data: map[string]any{"project": result}}, nil
+	}
+}
+
+func createDeliverableTool(projectSvc ProjectService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		projectID, err := uuidArg(input.Arguments, "project_id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		result, err := projectSvc.CreateDeliverable(ctx, projectID, project.CreateDeliverableInput{
+			ActorInput:      project.ActorInput{ActorID: &input.ActorID, ActorType: input.ActorType},
+			Name:            stringArg(input.Arguments, "name"),
+			DeliverableType: stringArg(input.Arguments, "deliverable_type"),
+			URI:             stringArg(input.Arguments, "uri"),
+			Version:         stringArg(input.Arguments, "version"),
+			Status:          stringArg(input.Arguments, "status"),
+			Evidence:        mapArg(input.Arguments, "evidence"),
+			Metadata:        mapArg(input.Arguments, "metadata"),
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Project deliverable created", Data: map[string]any{"deliverable": result}}, nil
+	}
+}
+
+func acceptDeliverableTool(projectSvc ProjectService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		deliverableID, err := uuidArg(input.Arguments, "deliverable_id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		result, err := projectSvc.AcceptDeliverable(ctx, deliverableID, project.DeliverableActionInput{
+			ActorInput: project.ActorInput{ActorID: &input.ActorID, ActorType: input.ActorType},
+			Evidence:   mapArg(input.Arguments, "evidence"),
+			Metadata:   mapArg(input.Arguments, "metadata"),
+			Reason:     stringArg(input.Arguments, "reason"),
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Project deliverable accepted", Data: map[string]any{"deliverable": result}}, nil
+	}
+}
+
+func closeProjectFeedbackTool(projectSvc ProjectService) ToolAdapter {
+	return func(ctx context.Context, input ExecuteToolInput) (ToolResult, error) {
+		projectID, err := uuidArg(input.Arguments, "project_id")
+		if err != nil {
+			return ToolResult{}, err
+		}
+		result, err := projectSvc.CloseFeedback(ctx, projectID, project.CloseFeedbackInput{
+			ActorInput:   project.ActorInput{ActorID: &input.ActorID, ActorType: input.ActorType},
+			OutcomeScore: floatArg(input.Arguments, "outcome_score"),
+			Conclusion:   stringArg(input.Arguments, "conclusion"),
+			Metadata:     mapArg(input.Arguments, "metadata"),
+		})
+		if err != nil {
+			return ToolResult{}, err
+		}
+		return ToolResult{Summary: "Project feedback closed", Data: map[string]any{"feedback": result}}, nil
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ func TestAnalyzeSupportsEveryBusinessStage(t *testing.T) {
 	for _, stage := range stages {
 		t.Run(stage, func(t *testing.T) {
 			repo := &fakeRunRepository{}
-			invoker := &fakeAIInvoker{content: validAnalysisJSON(t)}
+			invoker := &fakeAIInvoker{content: validAnalysisJSON(t, stage)}
 			svc := NewService(repo, invoker, Config{ProviderType: "openai", Model: "test-model"})
 			orgID, projectID := uuid.New(), uuid.New()
 			run, err := svc.Analyze(context.Background(), AnalyzeInput{
@@ -59,7 +60,7 @@ func TestAnalyzeRejectsInvalidModelOutputAndPersistsFailure(t *testing.T) {
 }
 
 func TestParseAnalysisRejectsTrailingContent(t *testing.T) {
-	_, err := parseAnalysis(validAnalysisJSON(t) + " trailing")
+	_, err := parseAnalysis(validAnalysisJSON(t, StagePlan)+" trailing", StagePlan)
 	if !errors.Is(err, ErrInvalidOutput) {
 		t.Fatalf("parseAnalysis() error = %v, want ErrInvalidOutput", err)
 	}
@@ -80,9 +81,9 @@ func TestAttributionActorSeparatesHumanAndAgentForeignKeys(t *testing.T) {
 func TestSubmitProposalForcesApprovalAndAddsProjectContext(t *testing.T) {
 	projectID, orgID, runID := uuid.New(), uuid.New(), uuid.New()
 	repo := &fakeRunRepository{run: Run{
-		ID: runID, OrganizationID: orgID, ProjectID: projectID, Status: StatusCompleted,
+		ID: runID, OrganizationID: orgID, ProjectID: projectID, Stage: StagePlan, Status: StatusCompleted,
 		ProposalStatus: ProposalNotSubmitted,
-		Analysis:       &Analysis{Proposal: Proposal{ToolName: "project.estimate_cost", Arguments: map[string]any{"project_id": uuid.New().String()}}},
+		Analysis:       &Analysis{Proposal: Proposal{Action: "Estimate project cost", ToolName: "project.estimate_cost", Arguments: map[string]any{"project_id": uuid.New().String()}}},
 	}}
 	executor := &fakeProposalExecutor{}
 	svc := NewService(repo, nil, Config{})
@@ -104,14 +105,43 @@ func TestSubmitProposalForcesApprovalAndAddsProjectContext(t *testing.T) {
 	}
 }
 
-func validAnalysisJSON(t *testing.T) string {
+func TestParseAnalysisRejectsToolFromAnotherStage(t *testing.T) {
+	_, err := parseAnalysis(validAnalysisJSON(t, StageLearn), StagePlan)
+	if !errors.Is(err, ErrInvalidOutput) {
+		t.Fatalf("parseAnalysis() error = %v, want ErrInvalidOutput", err)
+	}
+}
+
+func TestStagePromptsPublishOnlyGovernedTools(t *testing.T) {
+	for stage, tools := range stageToolContracts {
+		prompt := stageSystemPrompt(stage)
+		for tool := range tools {
+			if !strings.Contains(prompt, tool) {
+				t.Fatalf("stage %s prompt missing %s", stage, tool)
+			}
+		}
+	}
+}
+
+func validAnalysisJSON(t *testing.T, stage string) string {
 	t.Helper()
+	proposal := Proposal{Action: "Estimate cost", ToolName: "project.estimate_cost", Arguments: map[string]any{}, RequiresApproval: false}
+	switch stage {
+	case StageDo:
+		proposal = Proposal{Action: "Create delivery evidence", ToolName: "project.create_deliverable", Arguments: map[string]any{"name": "Acceptance package"}}
+	case StageChange:
+		proposal = Proposal{Action: "Pause for replanning", ToolName: "project.update_status", Arguments: map[string]any{"status": "paused"}}
+	case StageAccept:
+		proposal = Proposal{Action: "Verify final cost", ToolName: "project.estimate_cost", Arguments: map[string]any{}}
+	case StageLearn:
+		proposal = Proposal{Action: "Capture project learning", ToolName: "evolution.create_knowledge", Arguments: map[string]any{"title": "Project learning", "content": "Verified outcome"}}
+	}
 	data, err := json.Marshal(Analysis{
 		Summary:         "Stage analysis",
 		Findings:        []Finding{{Title: "Budget", Evidence: "project.cost_summary", Impact: "medium"}},
 		Recommendations: []Recommendation{{Title: "Review", Rationale: "variance", Priority: "high"}},
 		Risks:           []Risk{{Title: "Delay", Probability: "medium", Impact: "delivery", Mitigation: "replan"}},
-		Proposal:        Proposal{Action: "Review plan", ToolName: "project.bind_workflow", Arguments: map[string]any{}, RequiresApproval: false},
+		Proposal:        proposal,
 		Confidence:      0.82, EvidenceRefs: []string{"project.cost_summary"},
 	})
 	if err != nil {

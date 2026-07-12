@@ -6,6 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	domainruntime "github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 )
@@ -131,11 +133,118 @@ func TestContextProposalApplyToolRequiresProposalService(t *testing.T) {
 	}
 }
 
+func TestProjectLifecycleToolsExecuteEffectiveActions(t *testing.T) {
+	projectID := uuid.New()
+	deliverableID := uuid.New()
+	service := &fakeProjectService{}
+	tools := InternalTools(service, nil, nil)
+	input := ExecuteToolInput{ActorID: uuid.New(), ActorType: "internal_human"}
+
+	input.Arguments = map[string]any{"project_id": projectID.String(), "status": "active", "note": "AI approved"}
+	if _, err := tools["project.update_status"](context.Background(), input); err != nil {
+		t.Fatalf("update status tool error = %v", err)
+	}
+	input.Arguments = map[string]any{"project_id": projectID.String(), "name": "Acceptance package", "status": "draft"}
+	if _, err := tools["project.create_deliverable"](context.Background(), input); err != nil {
+		t.Fatalf("create deliverable tool error = %v", err)
+	}
+	input.Arguments = map[string]any{"deliverable_id": deliverableID.String(), "reason": "Evidence verified"}
+	if _, err := tools["project.accept_deliverable"](context.Background(), input); err != nil {
+		t.Fatalf("accept deliverable tool error = %v", err)
+	}
+	input.Arguments = map[string]any{"project_id": projectID.String(), "outcome_score": 92, "conclusion": "Objectives achieved"}
+	if _, err := tools["project.close_feedback"](context.Background(), input); err != nil {
+		t.Fatalf("close feedback tool error = %v", err)
+	}
+
+	if service.statusProjectID != projectID || service.statusInput.Status != "active" {
+		t.Fatalf("status call = %s %#v", service.statusProjectID, service.statusInput)
+	}
+	if service.deliverableProjectID != projectID || service.deliverableInput.Name != "Acceptance package" {
+		t.Fatalf("deliverable call = %s %#v", service.deliverableProjectID, service.deliverableInput)
+	}
+	if service.acceptDeliverableID != deliverableID || service.acceptInput.Reason != "Evidence verified" {
+		t.Fatalf("accept call = %s %#v", service.acceptDeliverableID, service.acceptInput)
+	}
+	if service.feedbackProjectID != projectID || service.feedbackInput.Conclusion != "Objectives achieved" {
+		t.Fatalf("feedback call = %s %#v", service.feedbackProjectID, service.feedbackInput)
+	}
+}
+
+func TestNewProjectToolDefinitionsCarryBilingualMetadata(t *testing.T) {
+	wanted := map[string]bool{
+		"project.update_status": false, "project.create_deliverable": false,
+		"project.accept_deliverable": false, "project.close_feedback": false,
+	}
+	for _, definition := range DefaultToolDefinitions() {
+		if _, ok := wanted[definition.Name]; !ok {
+			continue
+		}
+		wanted[definition.Name] = definition.Metadata["label_zh"] != "" && definition.Metadata["label_en"] != ""
+	}
+	for name, valid := range wanted {
+		if !valid {
+			t.Fatalf("tool %s missing bilingual metadata", name)
+		}
+	}
+}
+
 type fakeERPActionService struct {
 	tableCode string
 	key       string
 	action    string
 	input     erp.ActionInput
+}
+
+type fakeProjectService struct {
+	statusProjectID      uuid.UUID
+	statusInput          project.UpdateProjectStatusInput
+	deliverableProjectID uuid.UUID
+	deliverableInput     project.CreateDeliverableInput
+	acceptDeliverableID  uuid.UUID
+	acceptInput          project.DeliverableActionInput
+	feedbackProjectID    uuid.UUID
+	feedbackInput        project.CloseFeedbackInput
+}
+
+func (f *fakeProjectService) AnalyzeRequirement(context.Context, uuid.UUID, project.AnalyzeRequirementInput) (*project.Requirement, error) {
+	return &project.Requirement{}, nil
+}
+
+func (f *fakeProjectService) MatchProjectActors(context.Context, uuid.UUID, project.MatchProjectActorsInput) ([]organization.MemberMatchCandidate, error) {
+	return []organization.MemberMatchCandidate{}, nil
+}
+
+func (f *fakeProjectService) BindProjectWorkflow(context.Context, uuid.UUID, project.BindProjectWorkflowInput) (*project.ProjectWorkflow, error) {
+	return &project.ProjectWorkflow{}, nil
+}
+
+func (f *fakeProjectService) GetCostSummary(context.Context, uuid.UUID) (*project.CostSummary, error) {
+	return &project.CostSummary{}, nil
+}
+
+func (f *fakeProjectService) CreateCostEntry(context.Context, uuid.UUID, project.CreateCostEntryInput) (*project.CostEntry, error) {
+	return &project.CostEntry{}, nil
+}
+
+func (f *fakeProjectService) UpdateProjectStatus(_ context.Context, id uuid.UUID, input project.UpdateProjectStatusInput) (*project.Project, error) {
+	f.statusProjectID, f.statusInput = id, input
+	return &project.Project{ID: id, Status: input.Status}, nil
+}
+
+func (f *fakeProjectService) CreateDeliverable(_ context.Context, id uuid.UUID, input project.CreateDeliverableInput) (*project.Deliverable, error) {
+	f.deliverableProjectID, f.deliverableInput = id, input
+	return &project.Deliverable{ID: uuid.New(), ProjectID: id, Name: input.Name}, nil
+}
+
+func (f *fakeProjectService) AcceptDeliverable(_ context.Context, id uuid.UUID, input project.DeliverableActionInput) (*project.Deliverable, error) {
+	f.acceptDeliverableID, f.acceptInput = id, input
+	return &project.Deliverable{ID: id, Status: "accepted"}, nil
+}
+
+func (f *fakeProjectService) CloseFeedback(_ context.Context, id uuid.UUID, input project.CloseFeedbackInput) (map[string]any, error) {
+	f.feedbackProjectID, f.feedbackInput = id, input
+	return map[string]any{"status": "closed"}, nil
 }
 
 func (f *fakeERPActionService) RunAction(_ context.Context, tableCode string, key string, action string, input erp.ActionInput) (*erp.ActionResult, error) {

@@ -245,6 +245,15 @@ tenant repair `006_project_requirement_business_key_link.sql` ensure a project
 created from `REQ-xxxx` receives the authoritative requirement UUID in
 `projects.requirement_id`.
 
+Business-stage AI uses an explicit stage-to-tool contract. Plan may match
+members, bind workflow, or estimate cost; Do may create deliverables or cost
+entries, monitor cost, and advance status; Change may replan status, workflow, or members;
+Accept may accept deliverables, close feedback, or verify cost; Learn may create
+knowledge, signals, or experiments. All executable proposals require Tool
+Runtime approval. These project tools and bilingual metadata belong in
+`004_ai_capability_baseline.sql`; repair migration
+`022_business_ai_stage_tool_contract.sql` aligns existing platform databases.
+
 Supply-chain domain ownership is now code-table-only for fresh tenant
 databases:
 

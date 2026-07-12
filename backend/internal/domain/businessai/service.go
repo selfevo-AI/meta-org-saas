@@ -113,7 +113,7 @@ func (s *Service) Analyze(ctx context.Context, input AnalyzeInput) (*Run, error)
 		_ = s.repo.FailRun(ctx, run.ID, err.Error())
 		return nil, err
 	}
-	analysis, err := parseAnalysis(output.Content)
+	analysis, err := parseAnalysis(output.Content, input.Stage)
 	if err != nil {
 		_ = s.repo.FailRun(ctx, run.ID, err.Error())
 		return nil, err
@@ -143,6 +143,9 @@ func (s *Service) SubmitProposal(ctx context.Context, input SubmitProposalInput)
 	toolName := strings.TrimSpace(run.Analysis.Proposal.ToolName)
 	if toolName == "" {
 		return nil, fmt.Errorf("%w: AI analysis did not propose an executable tool", ErrValidation)
+	}
+	if err := validateStageProposal(run.Stage, run.Analysis.Proposal); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
 	}
 	if s.proposalExecutor == nil {
 		return nil, fmt.Errorf("%w: proposal executor is not configured", ErrNotConfigured)
@@ -181,7 +184,7 @@ func copyArguments(input map[string]any) map[string]any {
 	return result
 }
 
-func parseAnalysis(content string) (Analysis, error) {
+func parseAnalysis(content string, stage string) (Analysis, error) {
 	content = strings.TrimSpace(content)
 	if strings.HasPrefix(content, "```") {
 		content = strings.TrimPrefix(content, "```json")
@@ -210,11 +213,123 @@ func parseAnalysis(content string) (Analysis, error) {
 	if strings.TrimSpace(analysis.Proposal.ToolName) != "" {
 		analysis.Proposal.RequiresApproval = true
 	}
+	if err := validateStageProposal(stage, analysis.Proposal); err != nil {
+		return Analysis{}, fmt.Errorf("%w: %v", ErrInvalidOutput, err)
+	}
 	return analysis, nil
 }
 
 func stageSystemPrompt(stage string) string {
-	return `You are the business-stage decision analyst for an ERP project. Analyze only the supplied verified context for stage "` + stage + `". Never invent facts. Return exactly one JSON object with this schema and no markdown: {"summary":"string","findings":[{"title":"string","evidence":"string","impact":"string"}],"recommendations":[{"title":"string","rationale":"string","priority":"high|medium|low"}],"risks":[{"title":"string","probability":"high|medium|low","impact":"string","mitigation":"string"}],"proposal":{"action":"string","tool_name":"string","arguments":{},"requires_approval":true},"confidence":0.0,"evidence_refs":["JSON path in supplied context"]}. The proposal is advisory only. Set requires_approval=true for any write, approval, financial, workflow, inventory, procurement, sales, or configuration action. Use an empty tool_name when no executable action is justified.`
+	return `You are the business-stage decision analyst for an ERP project. Analyze only the supplied verified context for stage "` + stage + `". Never invent facts. Return exactly one JSON object with this schema and no markdown: {"summary":"string","findings":[{"title":"string","evidence":"string","impact":"string"}],"recommendations":[{"title":"string","rationale":"string","priority":"high|medium|low"}],"risks":[{"title":"string","probability":"high|medium|low","impact":"string","mitigation":"string"}],"proposal":{"action":"string","tool_name":"string","arguments":{},"requires_approval":true},"confidence":0.0,"evidence_refs":["JSON path in supplied context"]}. The proposal is advisory only and every executable proposal requires approval. Use an empty tool_name when no executable action is justified. Allowed tools and required arguments for this stage: ` + stageToolPrompt(stage)
+}
+
+var stageToolContracts = map[string]map[string][]string{
+	StagePlan: {
+		"project.match_members": {"task_description"},
+		"project.bind_workflow": {"workflow_reference"},
+		"project.estimate_cost": {},
+	},
+	StageDo: {
+		"project.create_deliverable": {"name"},
+		"project.create_cost_entry":  {"amount"},
+		"project.estimate_cost":      {},
+		"project.update_status":      {"status"},
+	},
+	StageChange: {
+		"project.update_status": {"status"},
+		"project.bind_workflow": {"workflow_reference"},
+		"project.match_members": {"task_description"},
+	},
+	StageAccept: {
+		"project.accept_deliverable": {"deliverable_id"},
+		"project.close_feedback":     {"conclusion"},
+		"project.estimate_cost":      {},
+	},
+	StageLearn: {
+		"evolution.create_knowledge":   {"title", "content"},
+		"evolution.create_signal":      {"signal_type"},
+		"evolution.propose_experiment": {"name", "hypothesis"},
+	},
+}
+
+func validateStageProposal(stage string, proposal Proposal) error {
+	toolName := strings.TrimSpace(proposal.ToolName)
+	if toolName == "" {
+		return nil
+	}
+	contract, ok := stageToolContracts[stage][toolName]
+	if !ok {
+		return fmt.Errorf("tool %q is not allowed for stage %q", toolName, stage)
+	}
+	if strings.TrimSpace(proposal.Action) == "" {
+		return fmt.Errorf("proposal action is required when tool_name is set")
+	}
+	for _, required := range contract {
+		if required == "workflow_reference" {
+			if argumentText(proposal.Arguments, "workflow_id") == "" && argumentText(proposal.Arguments, "workflow_template_id") == "" {
+				return fmt.Errorf("tool %q requires workflow_id or workflow_template_id", toolName)
+			}
+			continue
+		}
+		if required == "amount" {
+			if value, ok := proposal.Arguments[required]; !ok || numericArgument(value) <= 0 {
+				return fmt.Errorf("tool %q requires a positive amount", toolName)
+			}
+			continue
+		}
+		if argumentText(proposal.Arguments, required) == "" {
+			return fmt.Errorf("tool %q requires %s", toolName, required)
+		}
+	}
+	return nil
+}
+
+func argumentText(arguments map[string]any, key string) string {
+	if arguments == nil {
+		return ""
+	}
+	value, ok := arguments[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
+func numericArgument(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		parsed, _ := typed.Float64()
+		return parsed
+	default:
+		var parsed float64
+		_, _ = fmt.Sscan(fmt.Sprint(value), &parsed)
+		return parsed
+	}
+}
+
+func stageToolPrompt(stage string) string {
+	switch stage {
+	case StagePlan:
+		return `project.match_members(task_description, required_capabilities, required_level, risk_level, member_types); project.bind_workflow(workflow_id or workflow_template_id, purpose, status); project.estimate_cost().`
+	case StageDo:
+		return `project.create_deliverable(name, deliverable_type, uri, version, status, evidence, metadata); project.create_cost_entry(amount, source_type, currency, description, metadata); project.estimate_cost(); project.update_status(status, note).`
+	case StageChange:
+		return `project.update_status(status, note); project.bind_workflow(workflow_id or workflow_template_id, purpose, status); project.match_members(task_description, required_capabilities, required_level, risk_level, member_types).`
+	case StageAccept:
+		return `project.accept_deliverable(deliverable_id, evidence, metadata, reason); project.close_feedback(conclusion, outcome_score, metadata); project.estimate_cost().`
+	case StageLearn:
+		return `evolution.create_knowledge(title, content, workflow_id, tags); evolution.create_signal(signal_type, source, priority, data); evolution.propose_experiment(name, hypothesis, success_criteria).`
+	default:
+		return `no executable tools.`
+	}
 }
 
 func firstNonEmpty(values ...string) string {
