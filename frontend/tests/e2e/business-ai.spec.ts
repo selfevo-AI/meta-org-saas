@@ -19,19 +19,28 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
 
   const workbench = page.getByTestId('business-ai-workbench')
   await expect(workbench).toBeVisible()
-  await workbench.getByTestId('business-ai-stage-do').click()
-  const responsePromise = page.waitForResponse((response) => (
-    response.request().method() === 'POST' && response.url().includes('/projects/') && response.url().endsWith('/ai-analyses')
-  ))
-  await workbench.getByTestId('business-ai-analyze').click()
-  const response = await responsePromise
-  expect(response.status()).toBe(201)
-  const run = await response.json() as { stage: string; status: string; invocation_id: string; analysis: { summary: string } }
-  expect(run.stage).toBe('do')
-  expect(run.status).toBe('completed')
-  await expect(workbench.getByText(run.analysis.summary)).toBeVisible({ timeout: 30_000 })
-  await expect(workbench.getByText(new RegExp(run.invocation_id))).toBeVisible()
-  await expect(workbench.getByText(/project\.(create_deliverable|create_cost_entry|estimate_cost|update_status)/)).toBeVisible()
+  const stages = [
+    ['plan', /project\.(match_members|bind_workflow|estimate_cost)/],
+    ['change', /project\.(update_status|bind_workflow|match_members)/],
+    ['accept', /project\.(accept_deliverable|close_feedback|estimate_cost)/],
+    ['learn', /evolution\.(create_knowledge|create_signal|propose_experiment)/],
+    ['do', /project\.(create_deliverable|create_cost_entry|estimate_cost|update_status)/],
+  ] as const
+  for (const [stage, allowedTool] of stages) {
+    await workbench.getByTestId(`business-ai-stage-${stage}`).click()
+    const responsePromise = page.waitForResponse((response) => (
+      response.request().method() === 'POST' && response.url().includes('/projects/') && response.url().endsWith('/ai-analyses')
+    ))
+    await workbench.getByTestId('business-ai-analyze').click()
+    const response = await responsePromise
+    expect(response.status()).toBe(201)
+    const run = await response.json() as { stage: string; status: string; invocation_id: string; analysis: { summary: string } }
+    expect(run.stage).toBe(stage)
+    expect(run.status).toBe('completed')
+    await expect(workbench.getByText(run.analysis.summary)).toBeVisible({ timeout: 30_000 })
+    await expect(workbench.getByText(new RegExp(run.invocation_id))).toBeVisible()
+    await expect(workbench.getByText(allowedTool)).toBeVisible()
+  }
   const proposalResponse = page.waitForResponse((candidate) => (
     candidate.request().method() === 'POST' && candidate.url().endsWith('/submit-proposal')
   ))

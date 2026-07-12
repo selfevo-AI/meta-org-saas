@@ -41,12 +41,14 @@ interface ModelProvider {
   id: string
   provider_type: string
   name: string
+  status: string
 }
 
 interface AIModel {
   provider_id: string
   model_key: string
   display_name: string
+  status: string
 }
 
 interface ProjectOption {
@@ -81,8 +83,11 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
     ])
       .then(([providerData, modelData, projectData]) => {
         if (cancelled) return
-        const nextProviders = Array.isArray(providerData) ? providerData : []
-        const nextModels = Array.isArray(modelData) ? modelData : []
+        const nextProviders = Array.isArray(providerData) ? providerData.filter((item) => item.status === 'active') : []
+        const activeProviderIDs = new Set(nextProviders.map((item) => item.id))
+        const nextModels = Array.isArray(modelData)
+          ? modelData.filter((item) => item.status === 'active' && activeProviderIDs.has(item.provider_id))
+          : []
         const nextProjects = Array.isArray(projectData) ? projectData : []
         setProviders(nextProviders)
         setModels(nextModels)

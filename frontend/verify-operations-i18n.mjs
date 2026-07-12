@@ -87,14 +87,27 @@ const zhDictionary = dictionarySlice('zh', 'let englishDictionaryPromise')
 const operationKeys = Array.from(
   new Set([...operationsSource.matchAll(/(?:title|label):\s*'(operation\.[^']+)'/g)].map((match) => match[1])),
 )
+const literalOperationKeys = Array.from(
+  new Set([
+    ...operations.map((operation) => operation.title),
+    ...[...operationsSource.matchAll(/label:\s*'([^']+)'/g)].map((match) => match[1]),
+  ].filter((key) => /[\u3400-\u9fff]/u.test(key))),
+)
 
 function hasKey(dictionary, key) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`'${escaped}'\\s*:`).test(dictionary)
+  if (new RegExp(`'${escaped}'\\s*:`).test(dictionary)) {
+    return true
+  }
+  if (!/^[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*$/u.test(key)) {
+    return false
+  }
+  return new RegExp(`^\\s*${escaped}\\s*:`, 'mu').test(dictionary)
 }
 
 const missingEnKeys = operationKeys.filter((key) => !hasKey(enDictionary, key))
 const missingZhKeys = operationKeys.filter((key) => !hasKey(zhDictionary, key))
+const missingEnglishLiteralKeys = literalOperationKeys.filter((key) => !hasKey(enDictionary, key))
 
 const failures = []
 if (missingRoutes.length > 0) {
@@ -113,10 +126,19 @@ if (missingEnKeys.length > 0) {
 if (missingZhKeys.length > 0) {
   failures.push(`Missing Chinese operation i18n keys:\n${missingZhKeys.map((key) => `  - ${key}`).join('\n')}`)
 }
+if (missingEnglishLiteralKeys.length > 0) {
+  failures.push(
+    `Legacy Chinese operation metadata must have English mappings:\n${missingEnglishLiteralKeys
+      .map((key) => `  - ${key}`)
+      .join('\n')}`,
+  )
+}
 
 if (failures.length > 0) {
   console.error(failures.join('\n\n'))
   process.exit(1)
 }
 
-console.log(`Verified ${requiredRoutes.length} supply-chain routes and ${operationKeys.length} operation i18n keys.`)
+console.log(
+  `Verified ${requiredRoutes.length} supply-chain routes, ${operationKeys.length} stable operation keys, and ${literalOperationKeys.length} legacy bilingual keys.`,
+)

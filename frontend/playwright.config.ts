@@ -9,7 +9,8 @@ export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // E2E projects share the same platform and tenant fixtures, including persisted UI preferences.
+  workers: 1,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
   globalSetup: './tests/e2e/global-setup.ts',
   use: {
