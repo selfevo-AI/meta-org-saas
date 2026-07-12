@@ -10,6 +10,12 @@ async function expectNoHorizontalOverflow(page: import('@playwright/test').Page)
   expect(overflow).toBeLessThanOrEqual(1)
 }
 
+async function openNavigationIfNeeded(page: import('@playwright/test').Page) {
+  if ((page.viewportSize()?.width ?? 1440) < 1024) {
+    await page.getByTestId('mobile-menu-open').click()
+  }
+}
+
 test('login surfaces remain usable without horizontal overflow', async ({ page }) => {
   await page.goto('/')
 
@@ -33,6 +39,9 @@ test('platform administrator session is explicitly scoped', async ({ page }) => 
   await expect(page.getByTestId('session-scope')).toHaveAttribute('data-scope', 'platform')
   await expect(page.getByTestId('session-scope')).toBeVisible()
   await expect(page.getByTestId('login-shell')).toHaveCount(0)
+  await openNavigationIfNeeded(page)
+  await page.getByTestId('domain-nav-PlatformAdmin:models').click()
+  await expect(page.getByTestId('system-admin-workspace')).toBeVisible({ timeout: 30_000 })
   await expectNoHorizontalOverflow(page)
 })
 
@@ -46,5 +55,8 @@ test('tenant session is explicitly scoped', async ({ page }) => {
   await expect(page.getByTestId('session-scope')).toHaveAttribute('data-scope', 'tenant')
   await expect(page.getByTestId('session-scope')).toBeVisible()
   await expect(page.getByTestId('login-shell')).toHaveCount(0)
+  await openNavigationIfNeeded(page)
+  await page.getByTestId('domain-nav-Project').click()
+  await expect(page.getByTestId('erp-business-module-workspace')).toBeVisible({ timeout: 30_000 })
   await expectNoHorizontalOverflow(page)
 })

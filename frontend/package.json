@@ -14,6 +14,7 @@
     "test:runtime-workbench": "node verify-runtime-workbench.mjs",
     "test:unified-workbench": "node verify-unified-workbench.mjs",
     "test:supply-chain": "node verify-supply-chain-workspace.mjs",
+    "test:bundle": "node verify-workspace-code-splitting.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },

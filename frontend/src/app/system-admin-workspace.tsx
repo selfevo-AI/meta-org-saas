@@ -1294,7 +1294,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   return (
-    <div className="space-y-5">
+    <div data-testid="system-admin-workspace" className="space-y-5">
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         {activeTabDefinition && (
           <div className="flex min-w-0 items-center gap-2">

@@ -36,6 +36,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react'
+import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
@@ -103,25 +104,34 @@ import { useI18n } from '@/lib/i18n'
 import { apiOperations, getOperationProfile, operationDomains } from '@/lib/operations'
 import type { ApiOperation } from '@/lib/operations'
 import { AIAssistant } from './ai-assistant'
-import {
-	CapabilityEvaluationWorkspace,
-	GovernanceWorkspace,
-	WeightWorkspace,
-	WorkflowDesignerWorkspace,
-	WorkflowMatchingWorkspace,
-} from './control-workspaces'
-import { CostingWorkspace } from './costing-workspace'
-import { DeveloperToolsWorkspace } from './developer-tools-workspace'
-import { ERPBusinessModuleWorkspace } from './erp-business-module-workspace'
-import { ERPCodeWorkspace } from './erp-workspace'
-import { MetaResourceWorkspace } from './meta-resource-workspace'
-import { OrganizationWorkspace } from './organization-workspace'
-import { SystemAdminWorkspace } from './system-admin-workspace'
+
+const CapabilityEvaluationWorkspace = dynamic(() => import('./control-workspaces').then((module) => module.CapabilityEvaluationWorkspace), { loading: WorkspaceLoading })
+const GovernanceWorkspace = dynamic(() => import('./control-workspaces').then((module) => module.GovernanceWorkspace), { loading: WorkspaceLoading })
+const WeightWorkspace = dynamic(() => import('./control-workspaces').then((module) => module.WeightWorkspace), { loading: WorkspaceLoading })
+const WorkflowDesignerWorkspace = dynamic(() => import('./control-workspaces').then((module) => module.WorkflowDesignerWorkspace), { loading: WorkspaceLoading })
+const WorkflowMatchingWorkspace = dynamic(() => import('./control-workspaces').then((module) => module.WorkflowMatchingWorkspace), { loading: WorkspaceLoading })
+const CostingWorkspace = dynamic(() => import('./costing-workspace').then((module) => module.CostingWorkspace), { loading: WorkspaceLoading })
+const DeveloperToolsWorkspace = dynamic(() => import('./developer-tools-workspace').then((module) => module.DeveloperToolsWorkspace), { loading: WorkspaceLoading })
+const ERPBusinessModuleWorkspace = dynamic(() => import('./erp-business-module-workspace').then((module) => module.ERPBusinessModuleWorkspace), { loading: WorkspaceLoading })
+const ERPCodeWorkspace = dynamic(() => import('./erp-workspace').then((module) => module.ERPCodeWorkspace), { loading: WorkspaceLoading })
+const MetaResourceWorkspace = dynamic(() => import('./meta-resource-workspace').then((module) => module.MetaResourceWorkspace), { loading: WorkspaceLoading })
+const OrganizationWorkspace = dynamic(() => import('./organization-workspace').then((module) => module.OrganizationWorkspace), { loading: WorkspaceLoading })
+const SystemAdminWorkspace = dynamic(() => import('./system-admin-workspace').then((module) => module.SystemAdminWorkspace), { loading: WorkspaceLoading })
 
 type AuthMode = 'login' | 'register'
 type LoginSurface = 'tenant' | 'platform'
 type WorkspaceView = 'overview' | `domain:${string}`
 type ThemeMode = 'dark' | 'light'
+
+function WorkspaceLoading() {
+  const { t } = useI18n()
+  return (
+    <div className="flex min-h-[320px] items-center justify-center gap-2 text-sm text-slate-500" role="status" aria-live="polite">
+      <RefreshCw className="h-4 w-4 animate-spin" />
+      <span>{t('common.loading')}</span>
+    </div>
+  )
+}
 
 const domainLabels: Record<string, string> = {
   MetaOrg: 'Meta-Org',

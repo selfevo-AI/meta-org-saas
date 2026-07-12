@@ -616,7 +616,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
   }
 
   return (
-    <section className="space-y-4">
+    <section data-testid="erp-business-module-workspace" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold text-slate-950">{t(`erp.module.${module}`)}</h2>
