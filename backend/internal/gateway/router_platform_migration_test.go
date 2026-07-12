@@ -16,7 +16,7 @@ func TestPlatformOnlyDomainsAreNotMountedInTenantRoutes(t *testing.T) {
 	platformBlock := functionBlock(t, source, "registerPlatformAdminRoutes")
 
 	movedHandlers := []string{
-		"deps.IdentityHandler.RegisterProtectedRoutes",
+		"deps.IdentityHandler.RegisterPlatformManagementRoutes",
 		"deps.LayerHandler.RegisterRoutes",
 		"deps.CapabilityHandler.RegisterRoutes",
 		"deps.GovernanceHandler.RegisterRoutes",
@@ -35,8 +35,8 @@ func TestPlatformOnlyDomainsAreNotMountedInTenantRoutes(t *testing.T) {
 		}
 	}
 
-	if strings.Contains(tenantBlock, "AIGatewayHandler.RegisterTenantRoutes") {
-		t.Fatalf("tenant routes should not expose AI gateway tenant routes after ERP API replacement")
+	if !strings.Contains(tenantBlock, "AIGatewayHandler.RegisterTenantRoutes") {
+		t.Fatalf("tenant routes should expose tenant-scoped AI gateway invocation routes")
 	}
 	if !strings.Contains(tenantBlock, "ErpHandler.RegisterRoutes") {
 		t.Fatalf("tenant routes should expose ERP code-table routes")
@@ -145,14 +145,35 @@ func TestTenantBusinessClosureRoutesAreMounted(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"deps.OrganizationHandler.RegisterRoutes",
-		"deps.MetaResourceHandler.RegisterRoutes",
-		"deps.AssistantHandler.RegisterRoutes",
-		"deps.AIGatewayHandler.RegisterTenantRoutes",
-		"deps.ToolRuntimeHandler.RegisterRoutes",
 	} {
 		if strings.Contains(tenantBlock, forbidden) {
 			t.Fatalf("tenant routes should not mount platform/AI legacy API %q", forbidden)
 		}
+	}
+	for _, required := range []string{
+		"deps.MetaResourceHandler.RegisterRoutes",
+		"deps.AssistantHandler.RegisterRoutes",
+		"deps.AIGatewayHandler.RegisterTenantRoutes",
+		"deps.ToolRuntimeHandler.RegisterTenantRoutes",
+	} {
+		if !strings.Contains(tenantBlock, required) {
+			t.Fatalf("tenant routes should mount AI-native tenant capability %q", required)
+		}
+	}
+}
+
+func TestAuthenticatedSelfServiceRoutesRemainAvailableOutsidePlatformAdmin(t *testing.T) {
+	sourceBytes, err := os.ReadFile("router.go")
+	if err != nil {
+		t.Fatalf("read router.go: %v", err)
+	}
+	source := string(sourceBytes)
+	if !strings.Contains(source, "deps.IdentityHandler.RegisterSelfServiceRoutes") {
+		t.Fatalf("authenticated users should retain identity self-service routes")
+	}
+	platformBlock := functionBlock(t, source, "registerPlatformAdminRoutes")
+	if strings.Contains(platformBlock, "RegisterSelfServiceRoutes") {
+		t.Fatalf("identity self-service routes should not be prefixed with platform admin")
 	}
 }
 

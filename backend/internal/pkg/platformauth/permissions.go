@@ -14,6 +14,8 @@ const (
 	PermissionModelManage        = "model.manage"
 	PermissionRuntimeManage      = "runtime.manage"
 	PermissionAssistantRun       = "assistant.platform.run"
+	PermissionTenantDataRead     = "tenant.data.read"
+	PermissionTenantDataManage   = "tenant.data.manage"
 
 	PermissionPlatformFeatureManage       = "platform.feature.manage"
 	PermissionPlatformUserManage          = "platform.user.manage"
@@ -38,6 +40,8 @@ var rolePermissions = map[string][]string{
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
+		PermissionTenantDataRead,
+		PermissionTenantDataManage,
 		PermissionPlatformFeatureManage,
 		PermissionPlatformUserManage,
 		PermissionPlatformRBACManage,
@@ -58,6 +62,8 @@ var rolePermissions = map[string][]string{
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
+		PermissionTenantDataRead,
+		PermissionTenantDataManage,
 		PermissionPlatformFeatureManage,
 		PermissionPlatformUserManage,
 		PermissionPlatformRBACManage,
@@ -78,6 +84,8 @@ var rolePermissions = map[string][]string{
 		PermissionModelManage,
 		PermissionRuntimeManage,
 		PermissionAssistantRun,
+		PermissionTenantDataRead,
+		PermissionTenantDataManage,
 		PermissionDatabaseMaintenanceManage,
 		PermissionIndustrySolutionManage,
 		PermissionIndustrySolutionImport,
@@ -87,6 +95,7 @@ var rolePermissions = map[string][]string{
 	},
 	RoleAuditor: {
 		PermissionPlatformRead,
+		PermissionTenantDataRead,
 	},
 }
 

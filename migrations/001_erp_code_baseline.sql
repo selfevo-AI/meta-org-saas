@@ -1633,13 +1633,11 @@ BEGIN
     EXECUTE FORMAT(
         'UPDATE %I
          SET master_key = next_business_key(%L, %L)
-         WHERE master_key IS NULL
-            OR (COALESCE($1, '''') <> '''' AND master_key NOT LIKE COALESCE($1, '''') || ''-%%'')',
+         WHERE master_key IS NULL',
         p_source_table,
         p_source_table,
         p_key_prefix
-    )
-    USING p_key_prefix;
+    );
     EXECUTE FORMAT(
         'ALTER TABLE %I ALTER COLUMN master_key SET DEFAULT next_business_key(%L, %L)',
         p_source_table,

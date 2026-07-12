@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -27,6 +25,11 @@ services:
       RUST_LOG: "info"
     ports:
       - "8090:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8090/healthz >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,13 +46,36 @@ services:
       PLATFORM_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable"
       TENANT_DATABASE_ADMIN_URL: "postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable"
       TENANT_DATABASE_NAME_PREFIX: "meta_org_"
+      TENANT_DATABASE_POOL_MAX_ENTRIES: "16"
+      TENANT_DATABASE_POOL_MAX_CONNECTIONS: "4"
+      TENANT_DATABASE_POOL_MIN_CONNECTIONS: "0"
+      TENANT_DATABASE_POOL_IDLE_SECONDS: "900"
+      TENANT_DATABASE_POOL_SWEEP_SECONDS: "60"
+      TENANT_DATABASE_CONNECTION_IDLE_SECONDS: "300"
+      TENANT_DATABASE_CONNECTION_LIFETIME_SECONDS: "1800"
+      TENANT_PROVISIONING_WORKER_ENABLED: "true"
+      TENANT_PROVISIONING_POLL_SECONDS: "2"
+      TENANT_PROVISIONING_LEASE_SECONDS: "1800"
+      TENANT_PROVISIONING_RETRY_SECONDS: "5"
+      TENANT_PROVISIONING_RETRY_MAX_SECONDS: "900"
+      TENANT_PROJECTION_WORKER_ENABLED: "true"
+      TENANT_PROJECTION_POLL_SECONDS: "2"
+      TENANT_PROJECTION_LEASE_SECONDS: "60"
+      TENANT_PROJECTION_RETRY_SECONDS: "5"
+      TENANT_PROJECTION_BATCH_SIZE: "100"
+      TENANT_PROJECTION_TARGET_LIMIT: "100"
+      TENANT_PROJECTION_ACTIVITY_LIMIT: "50"
+      TENANT_PROJECTION_MAX_ATTEMPTS: "20"
       JWT_SECRET: "dev-secret-change-in-production"
       MODEL_SECRET_KEY: "0123456789abcdef0123456789abcdef"
-      CORS_ORIGINS: "http://localhost:3000"
+      CORS_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
       MIGRATIONS_PATH: "migrations"
+      TENANT_MIGRATIONS_PATH: "migrations/tenant"
       META_ORG_MODE: "saas"
       META_ORG_DISTRIBUTION_MODE: "saas"
       META_ORG_LICENSE_MODE: "commercial"
+      META_ORG_PLATFORM_ADMIN_EMAIL: "platform-admin@local.test"
+      META_ORG_PLATFORM_ADMIN_PASSWORD_HASH: '$2a$10$/Dou0gOhCVFNGMitu8IUu.92HzEaG6iYWGxTTVUrSA1pkFvogvj22'
       SECURITY_KERNEL_URL: "http://security-kernel:8090"
       SECURITY_KERNEL_SHARED_SECRET: "dev-security-kernel-shared-secret"
       SECURITY_KERNEL_ENFORCEMENT_MODE: "blocking"
@@ -57,7 +83,12 @@ services:
       postgres:
         condition: service_healthy
       security-kernel:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   frontend:
     build:
@@ -67,7 +98,8 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: "http://localhost:8080/api/v1"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:

@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 1 {
-		t.Fatalf("tenant migration file count = %d, want 1", len(files))
+	if len(files) != 2 {
+		t.Fatalf("tenant migration file count = %d, want 2", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -116,6 +116,12 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 	} {
 		if strings.Contains(sql, legacySnippet) {
 			t.Fatalf("tenant baseline SQL still declares legacy semantic supply-chain table with %q", legacySnippet)
+		}
+	}
+	projectionSQL := files[1].SQL
+	for _, snippet := range []string{"tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql", "CREATE TABLE IF NOT EXISTS tenant_integration_outbox", "emit_tenant_projection_outbox_event"} {
+		if !strings.Contains(projectionSQL, snippet) {
+			t.Fatalf("tenant projection migration SQL missing %q", snippet)
 		}
 	}
 }
@@ -200,6 +206,81 @@ func TestFileTenantMigratorRejectsChecksumDriftForAlreadyAppliedMigration(t *tes
 	}
 }
 
+func TestFileTenantMigratorReconcilesDeclaredBaselineDriftWithPendingRepair(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "001_tenant_business_baseline.sql", "CREATE TABLE first(id UUID PRIMARY KEY, name TEXT);\n")
+	writeTestFile(t, dir, "002_projection_repair.sql", `-- tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql
+CREATE TABLE projection_outbox(id UUID PRIMARY KEY);
+`)
+	files, err := LoadTenantMigrationFiles(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantMigrationFiles() error = %v", err)
+	}
+	if !reflect.DeepEqual(files[1].AcceptsChecksumDrift, []string{"001_tenant_business_baseline.sql"}) {
+		t.Fatalf("accepted drift = %#v", files[1].AcceptsChecksumDrift)
+	}
+	store := &fakeTenantMigrationStore{applied: map[string]string{
+		files[0].Filename: "previous-baseline-checksum",
+	}}
+	migrator := FileTenantMigrator{
+		MigrationsDir: dir,
+		OpenStore: func(context.Context, string) (TenantMigrationStore, error) {
+			return store, nil
+		},
+	}
+
+	result, err := migrator.Migrate(context.Background(), Target{}, "postgres://tenant")
+	if err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	if len(store.appliedFiles) != 1 || store.appliedFiles[0].Filename != files[1].Filename {
+		t.Fatalf("applied files = %#v, want repair only", store.appliedFiles)
+	}
+	if len(store.reconciliations) != 1 {
+		t.Fatalf("reconciliations = %#v, want one", store.reconciliations)
+	}
+	reconciliation := store.reconciliations[0]
+	if reconciliation.Filename != files[0].Filename || reconciliation.PreviousChecksum != "previous-baseline-checksum" || reconciliation.AcceptedChecksum != files[0].Checksum || reconciliation.RepairFilename != files[1].Filename {
+		t.Fatalf("reconciliation = %#v", reconciliation)
+	}
+	if store.applied[files[0].Filename] != files[0].Checksum {
+		t.Fatalf("reconciled checksum = %q, want %q", store.applied[files[0].Filename], files[0].Checksum)
+	}
+	if got := stringSliceMetadata(result.Metadata, "migration_checksums_reconciled"); !reflect.DeepEqual(got, []string{files[0].Filename}) {
+		t.Fatalf("migration_checksums_reconciled = %#v", got)
+	}
+}
+
+func TestFileTenantMigratorRejectsDriftWhenAcceptingRepairIsAlreadyApplied(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "001_tenant_business_baseline.sql", "CREATE TABLE first(id UUID PRIMARY KEY, name TEXT);\n")
+	writeTestFile(t, dir, "002_projection_repair.sql", `-- tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql
+CREATE TABLE projection_outbox(id UUID PRIMARY KEY);
+`)
+	files, err := LoadTenantMigrationFiles(dir)
+	if err != nil {
+		t.Fatalf("LoadTenantMigrationFiles() error = %v", err)
+	}
+	store := &fakeTenantMigrationStore{applied: map[string]string{
+		files[0].Filename: "unexpected-new-drift",
+		files[1].Filename: files[1].Checksum,
+	}}
+	migrator := FileTenantMigrator{
+		MigrationsDir: dir,
+		OpenStore: func(context.Context, string) (TenantMigrationStore, error) {
+			return store, nil
+		},
+	}
+
+	_, err = migrator.Migrate(context.Background(), Target{}, "postgres://tenant")
+	if err == nil || !strings.Contains(err.Error(), "checksum drift") {
+		t.Fatalf("Migrate() error = %v, want checksum drift after repair already applied", err)
+	}
+	if len(store.reconciliations) != 0 || len(store.appliedFiles) != 0 {
+		t.Fatalf("store changed after rejected drift: files=%#v reconciliations=%#v", store.appliedFiles, store.reconciliations)
+	}
+}
+
 func TestTenantMigrationTrackingUsesTenantMigrationRuns(t *testing.T) {
 	if tenantMigrationTrackingTable != "tenant_migration_runs" {
 		t.Fatalf("tenant migration tracking table = %q, want tenant_migration_runs", tenantMigrationTrackingTable)
@@ -210,6 +291,12 @@ func TestTenantMigrationTrackingUsesTenantMigrationRuns(t *testing.T) {
 	}
 	if strings.Contains(sql, "CREATE TABLE IF NOT EXISTS tenant_schema_migrations") {
 		t.Fatalf("tracking SQL = %q, must not create old tenant_schema_migrations table", sql)
+	}
+	if !strings.Contains(sql, "CREATE TABLE IF NOT EXISTS tenant_migration_checksum_history") {
+		t.Fatalf("tracking SQL = %q, want checksum reconciliation history", sql)
+	}
+	if strings.Count(sql, ");") < 2 {
+		t.Fatalf("tracking SQL = %q, want both CREATE TABLE statements terminated", sql)
 	}
 	legacySQL := migrateLegacyTenantMigrationRunsSQL()
 	if !strings.Contains(legacySQL, "to_regclass('tenant_schema_migrations')") {
@@ -242,10 +329,11 @@ func repoTenantMigrationsDir(t *testing.T) string {
 }
 
 type fakeTenantMigrationStore struct {
-	ensured      bool
-	closed       bool
-	applied      map[string]string
-	appliedFiles []TenantMigrationFile
+	ensured         bool
+	closed          bool
+	applied         map[string]string
+	appliedFiles    []TenantMigrationFile
+	reconciliations []ChecksumReconciliation
 }
 
 func (f *fakeTenantMigrationStore) EnsureMigrationTable(context.Context) error {
@@ -261,8 +349,18 @@ func (f *fakeTenantMigrationStore) AppliedMigrations(context.Context) (map[strin
 	return out, nil
 }
 
-func (f *fakeTenantMigrationStore) ApplyMigration(_ context.Context, file TenantMigrationFile) error {
+func (f *fakeTenantMigrationStore) ApplyMigration(_ context.Context, file TenantMigrationFile, reconciliations []ChecksumReconciliation) error {
+	if f.applied == nil {
+		f.applied = make(map[string]string)
+	}
 	f.appliedFiles = append(f.appliedFiles, file)
+	f.applied[file.Filename] = file.Checksum
+	for _, reconciliation := range reconciliations {
+		f.reconciliations = append(f.reconciliations, reconciliation)
+		if f.applied[reconciliation.Filename] == reconciliation.PreviousChecksum {
+			f.applied[reconciliation.Filename] = reconciliation.AcceptedChecksum
+		}
+	}
 	return nil
 }
 

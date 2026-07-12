@@ -3,13 +3,22 @@ package metaorg
 import "time"
 
 type Overview struct {
-	GeneratedAt time.Time      `json:"generated_at"`
-	Health      HealthSummary  `json:"health"`
-	Projects    ProjectSummary `json:"projects"`
-	Agents      AgentSummary   `json:"agents"`
-	Cost        CostSummary    `json:"cost"`
-	Risks       []RiskItem     `json:"risks"`
-	Activity    []ActivityItem `json:"activity"`
+	GeneratedAt time.Time           `json:"generated_at"`
+	Health      HealthSummary       `json:"health"`
+	Projects    ProjectSummary      `json:"projects"`
+	Agents      AgentSummary        `json:"agents"`
+	Cost        CostSummary         `json:"cost"`
+	Risks       []RiskItem          `json:"risks"`
+	Activity    []ActivityItem      `json:"activity"`
+	Projection  ProjectionFreshness `json:"projection"`
+}
+
+type ProjectionFreshness struct {
+	SourceOccurredAt time.Time `json:"source_occurred_at"`
+	ProjectedAt      time.Time `json:"projected_at"`
+	LagMilliseconds  int64     `json:"lag_ms"`
+	SnapshotVersion  int64     `json:"snapshot_version"`
+	TenantCount      int64     `json:"tenant_count"`
 }
 
 type HealthSummary struct {

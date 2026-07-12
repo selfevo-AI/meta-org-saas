@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 
@@ -29,44 +30,52 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type Dependencies struct {
-	JWTSecret              string
-	IdentityHandler        *identity.Handler
-	OrganizationHandler    *organization.Handler
-	LayerHandler           *layer.Handler
-	CapabilityHandler      *capability.Handler
-	CostingHandler         *costing.Handler
-	DashboardHandler       *dashboard.Handler
-	MetaOrgHandler         *metaorg.Handler
-	MetaResourceHandler    *metaresource.Handler
-	AssistantHandler       *assistant.Handler
-	AIGatewayHandler       *aigateway.Handler
-	WorkflowHandler        *workflow.Handler
-	ProjectHandler         *project.Handler
-	FinanceHandler         *finance.Handler
-	InventoryHandler       *inventory.Handler
-	IndustryHandler        *industry.Handler
-	ProcurementHandler     *procurement.Handler
-	SalesHandler           *sales.Handler
-	RuntimeHandler         *runtime.Handler
-	ToolRuntimeHandler     *toolruntime.Handler
-	SaaSHandler            *saas.Handler
-	SystemAdminHandler     *systemadmin.Handler
-	TenantResolver         middleware.TenantResolver
-	PlatformRoleResolver   middleware.PlatformRoleResolver
-	ObservabilityHandler   *observability.Handler
-	VerificationHandler    *verification.Handler
-	GovernanceHandler      *governance.Handler
-	EvolutionHandler       *evolution.Handler
-	MonitoringAgentHandler *monitoringagent.Handler
-	ErpHandler             *erp.Handler
+	JWTSecret               string
+	IdentityHandler         *identity.Handler
+	OrganizationHandler     *organization.Handler
+	LayerHandler            *layer.Handler
+	CapabilityHandler       *capability.Handler
+	CostingHandler          *costing.Handler
+	DashboardHandler        *dashboard.Handler
+	MetaOrgHandler          *metaorg.Handler
+	MetaResourceHandler     *metaresource.Handler
+	AssistantHandler        *assistant.Handler
+	AIGatewayHandler        *aigateway.Handler
+	WorkflowHandler         *workflow.Handler
+	ProjectHandler          *project.Handler
+	FinanceHandler          *finance.Handler
+	InventoryHandler        *inventory.Handler
+	IndustryHandler         *industry.Handler
+	ProcurementHandler      *procurement.Handler
+	SalesHandler            *sales.Handler
+	RuntimeHandler          *runtime.Handler
+	ToolRuntimeHandler      *toolruntime.Handler
+	SaaSHandler             *saas.Handler
+	SystemAdminHandler      *systemadmin.Handler
+	TenantResolver          middleware.TenantResolver
+	PlatformRoleResolver    middleware.PlatformRoleResolver
+	ObservabilityHandler    *observability.Handler
+	VerificationHandler     *verification.Handler
+	GovernanceHandler       *governance.Handler
+	EvolutionHandler        *evolution.Handler
+	MonitoringAgentHandler  *monitoringagent.Handler
+	ErpHandler              *erp.Handler
+	TenantPoolStatsProvider interface {
+		Stats() tenantdb.PoolRouterStats
+	}
+	TenantProjectionStatsProvider interface {
+		Stats() tenantprojection.WorkerStats
+	}
 }
 
 func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
@@ -77,7 +86,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		deps.AIGatewayHandler.RegisterCompatibleRoutes(r)
 	}
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", healthCheck)
+		r.Get("/health", healthCheck(deps.TenantPoolStatsProvider, deps.TenantProjectionStatsProvider))
 		if deps.IdentityHandler != nil {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
 		}
@@ -86,6 +95,9 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.AuthMiddleware(deps.JWTSecret))
+			if deps.IdentityHandler != nil {
+				deps.IdentityHandler.RegisterSelfServiceRoutes(r)
+			}
 			if deps.SaaSHandler != nil {
 				deps.SaaSHandler.RegisterAuthenticatedRoutes(r)
 			}
@@ -125,7 +137,7 @@ func registerPlatformAdminRoutes(r chi.Router, deps *Dependencies) {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionPlatformRead))
 			if deps.IdentityHandler != nil {
-				deps.IdentityHandler.RegisterProtectedRoutes(r)
+				deps.IdentityHandler.RegisterPlatformManagementRoutes(r)
 			}
 			if deps.LayerHandler != nil {
 				deps.LayerHandler.RegisterRoutes(r)
@@ -183,6 +195,18 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	if deps.MetaOrgHandler != nil {
 		deps.MetaOrgHandler.RegisterRoutes(r)
 	}
+	if deps.MetaResourceHandler != nil {
+		deps.MetaResourceHandler.RegisterRoutes(r)
+	}
+	if deps.AssistantHandler != nil {
+		deps.AssistantHandler.RegisterRoutes(r)
+	}
+	if deps.AIGatewayHandler != nil {
+		deps.AIGatewayHandler.RegisterTenantRoutes(r)
+	}
+	if deps.ToolRuntimeHandler != nil {
+		deps.ToolRuntimeHandler.RegisterTenantRoutes(r)
+	}
 	if deps.OrganizationHandler != nil {
 		deps.OrganizationHandler.RegisterTenantDepartmentRoutes(r)
 	}
@@ -215,10 +239,30 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	}
 }
 
-func healthCheck(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
-		log.Printf("health check write error: %v", err)
+type healthResponse struct {
+	Status                 string                        `json:"status"`
+	TenantDatabasePools    *tenantdb.PoolRouterStats     `json:"tenant_database_pools,omitempty"`
+	TenantProjectionWorker *tenantprojection.WorkerStats `json:"tenant_projection_worker,omitempty"`
+}
+
+func healthCheck(poolProvider interface {
+	Stats() tenantdb.PoolRouterStats
+}, projectionProvider interface {
+	Stats() tenantprojection.WorkerStats
+}) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		response := healthResponse{Status: "ok"}
+		if poolProvider != nil {
+			stats := poolProvider.Stats()
+			response.TenantDatabasePools = &stats
+		}
+		if projectionProvider != nil {
+			stats := projectionProvider.Stats()
+			response.TenantProjectionWorker = &stats
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("health check write error: %v", err)
+		}
 	}
 }

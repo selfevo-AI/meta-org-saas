@@ -22,7 +22,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: meta_org
+          POSTGRES_DB: meta_org_saas
         ports:
           - 5432:5432
         options: >-
@@ -38,11 +38,17 @@ jobs:
       - name: Test backend
         working-directory: backend
         env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org?sslmode=disable
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          PLATFORM_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          TENANT_DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+          MIGRATION_TEST_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
           MIGRATIONS_PATH: ../migrations
           MODEL_SECRET_KEY: 0123456789abcdef0123456789abcdef
+          RUN_FRESH_DB_MIGRATION_TEST: "1"
+          RUN_FRESH_TENANT_DB_MIGRATION_TEST: "1"
         run: |
           go test ./...
+          go vet ./...
           go build ./cmd/server
 
   rust:
@@ -70,6 +76,98 @@ jobs:
       - name: Lint
         working-directory: frontend
         run: npm run lint
+      - name: Verify frontend contracts
+        working-directory: frontend
+        run: |
+          npm run test:erp-operations
+          npm run test:erp-business
+          npm run test:operations
+          npm run test:system-admin
+          npm run test:runtime-workbench
+          npm run test:unified-workbench
+          npm run test:supply-chain
       - name: Build
         working-directory: frontend
         run: npm run build
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: meta_org_saas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend and browser
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Start backend
+        working-directory: backend
+        env:
+          SERVER_PORT: "8080"
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable
+          PLATFORM_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable
+          TENANT_DATABASE_ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres?sslmode=disable
+          TENANT_MIGRATIONS_PATH: ../migrations/tenant
+          MIGRATIONS_PATH: ../migrations
+          META_ORG_MODE: saas
+          META_ORG_PLATFORM_ADMIN_EMAIL: platform-admin@local.test
+          META_ORG_PLATFORM_ADMIN_PASSWORD_HASH: $2a$10$/Dou0gOhCVFNGMitu8IUu.92HzEaG6iYWGxTTVUrSA1pkFvogvj22
+          JWT_SECRET: e2e-jwt-secret
+          MODEL_SECRET_KEY: 0123456789abcdef0123456789abcdef
+          CORS_ORIGINS: http://127.0.0.1:3000
+        run: |
+          go run ./cmd/server > /tmp/meta-org-backend.log 2>&1 &
+          for attempt in {1..90}; do
+            if curl --fail --silent http://127.0.0.1:8080/api/v1/health >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/meta-org-backend.log
+          exit 1
+      - name: Start frontend
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8080/api/v1
+        run: |
+          npm run dev -- -p 3000 > /tmp/meta-org-frontend.log 2>&1 &
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:3000 >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat /tmp/meta-org-frontend.log
+          exit 1
+      - name: Run browser tests
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Upload browser artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            frontend/playwright-report
+            frontend/test-results

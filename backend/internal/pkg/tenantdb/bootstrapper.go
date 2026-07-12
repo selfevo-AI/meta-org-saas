@@ -9,15 +9,15 @@ import (
 )
 
 type TenantBootstrapInput struct {
-	OrganizationID               uuid.UUID
-	OrganizationName             string
-	Description                  string
-	OwnerUserID                  uuid.UUID
-	OwnerName                    string
-	OwnerEmail                   string
-	EnabledModules               []string
-	SampleKey                    string
-	IncludeBusinessClosureSample bool
+	OrganizationID               uuid.UUID `json:"organization_id"`
+	OrganizationName             string    `json:"organization_name"`
+	Description                  string    `json:"description"`
+	OwnerUserID                  uuid.UUID `json:"owner_user_id"`
+	OwnerName                    string    `json:"owner_name"`
+	OwnerEmail                   string    `json:"owner_email"`
+	EnabledModules               []string  `json:"enabled_modules"`
+	SampleKey                    string    `json:"sample_key"`
+	IncludeBusinessClosureSample bool      `json:"include_business_closure_sample"`
 }
 
 type TenantBootstrapper struct {

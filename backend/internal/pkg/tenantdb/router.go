@@ -3,7 +3,6 @@ package tenantdb
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,11 +20,15 @@ type DB interface {
 type PoolRouter struct {
 	platform *pgxpool.Pool
 	adminURL string
-	pools    sync.Map
+	cache    *tenantPoolCache
 }
 
 func NewPoolRouter(platform *pgxpool.Pool, adminURL string) *PoolRouter {
-	return &PoolRouter{platform: platform, adminURL: adminURL}
+	return NewPoolRouterWithConfig(platform, adminURL, PoolRouterConfig{})
+}
+
+func NewPoolRouterWithConfig(platform *pgxpool.Pool, adminURL string, cfg PoolRouterConfig) *PoolRouter {
+	return &PoolRouter{platform: platform, adminURL: adminURL, cache: newTenantPoolCache(cfg, defaultPoolFactory)}
 }
 
 func TenantDatabaseURLFromContext(ctx context.Context, adminURL string) (string, bool, error) {
@@ -50,70 +53,122 @@ func TenantDatabaseURLFromContext(ctx context.Context, adminURL string) (string,
 }
 
 func (r *PoolRouter) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	db, err := r.dbForContext(ctx)
+	db, release, err := r.acquireDB(ctx)
 	if err != nil {
 		return pgconn.CommandTag{}, err
+	}
+	if release != nil {
+		defer release()
 	}
 	return db.Exec(ctx, sql, args...)
 }
 
 func (r *PoolRouter) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	db, err := r.dbForContext(ctx)
+	db, release, err := r.acquireDB(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return db.Query(ctx, sql, args...)
+	rows, err := db.Query(ctx, sql, args...)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, err
+	}
+	if release == nil {
+		return rows, nil
+	}
+	return &leasedRows{Rows: rows, release: release}, nil
 }
 
 func (r *PoolRouter) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	db, err := r.dbForContext(ctx)
+	db, release, err := r.acquireDB(ctx)
 	if err != nil {
 		return errorRow{err: err}
 	}
-	return db.QueryRow(ctx, sql, args...)
+	row := db.QueryRow(ctx, sql, args...)
+	if release == nil {
+		return row
+	}
+	return &leasedRow{Row: row, release: release}
 }
 
 func (r *PoolRouter) Begin(ctx context.Context) (pgx.Tx, error) {
-	db, err := r.dbForContext(ctx)
+	db, release, err := r.acquireDB(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return db.Begin(ctx)
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return nil, err
+	}
+	if release == nil {
+		return tx, nil
+	}
+	return &leasedTx{Tx: tx, release: release}, nil
 }
 
 func (r *PoolRouter) Close() {
-	r.pools.Range(func(_, value any) bool {
-		if pool, ok := value.(*pgxpool.Pool); ok {
-			pool.Close()
-		}
-		return true
-	})
+	if r != nil && r.cache != nil {
+		r.cache.Close()
+	}
 }
 
-func (r *PoolRouter) dbForContext(ctx context.Context) (DB, error) {
+func (r *PoolRouter) acquireDB(ctx context.Context) (DB, func(), error) {
 	if r == nil || r.platform == nil {
-		return nil, fmt.Errorf("tenant pool router platform database is not configured")
+		return nil, nil, fmt.Errorf("tenant pool router platform database is not configured")
 	}
 	tenantURL, useTenant, err := TenantDatabaseURLFromContext(ctx, r.adminURL)
 	if err != nil {
-		return nil, err
+		if r.cache != nil {
+			r.cache.recordRoutingError()
+		}
+		return nil, nil, err
 	}
 	if !useTenant {
-		return r.platform, nil
+		return r.platform, nil, nil
 	}
-	if cached, ok := r.pools.Load(tenantURL); ok {
-		return cached.(*pgxpool.Pool), nil
+	if r.cache == nil {
+		return nil, nil, fmt.Errorf("tenant pool router cache is not configured")
 	}
-	pool, err := pgxpool.New(ctx, tenantURL)
+	return r.cache.Acquire(ctx, tenantURL)
+}
+
+func (r *PoolRouter) AcquireTarget(ctx context.Context, target Target) (DB, func(), error) {
+	if r == nil || r.cache == nil {
+		return nil, nil, fmt.Errorf("tenant pool router cache is not configured")
+	}
+	if target.DeploymentMode != DeploymentModeDedicatedDatabase {
+		return nil, nil, fmt.Errorf("tenant database target %s is not dedicated", target.OrganizationID)
+	}
+	if target.Status != TargetStatusProvisioned {
+		return nil, nil, fmt.Errorf("tenant database %q is not provisioned: %s", target.DatabaseName, target.Status)
+	}
+	if target.DatabaseName == "" {
+		return nil, nil, fmt.Errorf("tenant database name is required for dedicated tenant database")
+	}
+	tenantURL, err := DatabaseURLForName(r.adminURL, target.DatabaseName)
 	if err != nil {
-		return nil, fmt.Errorf("connect tenant database: %w", err)
+		return nil, nil, err
 	}
-	actual, loaded := r.pools.LoadOrStore(tenantURL, pool)
-	if loaded {
-		pool.Close()
-		return actual.(*pgxpool.Pool), nil
+	return r.cache.Acquire(ctx, tenantURL)
+}
+
+func (r *PoolRouter) ReapIdle() int {
+	if r == nil || r.cache == nil {
+		return 0
 	}
-	return pool, nil
+	return r.cache.ReapIdle()
+}
+
+func (r *PoolRouter) Stats() PoolRouterStats {
+	if r == nil || r.cache == nil {
+		return PoolRouterStats{Closed: true}
+	}
+	return r.cache.Stats()
 }
 
 type errorRow struct {

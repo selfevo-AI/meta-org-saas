@@ -15,7 +15,7 @@ const requiredPageSnippets = [
   'supplyChainFunctionGroups',
   'activeSupplyChainFunction',
   'targetTypes: [',
-  'loadBusinessTreeNodes(token, activeDomain, activeSupplyChainFunction)',
+  'loadBusinessTreeNodes(token, activeDomain, currentOrganizationID, activeSupplyChainFunction)',
   'currentSupplyChainFunctionID',
   'onSupplyChainFunctionChange',
   'externalSelection={activeBusinessSelection}',

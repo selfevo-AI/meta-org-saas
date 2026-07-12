@@ -33,6 +33,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/verification"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/workflow"
@@ -62,7 +63,15 @@ func main() {
 	if err := database.RunMigrations(context.Background(), db, cfg.MigrationsPath); err != nil {
 		log.Fatalf("migrations failed: %v", err)
 	}
-	tenantBusinessDB := tenantdb.NewPoolRouter(db, cfg.TenantDatabaseAdminURL)
+	tenantBusinessDB := tenantdb.NewPoolRouterWithConfig(db, cfg.TenantDatabaseAdminURL, tenantdb.PoolRouterConfig{
+		MaxCachedPools:        cfg.TenantDatabasePoolMaxEntries,
+		MaxConnectionsPerPool: int32(cfg.TenantDatabasePoolMaxConnections),
+		MinConnectionsPerPool: int32(cfg.TenantDatabasePoolMinConnections),
+		IdlePoolTimeout:       time.Duration(cfg.TenantDatabasePoolIdleSeconds) * time.Second,
+		SweepInterval:         time.Duration(cfg.TenantDatabasePoolSweepSeconds) * time.Second,
+		ConnectionIdleTimeout: time.Duration(cfg.TenantDatabaseConnIdleSeconds) * time.Second,
+		ConnectionLifetime:    time.Duration(cfg.TenantDatabaseConnLifetimeSeconds) * time.Second,
+	})
 	defer tenantBusinessDB.Close()
 
 	modelSecretBox, err := secretbox.New(cfg.ModelSecretKey)
@@ -85,7 +94,9 @@ func main() {
 		ClusterKey:         cfg.TenantDatabaseDefaultCluster,
 		Region:             cfg.TenantDatabaseDefaultRegion,
 	}))
+	tenantMigrator := tenantdb.FileTenantMigrator{MigrationsDir: cfg.TenantMigrationsPath}
 	saasOptions := []saas.ServiceOption{saas.WithSecurityKernel(securityKernel), saas.WithIndustryPolicy(industrySvc)}
+	var tenantProvisioningWorker *saas.TenantDatabaseProvisioningWorker
 	if cfg.MetaOrgMode == saas.ModeSaaS && cfg.TenantDatabaseMode == tenantdb.DeploymentModeDedicatedDatabase {
 		tenantConnCtx, tenantConnCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		tenantAdminDB, err := database.Connect(tenantConnCtx, cfg.TenantDatabaseAdminURL)
@@ -94,20 +105,56 @@ func main() {
 			log.Fatalf("tenant database admin connection failed: %v", err)
 		}
 		defer tenantAdminDB.Close()
-		saasOptions = append(saasOptions, saas.WithTenantDatabaseProvisioner(tenantdb.NewProvisioner(tenantdb.ProvisionerConfig{
+		provisioner := tenantdb.NewProvisioner(tenantdb.ProvisionerConfig{
 			AdminURL: cfg.TenantDatabaseAdminURL,
 			Creator:  tenantdb.NewCatalogDatabaseCreator(tenantdb.NewPGDatabaseCatalog(tenantAdminDB)),
-			Migrator: tenantdb.FileTenantMigrator{MigrationsDir: cfg.TenantMigrationsPath},
-		})))
-		saasOptions = append(saasOptions, saas.WithTenantDatabaseBootstrapper(tenantdb.TenantBootstrapper{AdminURL: cfg.TenantDatabaseAdminURL}))
+			Migrator: tenantMigrator,
+		})
+		if cfg.TenantProvisioningWorkerEnabled {
+			tenantProvisioningWorker = saas.NewTenantDatabaseProvisioningWorker(
+				saasRepo,
+				provisioner,
+				tenantdb.TenantBootstrapper{AdminURL: cfg.TenantDatabaseAdminURL},
+				saas.TenantDatabaseProvisioningWorkerConfig{
+					PollInterval:   time.Duration(cfg.TenantProvisioningPollSeconds) * time.Second,
+					LeaseDuration:  time.Duration(cfg.TenantProvisioningLeaseSeconds) * time.Second,
+					RetryBaseDelay: time.Duration(cfg.TenantProvisioningRetrySeconds) * time.Second,
+					RetryMaxDelay:  time.Duration(cfg.TenantProvisioningRetryMaxSeconds) * time.Second,
+				},
+			)
+		}
+	}
+	var tenantProjectionWorker *tenantprojection.Worker
+	if cfg.MetaOrgMode == saas.ModeSaaS &&
+		cfg.TenantDatabaseMode == tenantdb.DeploymentModeDedicatedDatabase &&
+		cfg.TenantProjectionWorkerEnabled {
+		tenantProjectionWorker = tenantprojection.NewWorker(
+			tenantprojection.NewRepository(db), tenantBusinessDB, tenantMigrator, saasRepo,
+			tenantprojection.WorkerConfig{
+				AdminURL:      cfg.TenantDatabaseAdminURL,
+				PollInterval:  time.Duration(cfg.TenantProjectionPollSeconds) * time.Second,
+				LeaseDuration: time.Duration(cfg.TenantProjectionLeaseSeconds) * time.Second,
+				RetryDelay:    time.Duration(cfg.TenantProjectionRetrySeconds) * time.Second,
+				BatchSize:     cfg.TenantProjectionBatchSize,
+				TargetLimit:   cfg.TenantProjectionTargetLimit,
+				ActivityLimit: cfg.TenantProjectionActivityLimit,
+				MaxAttempts:   cfg.TenantProjectionMaxAttempts,
+			},
+		)
 	}
 	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saasOptions...)
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
 		log.Fatalf("platform admin bootstrap failed: %v", err)
 	}
+	if tenantProvisioningWorker != nil {
+		tenantProvisioningWorker.Start(appCtx)
+	}
 	saasHandler := saas.NewHandler(saasSvc)
 
 	systemAdminRepo := systemadmin.NewRepository(db)
+	if tenantProjectionWorker != nil {
+		tenantProjectionWorker.Start(appCtx)
+	}
 	systemAdminSvc := systemadmin.NewService(systemAdminRepo)
 	systemAdminHandler := systemadmin.NewHandler(systemAdminSvc)
 
@@ -277,36 +324,38 @@ func main() {
 
 	router := server.NewRouter(cfg.CorsOrigins)
 	gateway.RegisterRoutes(router, &gateway.Dependencies{
-		JWTSecret:              cfg.JWTSecret,
-		IdentityHandler:        identHandler,
-		OrganizationHandler:    orgHandler,
-		LayerHandler:           layerHandler,
-		CapabilityHandler:      capHandler,
-		CostingHandler:         costHandler,
-		DashboardHandler:       dashHandler,
-		MetaOrgHandler:         metaHandler,
-		MetaResourceHandler:    metaResourceHandler,
-		AssistantHandler:       assistantHandler,
-		AIGatewayHandler:       aiHandler,
-		WorkflowHandler:        wfHandler,
-		ProjectHandler:         projectHandler,
-		FinanceHandler:         financeHandler,
-		InventoryHandler:       inventoryHandler,
-		IndustryHandler:        industryHandler,
-		ProcurementHandler:     procurementHandler,
-		SalesHandler:           salesHandler,
-		RuntimeHandler:         runtimeHandler,
-		ToolRuntimeHandler:     toolHandler,
-		SaaSHandler:            saasHandler,
-		SystemAdminHandler:     systemAdminHandler,
-		TenantResolver:         saasSvc,
-		PlatformRoleResolver:   systemAdminRepo,
-		ObservabilityHandler:   obsHandler,
-		VerificationHandler:    verHandler,
-		GovernanceHandler:      govHandler,
-		EvolutionHandler:       evoHandler,
-		MonitoringAgentHandler: monitoringHandler,
-		ErpHandler:             erpHandler,
+		JWTSecret:                     cfg.JWTSecret,
+		IdentityHandler:               identHandler,
+		OrganizationHandler:           orgHandler,
+		LayerHandler:                  layerHandler,
+		CapabilityHandler:             capHandler,
+		CostingHandler:                costHandler,
+		DashboardHandler:              dashHandler,
+		MetaOrgHandler:                metaHandler,
+		MetaResourceHandler:           metaResourceHandler,
+		AssistantHandler:              assistantHandler,
+		AIGatewayHandler:              aiHandler,
+		WorkflowHandler:               wfHandler,
+		ProjectHandler:                projectHandler,
+		FinanceHandler:                financeHandler,
+		InventoryHandler:              inventoryHandler,
+		IndustryHandler:               industryHandler,
+		ProcurementHandler:            procurementHandler,
+		SalesHandler:                  salesHandler,
+		RuntimeHandler:                runtimeHandler,
+		ToolRuntimeHandler:            toolHandler,
+		SaaSHandler:                   saasHandler,
+		SystemAdminHandler:            systemAdminHandler,
+		TenantResolver:                saasSvc,
+		PlatformRoleResolver:          systemAdminRepo,
+		ObservabilityHandler:          obsHandler,
+		VerificationHandler:           verHandler,
+		GovernanceHandler:             govHandler,
+		EvolutionHandler:              evoHandler,
+		MonitoringAgentHandler:        monitoringHandler,
+		ErpHandler:                    erpHandler,
+		TenantPoolStatsProvider:       tenantBusinessDB,
+		TenantProjectionStatsProvider: tenantProjectionWorker,
 	})
 
 	srv := server.New(router, cfg.ServerPort)

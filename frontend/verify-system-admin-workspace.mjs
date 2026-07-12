@@ -153,7 +153,14 @@ const requiredPageSnippets = [
   'listPlatformAssistantSkills',
   "setWorkspaceView('overview')",
   "apiScope={isPlatformAdminSession ? 'platform' : 'tenant'}",
-  "setCurrentOrganizationId(null)",
+  "<DeveloperToolsWorkspace token={token} apiScope={isPlatformAdminSession ? 'platform' : 'tenant'} />",
+  'getActiveSessionScope',
+  'const activeSessionScope: SessionScope',
+  'getToken(activeScope)',
+  'getSessionUser(activeScope)',
+  "getCurrentOrganizationId('tenant')",
+  "{ scope: loginSurface }",
+  "clearSession(scope)",
   "t('auth.platformAdmin')",
   "t('auth.emailAlreadyRegistered')",
   'const tenantOnlyDomains',
@@ -275,15 +282,38 @@ const movedPlatformDomains = [
 ]
 
 const requiredAuthSnippets = [
-  'user.platform_role',
-  'localStorage.removeItem(ORGANIZATION_KEY)',
+  "export type SessionScope = 'tenant' | 'platform'",
+  "const SESSION_KEYS: Record<SessionScope, SessionKeySet>",
+  'ACTIVE_SURFACE_KEY',
+  'setActiveSessionScope',
+  'getActiveSessionScope',
+  'scope?: SessionScope',
+  'resolveSessionScope',
+  'SESSION_KEYS[scope].token',
+  'SESSION_KEYS[scope].user',
+  'SESSION_KEYS.tenant.organization',
+  'migrateLegacySession()',
 ]
 
 const requiredApiSnippets = [
   'organizationId?: string | null',
+  "scope?: SessionScope",
+  "const requestScope = options.scope ?? (isPlatformPath(path) ? 'platform' : 'tenant')",
+  "requestScope === 'tenant'",
+  "function isPlatformPath(path: string): boolean",
   'organizationId: organizationID',
   'diff?: IndustrySolutionDiff[]',
   'action: string',
+]
+
+const forbiddenAuthSnippets = [
+  "localStorage.setItem(TOKEN_KEY, token)",
+  "localStorage.setItem(USER_KEY, JSON.stringify(user))",
+  "localStorage.removeItem(ORGANIZATION_KEY)",
+]
+
+const forbiddenApiSnippets = [
+  'options.organizationId !== undefined ? options.organizationId : getCurrentOrganizationId()',
 ]
 
 function dictionarySlice(name, nextName) {
@@ -320,9 +350,19 @@ if (missingApiSnippets.length > 0) {
   failures.push(`Missing per-request organization context snippets:\n${missingApiSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
+const staleApiSnippets = forbiddenApiSnippets.filter((snippet) => apiSource.includes(snippet))
+if (staleApiSnippets.length > 0) {
+  failures.push(`Stale global organization header logic remains:\n${staleApiSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+}
+
 const missingAuthSnippets = requiredAuthSnippets.filter((snippet) => !authSource.includes(snippet))
 if (missingAuthSnippets.length > 0) {
   failures.push(`Missing platform session isolation snippets:\n${missingAuthSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
+}
+
+const staleAuthSnippets = forbiddenAuthSnippets.filter((snippet) => authSource.includes(snippet))
+if (staleAuthSnippets.length > 0) {
+  failures.push(`Stale single-slot session storage remains:\n${staleAuthSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
 }
 
 const missingPageSnippets = requiredPageSnippets.filter((snippet) => !pageSource.includes(snippet))

@@ -94,7 +94,7 @@ func (r *Repository) Organization(ctx context.Context) (OrganizationSummary, err
 	return s, nil
 }
 
-func (r *Repository) Workflow(ctx context.Context) (WorkflowSummary, error) {
+func (r *Repository) legacyWorkflow(ctx context.Context) (WorkflowSummary, error) {
 	var s WorkflowSummary
 	if orgID := currentTenantOrganizationID(ctx); orgID != nil {
 		if err := r.db.QueryRow(ctx, `
@@ -390,7 +390,7 @@ func (r *Repository) Evolution(ctx context.Context) (EvolutionSummary, error) {
 	return s, nil
 }
 
-func (r *Repository) RecentEvents(ctx context.Context, limit int) ([]RecentEvent, error) {
+func (r *Repository) legacyRecentEvents(ctx context.Context, limit int) ([]RecentEvent, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}

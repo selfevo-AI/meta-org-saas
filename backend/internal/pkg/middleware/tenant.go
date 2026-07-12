@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 )
 
 type tenantContextKey string
@@ -22,15 +23,16 @@ var (
 )
 
 type TenantContext struct {
-	Mode             string
-	UserID           uuid.UUID
-	OrganizationID   *uuid.UUID
-	IsPlatformAdmin  bool
-	PlatformRole     string
-	MembershipID     *uuid.UUID
-	AuthorityTier    string
-	EnabledModules   map[string]bool
-	OnboardingStatus string
+	Mode                string
+	UserID              uuid.UUID
+	OrganizationID      *uuid.UUID
+	IsPlatformAdmin     bool
+	PlatformRole        string
+	PlatformPermissions map[string]bool
+	MembershipID        *uuid.UUID
+	AuthorityTier       string
+	EnabledModules      map[string]bool
+	OnboardingStatus    string
 
 	TenantDatabaseDeploymentMode string
 	TenantDatabaseClusterKey     string
@@ -77,6 +79,10 @@ func TenantMiddleware(resolver TenantResolver) func(http.Handler) http.Handler {
 				}
 				return
 			}
+			if tenant.IsPlatformAdmin && !platformTenantAccessAllowed(tenant, r.Method) {
+				writeTenantError(w, http.StatusForbidden, "platform_tenant_forbidden")
+				return
+			}
 			if moduleKey := moduleForPath(r.URL.Path); tenant.Mode == "saas" && moduleKey != "" && !tenant.EnabledModules[moduleKey] {
 				writeTenantError(w, http.StatusForbidden, "module_disabled")
 				return
@@ -85,6 +91,18 @@ func TenantMiddleware(resolver TenantResolver) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func platformTenantAccessAllowed(tenant *TenantContext, method string) bool {
+	if tenant == nil || !tenant.IsPlatformAdmin {
+		return true
+	}
+	permission := platformauth.PermissionTenantDataManage
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		permission = platformauth.PermissionTenantDataRead
+	}
+	return tenant.PlatformPermissions[permission]
 }
 
 func moduleForPath(path string) string {

@@ -34,7 +34,15 @@ func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 }
 
 func (h *Handler) RegisterProtectedRoutes(r chi.Router) {
+	h.RegisterSelfServiceRoutes(r)
+	h.RegisterPlatformManagementRoutes(r)
+}
+
+func (h *Handler) RegisterSelfServiceRoutes(r chi.Router) {
 	r.Post("/auth/me/password", h.changeOwnPassword)
+}
+
+func (h *Handler) RegisterPlatformManagementRoutes(r chi.Router) {
 	r.Post("/agents/register", h.registerAgent)
 	r.Get("/agents", h.listAgents)
 }

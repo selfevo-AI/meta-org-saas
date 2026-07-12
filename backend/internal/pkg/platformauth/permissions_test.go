@@ -19,6 +19,9 @@ func TestRolePermissionMatrix(t *testing.T) {
 		{name: "admin can approve database maintenance", role: RoleAdmin, permission: PermissionDatabaseMaintenanceApprove, want: true},
 		{name: "operator cannot approve database maintenance", role: RoleOperator, permission: PermissionDatabaseMaintenanceApprove, want: false},
 		{name: "auditor cannot manage feature catalog", role: RoleAuditor, permission: PermissionPlatformFeatureManage, want: false},
+		{name: "auditor can read tenant data", role: RoleAuditor, permission: PermissionTenantDataRead, want: true},
+		{name: "auditor cannot mutate tenant data", role: RoleAuditor, permission: PermissionTenantDataManage, want: false},
+		{name: "operator can mutate tenant data", role: RoleOperator, permission: PermissionTenantDataManage, want: true},
 	}
 
 	for _, tt := range tests {

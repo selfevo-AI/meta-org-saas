@@ -2120,6 +2120,37 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_database_targets_physical_name
     ON platform.tenant_database_targets(cluster_key, database_name)
     WHERE database_name <> '';
 
+CREATE OR REPLACE FUNCTION platform.guard_tenant_database_target_state()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.status = 'provisioned'
+       AND NEW.status = 'provisioning'
+       AND OLD.deployment_mode = NEW.deployment_mode
+       AND OLD.cluster_key = NEW.cluster_key
+       AND OLD.region = NEW.region
+       AND OLD.database_name IS NOT DISTINCT FROM NEW.database_name
+       AND OLD.schema_name IS NOT DISTINCT FROM NEW.schema_name THEN
+        NEW.status := 'provisioned';
+        NEW.last_provisioned_at := OLD.last_provisioned_at;
+        IF NEW.connection_secret_ref = '' THEN
+            NEW.connection_secret_ref := OLD.connection_secret_ref;
+        END IF;
+        IF NEW.migration_version = '' THEN
+            NEW.migration_version := OLD.migration_version;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_tenant_database_target_state ON platform.tenant_database_targets;
+CREATE TRIGGER trg_guard_tenant_database_target_state
+BEFORE UPDATE ON platform.tenant_database_targets
+FOR EACH ROW
+EXECUTE FUNCTION platform.guard_tenant_database_target_state();
+
 CREATE TABLE IF NOT EXISTS platform.tenant_database_migrations (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_database_id  UUID NOT NULL REFERENCES platform.tenant_database_targets(id) ON DELETE CASCADE,
@@ -2139,6 +2170,128 @@ CREATE TABLE IF NOT EXISTS platform.tenant_database_migrations (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_database_migrations_status
     ON platform.tenant_database_migrations(status, migration_stage, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS platform.tenant_database_provisioning_jobs (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id       UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    tenant_database_id    UUID NOT NULL REFERENCES platform.tenant_database_targets(id) ON DELETE CASCADE,
+    idempotency_key       TEXT NOT NULL UNIQUE,
+    status                TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'running', 'retry_scheduled', 'succeeded', 'failed', 'cancelled')),
+    attempt_count         INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    max_attempts          INTEGER NOT NULL DEFAULT 8 CHECK (max_attempts BETWEEN 1 AND 100),
+    available_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    lease_owner           TEXT NOT NULL DEFAULT '',
+    lease_expires_at      TIMESTAMPTZ,
+    bootstrap_payload     JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(bootstrap_payload) = 'object'),
+    last_error            TEXT NOT NULL DEFAULT '',
+    started_at            TIMESTAMPTZ,
+    completed_at          TIMESTAMPTZ,
+    metadata              JSONB NOT NULL DEFAULT '{}'
+        CHECK (jsonb_typeof(metadata) = 'object'),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_database_provisioning_jobs_claim
+    ON platform.tenant_database_provisioning_jobs(status, available_at, created_at)
+    WHERE status IN ('pending', 'running', 'retry_scheduled');
+
+CREATE INDEX IF NOT EXISTS idx_tenant_database_provisioning_jobs_organization
+    ON platform.tenant_database_provisioning_jobs(organization_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS platform.tenant_integration_inbox (
+    event_id           UUID PRIMARY KEY,
+    event_type         TEXT NOT NULL,
+    event_version      INTEGER NOT NULL CHECK (event_version > 0),
+    organization_id    UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    actor_id           UUID,
+    actor_type         TEXT NOT NULL DEFAULT 'system',
+    authority_tier     TEXT NOT NULL DEFAULT '',
+    aggregate_type     TEXT NOT NULL,
+    aggregate_id       TEXT NOT NULL,
+    aggregate_version  BIGINT NOT NULL CHECK (aggregate_version > 0),
+    trace_id            UUID NOT NULL,
+    causation_id        UUID NOT NULL,
+    correlation_id      UUID NOT NULL,
+    occurred_at         TIMESTAMPTZ NOT NULL,
+    schema_version      TEXT NOT NULL,
+    payload             JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(payload) = 'object'),
+    metadata            JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object'),
+    status              TEXT NOT NULL DEFAULT 'received'
+        CHECK (status IN ('received', 'projected', 'failed')),
+    received_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    projected_at        TIMESTAMPTZ,
+    last_error          TEXT NOT NULL DEFAULT '',
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_integration_inbox_projection
+    ON platform.tenant_integration_inbox(status, received_at, occurred_at);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_integration_inbox_organization
+    ON platform.tenant_integration_inbox(organization_id, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS platform.tenant_operational_projections (
+    organization_id              UUID PRIMARY KEY REFERENCES public.organizations(id) ON DELETE CASCADE,
+    open_requirements            BIGINT NOT NULL DEFAULT 0,
+    active_projects              BIGINT NOT NULL DEFAULT 0,
+    projects_by_status           JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(projects_by_status) = 'object'),
+    over_budget_projects         BIGINT NOT NULL DEFAULT 0,
+    project_cost_today           NUMERIC(20,6) NOT NULL DEFAULT 0,
+    project_cost_month_to_date   NUMERIC(20,6) NOT NULL DEFAULT 0,
+    project_cost_currency        TEXT NOT NULL DEFAULT 'CNY',
+    workflow_templates           BIGINT NOT NULL DEFAULT 0,
+    active_workflow_templates    BIGINT NOT NULL DEFAULT 0,
+    workflow_instances           BIGINT NOT NULL DEFAULT 0,
+    workflow_instances_by_status JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(workflow_instances_by_status) = 'object'),
+    workflow_tasks_by_status     JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(workflow_tasks_by_status) = 'object'),
+    workflow_decisions_7d        BIGINT NOT NULL DEFAULT 0,
+    source_event_id              UUID NOT NULL,
+    source_occurred_at           TIMESTAMPTZ NOT NULL,
+    projected_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    projection_lag_ms            BIGINT NOT NULL DEFAULT 0 CHECK (projection_lag_ms >= 0),
+    snapshot_version             BIGINT NOT NULL DEFAULT 1 CHECK (snapshot_version > 0),
+    metadata                     JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_operational_projections_freshness
+    ON platform.tenant_operational_projections(projected_at, projection_lag_ms DESC);
+
+CREATE TABLE IF NOT EXISTS platform.tenant_workflow_projections (
+    organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    workflow_id     UUID NOT NULL,
+    project_id      UUID,
+    status          TEXT NOT NULL,
+    current_stage   INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL,
+    source_event_id UUID NOT NULL,
+    projected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (organization_id, workflow_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_tenant_workflow_projections_workflow
+    ON platform.tenant_workflow_projections(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_workflow_projections_status
+    ON platform.tenant_workflow_projections(organization_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS platform.tenant_activity_projections (
+    organization_id UUID NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    item_type       TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT '',
+    occurred_at     TIMESTAMPTZ NOT NULL,
+    source_event_id UUID NOT NULL,
+    projected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata        JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object'),
+    PRIMARY KEY (organization_id, item_type, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_activity_projections_recent
+    ON platform.tenant_activity_projections(organization_id, occurred_at DESC);
 
 CREATE TABLE IF NOT EXISTS platform.capability_packages (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2364,6 +2517,8 @@ VALUES
     ('model.manage', 'Manage model settings', 'Manage model providers, channels, and routing policy', 'model', 'active', '{"seed":true}'::jsonb),
     ('runtime.manage', 'Manage runtime operations', 'Manage runtime entities, views, APIs, and operations', 'runtime', 'active', '{"seed":true}'::jsonb),
     ('assistant.platform.run', 'Run platform assistant', 'Run platform-scoped assistant and tool workbench flows', 'assistant', 'active', '{"seed":true}'::jsonb),
+    ('tenant.data.read', 'Read tenant business data', 'Read tenant business workspaces through an explicitly selected organization context', 'tenant_data', 'active', '{"seed":true}'::jsonb),
+    ('tenant.data.manage', 'Manage tenant business data', 'Create and mutate tenant business records through an explicitly selected organization context', 'tenant_data', 'active', '{"seed":true}'::jsonb),
     ('platform.feature.manage', 'Manage platform features', 'Register and publish metadata-only platform features, menus, and future capabilities', 'platform', 'active', '{"seed":true}'::jsonb),
     ('platform.user.manage', 'Manage platform users', 'Create, disable, reset, and assign roles for platform users', 'identity', 'active', '{"seed":true}'::jsonb),
     ('platform.rbac.manage', 'Manage platform RBAC', 'Manage platform roles and permission assignments', 'identity', 'active', '{"seed":true}'::jsonb),
@@ -2409,12 +2564,14 @@ WITH role_permission_matrix(role_key, permission_key) AS (
     WHERE permission_key IN (
         'platform.read', 'organization.manage', 'model.manage',
         'runtime.manage', 'assistant.platform.run', 'database.maintenance.manage',
+        'tenant.data.read', 'tenant.data.manage',
         'industry.solution.manage', 'industry.solution.import', 'industry.solution.export',
         'industry.solution.verify',
         'tenant.industry_solution.apply'
     )
     UNION ALL
-    SELECT 'auditor', 'platform.read'
+    SELECT 'auditor', permission_key FROM platform.platform_permissions
+    WHERE permission_key IN ('platform.read', 'tenant.data.read')
 )
 INSERT INTO platform.platform_role_permissions(role_key, permission_key, status)
 SELECT role_key, permission_key, 'active'

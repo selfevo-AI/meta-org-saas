@@ -1417,7 +1417,6 @@ VALUES
     ('assistant', 'assistant_business_skills', 'assistant_business_skill', 'master', NULL, NULL, 'ABS'),
     ('assistant', 'assistant_skill_runs', 'assistant_skill_run', 'detail', 'assistant_business_skills', 'skill_id', 'ASR'),
     ('assistant', 'skill', 'skill', 'master', NULL, NULL, 'SKL'),
-    ('assistant', 'skill_details', 'skill_detail', 'detail', 'skill', 'master_key', 'SKD'),
     ('assistant', 'skill_publication_requests', 'skill_publication_request', 'detail', 'skill', 'source_skill_id', 'SPR')
 ON CONFLICT (source_table) DO UPDATE SET
     module_name = EXCLUDED.module_name,
@@ -1427,6 +1426,76 @@ ON CONFLICT (source_table) DO UPDATE SET
     parent_fk = EXCLUDED.parent_fk,
     key_prefix = EXCLUDED.key_prefix,
     updated_at = NOW();
+
+DO $$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN
+        SELECT module_name, MIN(key_prefix) AS key_prefix
+        FROM module_master_source_catalog
+        WHERE module_name IN ('identity', 'aigateway', 'toolruntime', 'assistant')
+        GROUP BY module_name
+        ORDER BY module_name
+    LOOP
+        PERFORM ensure_module_master_detail_tables(rec.module_name, rec.key_prefix);
+    END LOOP;
+
+    FOR rec IN
+        SELECT source_table, key_prefix
+        FROM module_master_source_catalog
+        WHERE module_name IN ('identity', 'aigateway', 'toolruntime', 'assistant')
+          AND source_table <> 'skill_details'
+          AND module_table_exists(source_table)
+        ORDER BY source_table
+    LOOP
+        PERFORM ensure_source_master_key(rec.source_table, rec.key_prefix);
+    END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN
+        SELECT source_table
+        FROM module_master_source_catalog
+        WHERE module_name IN ('identity', 'aigateway', 'toolruntime', 'assistant')
+          AND source_table <> 'skill_details'
+          AND module_table_exists(source_table)
+        ORDER BY relation_mode, source_table
+    LOOP
+        PERFORM refresh_module_source(rec.source_table);
+    END LOOP;
+END;
+$$;
+
+DO $$
+DECLARE
+    rec RECORD;
+    v_trigger_name TEXT;
+BEGIN
+    FOR rec IN
+        SELECT source_table
+        FROM module_master_source_catalog
+        WHERE module_name IN ('identity', 'aigateway', 'toolruntime', 'assistant')
+          AND source_table <> 'skill_details'
+          AND module_table_exists(source_table)
+        ORDER BY source_table
+    LOOP
+        v_trigger_name := 'trg_refresh_' || rec.source_table || '_module_master';
+        EXECUTE FORMAT('DROP TRIGGER IF EXISTS %I ON %I', v_trigger_name, rec.source_table);
+        EXECUTE FORMAT(
+            'CREATE TRIGGER %I
+             AFTER INSERT OR UPDATE OR DELETE ON %I
+             FOR EACH STATEMENT EXECUTE FUNCTION refresh_module_source_trigger()',
+            v_trigger_name,
+            rec.source_table
+        );
+    END LOOP;
+END;
+$$;
 
 -- AI capability fragments moved from earlier platform/governance stages.
 ALTER TABLE ai_agents

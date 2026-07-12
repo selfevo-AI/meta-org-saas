@@ -14,17 +14,25 @@ import (
 )
 
 type TenantMigrationFile struct {
-	Filename string
-	Path     string
-	SQL      string
-	Checksum string
-	Stage    MigrationStage
+	Filename             string
+	Path                 string
+	SQL                  string
+	Checksum             string
+	Stage                MigrationStage
+	AcceptsChecksumDrift []string
+}
+
+type ChecksumReconciliation struct {
+	Filename         string
+	PreviousChecksum string
+	AcceptedChecksum string
+	RepairFilename   string
 }
 
 type TenantMigrationStore interface {
 	EnsureMigrationTable(context.Context) error
 	AppliedMigrations(context.Context) (map[string]string, error)
-	ApplyMigration(context.Context, TenantMigrationFile) error
+	ApplyMigration(context.Context, TenantMigrationFile, []ChecksumReconciliation) error
 	Close()
 }
 
@@ -44,7 +52,17 @@ func tenantMigrationTrackingSQL() string {
 			checksum   TEXT NOT NULL,
 			scope      TEXT NOT NULL,
 			applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-		)
+		);
+
+		CREATE TABLE IF NOT EXISTS tenant_migration_checksum_history (
+			id                BIGSERIAL PRIMARY KEY,
+			filename          TEXT NOT NULL,
+			previous_checksum TEXT NOT NULL,
+			accepted_checksum TEXT NOT NULL,
+			repair_filename   TEXT NOT NULL,
+			reconciled_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (filename, previous_checksum, accepted_checksum, repair_filename)
+		);
 	`
 }
 
@@ -86,20 +104,40 @@ func (m FileTenantMigrator) Migrate(ctx context.Context, _ Target, tenantDatabas
 		return MigrationResult{}, err
 	}
 
+	reconciliationsByRepair := map[string][]ChecksumReconciliation{}
+	for index, file := range files {
+		appliedChecksum, ok := appliedChecksums[file.Filename]
+		if !ok || appliedChecksum == file.Checksum {
+			continue
+		}
+		repairFilename := pendingChecksumRepairFor(files, appliedChecksums, index, file.Filename)
+		if repairFilename == "" {
+			return MigrationResult{}, fmt.Errorf("tenant migration checksum drift for %s", file.Filename)
+		}
+		reconciliationsByRepair[repairFilename] = append(reconciliationsByRepair[repairFilename], ChecksumReconciliation{
+			Filename:         file.Filename,
+			PreviousChecksum: appliedChecksum,
+			AcceptedChecksum: file.Checksum,
+			RepairFilename:   repairFilename,
+		})
+	}
+
 	appliedNames := []string{}
 	skippedNames := []string{}
+	reconciledNames := []string{}
 	appliedStages := []MigrationStage{}
 	checksums := map[string]string{}
 	for _, file := range files {
 		checksums[file.Filename] = file.Checksum
 		if appliedChecksum, ok := appliedChecksums[file.Filename]; ok {
 			if appliedChecksum != file.Checksum {
-				return MigrationResult{}, fmt.Errorf("tenant migration checksum drift for %s", file.Filename)
+				reconciledNames = append(reconciledNames, file.Filename)
+			} else {
+				skippedNames = append(skippedNames, file.Filename)
 			}
-			skippedNames = append(skippedNames, file.Filename)
 			continue
 		}
-		if err := store.ApplyMigration(ctx, file); err != nil {
+		if err := store.ApplyMigration(ctx, file, reconciliationsByRepair[file.Filename]); err != nil {
 			return MigrationResult{}, fmt.Errorf("apply tenant migration %s: %w", file.Filename, err)
 		}
 		appliedNames = append(appliedNames, file.Filename)
@@ -110,13 +148,28 @@ func (m FileTenantMigrator) Migrate(ctx context.Context, _ Target, tenantDatabas
 		Version:       TenantMigrationVersion(files),
 		AppliedStages: appliedStages,
 		Metadata: map[string]any{
-			"migration_mode":          "tenant_business",
-			"migration_files_applied": appliedNames,
-			"migration_files_skipped": skippedNames,
-			"migration_checksums":     checksums,
-			"migration_total_files":   len(files),
+			"migration_mode":                 "tenant_business",
+			"migration_files_applied":        appliedNames,
+			"migration_files_skipped":        skippedNames,
+			"migration_checksums_reconciled": reconciledNames,
+			"migration_checksums":            checksums,
+			"migration_total_files":          len(files),
 		},
 	}, nil
+}
+
+func pendingChecksumRepairFor(files []TenantMigrationFile, applied map[string]string, driftIndex int, filename string) string {
+	for _, candidate := range files[driftIndex+1:] {
+		if _, alreadyApplied := applied[candidate.Filename]; alreadyApplied {
+			continue
+		}
+		for _, accepted := range candidate.AcceptsChecksumDrift {
+			if accepted == filename {
+				return candidate.Filename
+			}
+		}
+	}
+	return ""
 }
 
 func (m FileTenantMigrator) migrationsDir() string {
@@ -151,12 +204,17 @@ func LoadTenantMigrationFiles(migrationsDir string) ([]TenantMigrationFile, erro
 		if err != nil {
 			return nil, fmt.Errorf("read tenant migration %s: %w", filename, err)
 		}
+		acceptedDrift, err := acceptedChecksumDriftFilenames(sql)
+		if err != nil {
+			return nil, fmt.Errorf("read tenant migration %s directives: %w", filename, err)
+		}
 		sum := sha256.Sum256([]byte(sql))
 		files = append(files, TenantMigrationFile{
-			Filename: filename,
-			Path:     path,
-			SQL:      sql,
-			Checksum: hex.EncodeToString(sum[:]),
+			Filename:             filename,
+			Path:                 path,
+			SQL:                  sql,
+			Checksum:             hex.EncodeToString(sum[:]),
+			AcceptsChecksumDrift: acceptedDrift,
 			Stage: MigrationStage{
 				Name:  migrationStageName(filename),
 				Scope: MigrationScopeTenantBusiness,
@@ -205,6 +263,29 @@ func readTenantMigrationSQL(path string, seen map[string]bool) (string, error) {
 		}
 	}
 	return out.String(), nil
+}
+
+func acceptedChecksumDriftFilenames(sql string) ([]string, error) {
+	const directive = "-- tenantdb:accept-checksum-drift "
+	accepted := make([]string, 0)
+	seen := map[string]bool{}
+	for _, line := range strings.Split(sql, "\n") {
+		value, ok := strings.CutPrefix(strings.TrimSpace(line), directive)
+		if !ok {
+			continue
+		}
+		filename := strings.TrimSpace(value)
+		if filename == "" || filename != filepath.Base(filename) || filepath.Ext(filename) != ".sql" {
+			return nil, fmt.Errorf("invalid checksum drift filename %q", filename)
+		}
+		if seen[filename] {
+			continue
+		}
+		seen[filename] = true
+		accepted = append(accepted, filename)
+	}
+	sort.Strings(accepted)
+	return accepted, nil
 }
 
 func TenantMigrationVersion(files []TenantMigrationFile) string {
@@ -263,7 +344,7 @@ func (s *PGTenantMigrationStore) AppliedMigrations(ctx context.Context) (map[str
 	return items, nil
 }
 
-func (s *PGTenantMigrationStore) ApplyMigration(ctx context.Context, file TenantMigrationFile) error {
+func (s *PGTenantMigrationStore) ApplyMigration(ctx context.Context, file TenantMigrationFile, reconciliations []ChecksumReconciliation) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tenant migration transaction: %w", err)
@@ -278,6 +359,27 @@ func (s *PGTenantMigrationStore) ApplyMigration(ctx context.Context, file Tenant
 		VALUES ($1, $2, $3)
 	`, file.Filename, file.Checksum, file.Stage.Scope); err != nil {
 		return fmt.Errorf("record tenant migration: %w", err)
+	}
+	for _, reconciliation := range reconciliations {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tenant_migration_checksum_history(
+			    filename, previous_checksum, accepted_checksum, repair_filename
+			)
+			VALUES ($1, $2, $3, $4)
+		`, reconciliation.Filename, reconciliation.PreviousChecksum, reconciliation.AcceptedChecksum, reconciliation.RepairFilename); err != nil {
+			return fmt.Errorf("record tenant migration checksum reconciliation: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE tenant_migration_runs
+			SET checksum = $1
+			WHERE filename = $2 AND checksum = $3
+		`, reconciliation.AcceptedChecksum, reconciliation.Filename, reconciliation.PreviousChecksum)
+		if err != nil {
+			return fmt.Errorf("update reconciled tenant migration checksum: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("reconcile tenant migration checksum %s: stored checksum changed concurrently", reconciliation.Filename)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit tenant migration: %w", err)

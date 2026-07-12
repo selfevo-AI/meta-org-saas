@@ -494,7 +494,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       const [orgItems, moduleItems] = await Promise.all([
         listPlatformOrganizations(token, 100),
-        listSaaSModules(token),
+        listSaaSModules(token, 'platform'),
       ])
       setPlatformOrganizations(orgItems)
       setSaaSModules(moduleItems)

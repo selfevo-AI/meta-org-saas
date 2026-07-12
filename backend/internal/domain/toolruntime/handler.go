@@ -43,6 +43,14 @@ func (h *Handler) RegisterPlatformRoutes(r chi.Router) {
 	r.Post("/platform/admin/tool-approvals/{id}/reject", h.reject)
 }
 
+func (h *Handler) RegisterTenantRoutes(r chi.Router) {
+	r.Get("/tools", h.listTools)
+	r.Get("/tool-executions", h.listExecutions)
+	r.Get("/tool-executions/{id}", h.getExecution)
+	r.Post("/tool-approvals/{id}/approve", h.approve)
+	r.Post("/tool-approvals/{id}/reject", h.reject)
+}
+
 func (h *Handler) createTool(w http.ResponseWriter, r *http.Request) {
 	var input CreateToolInput
 	if !decodeJSON(w, r, &input) {

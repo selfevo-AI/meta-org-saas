@@ -336,7 +336,7 @@ export function AIAssistant({
           }
           if (data.done && !stoppedForApproval) setState(completedState)
         },
-        controller.signal,
+        { signal: controller.signal, scope: apiScope },
       )
       if (currentInvocationID) {
         try {
@@ -428,7 +428,7 @@ export function AIAssistant({
           }
           if (data.done && !stoppedForApproval) setState(completedState)
         },
-        controller.signal,
+        { signal: controller.signal, scope: apiScope },
       )
       if (currentInvocationID) {
         try {

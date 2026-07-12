@@ -25,6 +25,7 @@ import {
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { API_BASE, apiRequest, getUserFieldPreference, saveUserFieldPreference } from '@/lib/api'
+import { getCurrentOrganizationId, normalizeOrganizationId } from '@/lib/auth'
 import { useI18n } from '@/lib/i18n'
 
 type LifecycleMode = 'Requirement' | 'Project' | 'Delivery' | 'Cost' | 'Feedback'
@@ -804,10 +805,15 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
 
   async function downloadRequirementDocument(documentID: string, fileName: string) {
     await run(async () => {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      }
+      const organizationId = normalizeOrganizationId(getCurrentOrganizationId('tenant'))
+      if (organizationId) {
+        headers['X-Organization-ID'] = organizationId
+      }
       const response = await fetch(`${API_BASE}/requirement-documents/${documentID}/download`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
       })
       if (!response.ok) {
         const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))

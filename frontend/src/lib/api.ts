@@ -1,4 +1,5 @@
 import { getCurrentOrganizationId, normalizeOrganizationId } from './auth'
+import type { SessionScope } from './auth'
 import type { ApiOperation } from './operations'
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8080/api/v1'
@@ -8,15 +9,23 @@ interface RequestOptions {
   body?: unknown
   token?: string
   organizationId?: string | null
+  scope?: SessionScope
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
   const headers: Record<string, string> = {}
+  const requestScope = options.scope ?? (isPlatformPath(path) ? 'platform' : 'tenant')
 
   if (options.token) {
     headers['Authorization'] = `Bearer ${options.token}`
-    const organizationId = normalizeOrganizationId(options.organizationId !== undefined ? options.organizationId : getCurrentOrganizationId())
+    const organizationId = normalizeOrganizationId(
+      options.organizationId !== undefined
+        ? options.organizationId
+        : requestScope === 'tenant'
+          ? getCurrentOrganizationId('tenant')
+          : null,
+    )
     if (organizationId) {
       headers['X-Organization-ID'] = organizationId
     }
@@ -42,6 +51,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   return response.json()
+}
+
+function isPlatformPath(path: string): boolean {
+  return path === '/platform' || path.startsWith('/platform/')
 }
 
 export type ERPRecord<T = Record<string, unknown>> = {
@@ -247,12 +260,12 @@ export async function registerUser(input: RegisterUserInput): Promise<AuthRespon
   })
 }
 
-export async function getMe(token: string): Promise<UserProfile> {
-  return apiRequest<UserProfile>('/auth/me', { token })
+export async function getMe(token: string, scope: SessionScope = 'tenant'): Promise<UserProfile> {
+  return apiRequest<UserProfile>('/auth/me', { token, scope })
 }
 
-export async function listSaaSModules(token: string): Promise<SaaSModule[]> {
-  return apiRequest<SaaSModule[]>('/modules', { token })
+export async function listSaaSModules(token: string, scope: SessionScope = 'tenant'): Promise<SaaSModule[]> {
+  return apiRequest<SaaSModule[]>('/modules', { token, scope })
 }
 
 export async function listIndustries(token: string): Promise<Industry[]> {

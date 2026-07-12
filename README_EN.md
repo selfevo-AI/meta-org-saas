@@ -172,6 +172,17 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 | `001_erp_code_baseline.sql` | ERP and industry business baseline, including organization, project, workflow, finance, costing, and supply-chain solution tables. |
 | `002_erp_platform_integration_baseline.sql` | Runtime projection, module integration, and platform master-data synchronization between ERP and platform management. |
 | `004_ai_capability_baseline.sql` | Models, providers/channels, agents, tool runtime, AI Assistant, context, skills, AI usage, and cross-stage foreign-key rebuilds. |
+| `005_industry_solution_consolidation.sql` | Industry-solution storage and historical solution-data consolidation. |
+| `006_saas_manufacturing_module_seed.sql` | Manufacturing module and ERPNext-style industry-solution seeds. |
+| `007_saas_runtime_organization_target_repair.sql` | SaaS runtime organization and tenant-database target repair. |
+| `008_ai_gateway_model_group_repair.sql` | Compatibility repair for local/development databases that applied an older `004` before AI Gateway model group, access token, and balance tables were folded into it. |
+| `009_platform_tenant_data_permissions.sql` | Platform-to-tenant read/manage permission repair that keeps auditor access read-only. |
+| `010_tenant_database_provisioning_jobs.sql` | Persistent tenant database provisioning jobs, leases, retries, and repair for existing targets. |
+| `011_ai_module_master_detail_runtime_repair.sql` | Cross-stage canonical tables, source keys, and projection triggers for AI Gateway, Tool Runtime, and Assistant. |
+| `012_tenant_database_target_state_repair.sql` | Prevents repeated onboarding from downgrading provisioned tenant targets and repairs succeeded-job targets stuck in provisioning. |
+| `013_tenant_event_projection_infrastructure.sql` | Platform event inbox, tenant operational/workflow/activity projections, and cross-database read models for Dashboard and Meta-Org. |
+
+Tenant databases migrate independently from `migrations/tenant/`: `001_tenant_business_baseline.sql` establishes the business baseline and `002_tenant_projection_outbox.sql` adds the transactional outbox with leasing, retries, and publication state.
 
 The stage principle is SaaS management platform first, then platform-created or platform-adjusted industry solutions, then the ERP baseline and AI capability baseline. Future database structure, relationship, foreign-key, index, seed-data, or schema-generation changes must update the matching stage SQL and `migrations/BASELINE_RESTRUCTURE.md`.
 
@@ -275,7 +286,10 @@ npm install
 npm run dev
 npm run lint
 npm run build
+npm run test:e2e
 ```
+
+`npm run test:e2e` uses Playwright to verify desktop/mobile platform and tenant login, session scope, and horizontal overflow. Start the backend on `8080` and frontend on `3000` first; CI installs Chromium and starts the full test environment automatically.
 
 The frontend defaults to:
 
@@ -321,9 +335,9 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
   Select-Object StatusCode,Content
 ```
 
-The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health returning `{"status":"ok"}`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
+The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health reporting `status: ok` plus tenant-identifier-free pool aggregates in `tenant_database_pools`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
 
-After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply all four staged baselines: `000/001/002/004`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. If SaaS management endpoints fail with `relation platform.database_maintenance_jobs does not exist` or `relation platform.tenant_database_targets does not exist`, the backend is usually still connected to old `meta_org` or an incomplete platform database. Confirm `DATABASE_URL` and `PLATFORM_DATABASE_URL` point to `meta_org_saas`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so the migration runner applies `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
+After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply the staged baselines and compatibility repair: `000/001/002/004/008`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation ai_model_groups does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. If SaaS management endpoints fail with `relation platform.database_maintenance_jobs does not exist` or `relation platform.tenant_database_targets does not exist`, the backend is usually still connected to old `meta_org` or an incomplete platform database. Confirm `DATABASE_URL` and `PLATFORM_DATABASE_URL` point to `meta_org_saas`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so the migration runner applies `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, `004_ai_capability_baseline.sql`, and `008_ai_gateway_model_group_repair.sql`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
 
 If tenant Finance / ERP APIs fail with `relation gl_journal_entries does not exist`, inspect the current organization's `meta_org_xxxx` tenant database. A tenant database created manually with `psql -f migrations/tenant/001_tenant_business_baseline.sql` does not expand `tenantdb:include` and will miss ERP/Finance tables.
 
@@ -343,6 +357,21 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `TENANT_DATABASE_MODE` | `dedicated_database` | Tenant database target mode; `dedicated_database` records one physical database per tenant, `shared_schema` preserves the compatibility single-database schema mode. |
 | `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | Default tenant database cluster key recorded in the platform catalog. |
 | `TENANT_DATABASE_DEFAULT_REGION` | `local` | Default tenant database region recorded in the platform catalog. |
+| `TENANT_DATABASE_POOL_MAX_ENTRIES` | `16` | Maximum tenant database pools cached by one backend instance; the least recently used pool without active leases is evicted at capacity. |
+| `TENANT_DATABASE_POOL_MAX_CONNECTIONS` | `4` | Maximum PostgreSQL connections per tenant pool; size this with backend replica count and the database connection budget. |
+| `TENANT_DATABASE_POOL_MIN_CONNECTIONS` | `0` | Minimum connections retained per tenant pool; the default avoids reserving connections for inactive tenants. |
+| `TENANT_DATABASE_POOL_IDLE_SECONDS` | `900` | Seconds an inactive tenant pool may remain idle before eviction. |
+| `TENANT_DATABASE_POOL_SWEEP_SECONDS` | `60` | Background idle-pool sweep interval in seconds. |
+| `TENANT_DATABASE_CONNECTION_IDLE_SECONDS` | `300` | Seconds before pgx retires an idle connection within a tenant pool. |
+| `TENANT_DATABASE_CONNECTION_LIFETIME_SECONDS` | `1800` | Maximum lifetime in seconds for a tenant database connection. |
+| `TENANT_PROJECTION_WORKER_ENABLED` | `true` | Enables the tenant outbox to platform projection worker. |
+| `TENANT_PROJECTION_POLL_SECONDS` | `2` | Poll interval when no events are available. |
+| `TENANT_PROJECTION_LEASE_SECONDS` | `60` | Lease duration for a claimed outbox batch. |
+| `TENANT_PROJECTION_RETRY_SECONDS` | `5` | Base retry delay after a projection failure. |
+| `TENANT_PROJECTION_BATCH_SIZE` | `100` | Maximum events claimed per tenant and run. |
+| `TENANT_PROJECTION_TARGET_LIMIT` | `100` | Maximum provisioned tenants scanned per run. |
+| `TENANT_PROJECTION_ACTIVITY_LIMIT` | `50` | Recent activity rows retained per tenant projection. |
+| `TENANT_PROJECTION_MAX_ATTEMPTS` | `20` | Maximum processing attempts for an outbox event. |
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT signing secret. Replace in production. |
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32-character key for model provider and finance adapter secret encryption. Replace in production. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Frontend origins allowed to call the API. |

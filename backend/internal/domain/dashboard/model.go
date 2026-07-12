@@ -37,6 +37,10 @@ type WorkflowSummary struct {
 	InstancesByStatus map[string]int64 `json:"instances_by_status"`
 	TasksByStatus     map[string]int64 `json:"tasks_by_status"`
 	Decisions7d       int64            `json:"decisions_7d"`
+	SourceOccurredAt  time.Time        `json:"source_occurred_at,omitempty"`
+	ProjectedAt       time.Time        `json:"projected_at,omitempty"`
+	ProjectionLagMs   int64            `json:"projection_lag_ms"`
+	SnapshotVersion   int64            `json:"snapshot_version"`
 }
 
 type CapabilitySummary struct {

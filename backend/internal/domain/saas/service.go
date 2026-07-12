@@ -25,12 +25,10 @@ var (
 )
 
 type Service struct {
-	repo                       repository
-	mode                       string
-	securityKernel             securitykernel.Client
-	industryPolicy             industryPolicy
-	tenantDatabaseProvisioner  tenantDatabaseProvisioner
-	tenantDatabaseBootstrapper tenantDatabaseBootstrapper
+	repo           repository
+	mode           string
+	securityKernel securitykernel.Client
+	industryPolicy industryPolicy
 }
 
 type ServiceOption func(*Service)
@@ -61,30 +59,15 @@ type repository interface {
 	GetAgentMembership(context.Context, uuid.UUID, uuid.UUID) (*membershipRecord, error)
 	GetOrganizationAccount(context.Context, uuid.UUID) (*OrganizationAccount, error)
 	GetPlatformRole(context.Context, uuid.UUID) (string, error)
+	ListPlatformRolePermissions(context.Context, string) ([]string, error)
 }
 
 type tenantDatabaseTargetProvider interface {
 	GetTenantDatabaseTarget(context.Context, uuid.UUID) (*tenantdb.Target, error)
 }
 
-type tenantDatabaseTargetUpdater interface {
-	UpdateTenantDatabaseTarget(context.Context, tenantdb.Target) error
-}
-
-type tenantDatabaseMigrationRecorder interface {
-	RecordTenantDatabaseMigrationResult(context.Context, tenantdb.Target, tenantdb.MigrationResult) error
-}
-
 type sampleTenantCreator interface {
 	CreateBusinessClosureSampleTenant(context.Context, CreateSampleTenantRecord) (*CreatedSampleTenant, error)
-}
-
-type tenantDatabaseProvisioner interface {
-	Provision(context.Context, tenantdb.Target) (tenantdb.ProvisionResult, error)
-}
-
-type tenantDatabaseBootstrapper interface {
-	BootstrapTenant(context.Context, tenantdb.Target, tenantdb.TenantBootstrapInput) error
 }
 
 func WithSecurityKernel(client securitykernel.Client) ServiceOption {
@@ -96,18 +79,6 @@ func WithSecurityKernel(client securitykernel.Client) ServiceOption {
 func WithIndustryPolicy(policy industryPolicy) ServiceOption {
 	return func(s *Service) {
 		s.industryPolicy = policy
-	}
-}
-
-func WithTenantDatabaseProvisioner(provisioner tenantDatabaseProvisioner) ServiceOption {
-	return func(s *Service) {
-		s.tenantDatabaseProvisioner = provisioner
-	}
-}
-
-func WithTenantDatabaseBootstrapper(bootstrapper tenantDatabaseBootstrapper) ServiceOption {
-	return func(s *Service) {
-		s.tenantDatabaseBootstrapper = bootstrapper
 	}
 }
 
@@ -215,16 +186,6 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID uuid.UUID, inpu
 	if err != nil {
 		return nil, err
 	}
-	ownerProfile, _ := s.repo.GetUserProfile(ctx, userID)
-	s.provisionTenantDatabase(ctx, org.ID, tenantdb.TenantBootstrapInput{
-		OrganizationID:   org.ID,
-		OrganizationName: org.Name,
-		Description:      org.Description,
-		OwnerUserID:      userID,
-		OwnerName:        ownerProfileName(ownerProfile),
-		OwnerEmail:       ownerProfileEmail(ownerProfile),
-		EnabledModules:   modules,
-	})
 	profile, err := s.GetProfile(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -261,17 +222,6 @@ func (s *Service) CreateBusinessClosureSampleTenant(ctx context.Context, actorID
 	if err != nil {
 		return nil, err
 	}
-	s.provisionTenantDatabase(ctx, created.Organization.ID, tenantdb.TenantBootstrapInput{
-		OrganizationID:               created.Organization.ID,
-		OrganizationName:             created.Organization.Name,
-		Description:                  created.Organization.Description,
-		OwnerUserID:                  created.OwnerUserID,
-		OwnerName:                    "ERPNext Manufacturing Demo Owner",
-		OwnerEmail:                   created.OwnerEmail,
-		EnabledModules:               modules,
-		SampleKey:                    "erpnext_manufacturing_demo",
-		IncludeBusinessClosureSample: true,
-	})
 	target := s.resolveTenantDatabaseTarget(ctx, created.Organization.ID)
 	return &SampleTenantResponse{
 		Organization:            created.Organization,
@@ -526,6 +476,10 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 	}
 
 	isPlatform := profile.PlatformRole != ""
+	platformPermissions := map[string]bool{}
+	if isPlatform {
+		platformPermissions = s.resolvePlatformPermissions(ctx, profile.PlatformRole)
+	}
 	var orgID *uuid.UUID
 	if requested != nil {
 		orgID = requested
@@ -563,18 +517,35 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 	}
 	enabled, _ := s.repo.ListEnabledModules(ctx, *orgID)
 	tenant := &middleware.TenantContext{
-		Mode:             s.mode,
-		UserID:           actorID,
-		OrganizationID:   orgID,
-		IsPlatformAdmin:  isPlatform,
-		PlatformRole:     profile.PlatformRole,
-		MembershipID:     membershipID,
-		AuthorityTier:    authorityTier,
-		EnabledModules:   enabled,
-		OnboardingStatus: profile.OnboardingStatus,
+		Mode:                s.mode,
+		UserID:              actorID,
+		OrganizationID:      orgID,
+		IsPlatformAdmin:     isPlatform,
+		PlatformRole:        profile.PlatformRole,
+		PlatformPermissions: platformPermissions,
+		MembershipID:        membershipID,
+		AuthorityTier:       authorityTier,
+		EnabledModules:      enabled,
+		OnboardingStatus:    profile.OnboardingStatus,
 	}
 	s.applyTenantDatabaseTarget(ctx, tenant, *orgID)
 	return tenant, nil
+}
+
+func (s *Service) resolvePlatformPermissions(ctx context.Context, role string) map[string]bool {
+	permissions := platformauth.PermissionsForRole(role)
+	items, err := s.repo.ListPlatformRolePermissions(ctx, platformauth.NormalizeRole(role))
+	if err != nil || len(items) == 0 {
+		return permissions
+	}
+	permissions = map[string]bool{}
+	for _, permission := range items {
+		permission = strings.TrimSpace(permission)
+		if permission != "" {
+			permissions[permission] = true
+		}
+	}
+	return permissions
 }
 
 func (s *Service) applyTenantDatabaseTarget(ctx context.Context, tenant *middleware.TenantContext, orgID uuid.UUID) {
@@ -606,63 +577,13 @@ func (s *Service) resolveTenantDatabaseTarget(ctx context.Context, orgID uuid.UU
 	}
 }
 
-func (s *Service) provisionTenantDatabase(ctx context.Context, orgID uuid.UUID, bootstrapInput tenantdb.TenantBootstrapInput) {
-	if s.tenantDatabaseProvisioner == nil {
-		return
-	}
-	provider, ok := s.repo.(tenantDatabaseTargetProvider)
-	if !ok {
-		return
-	}
-	updater, ok := s.repo.(tenantDatabaseTargetUpdater)
-	if !ok {
-		return
-	}
-	target, err := provider.GetTenantDatabaseTarget(ctx, orgID)
-	if err != nil || target == nil || target.Status == tenantdb.TargetStatusArchived {
-		return
-	}
-	result, err := s.tenantDatabaseProvisioner.Provision(ctx, *target)
-	updated := result.Target
-	if updated.OrganizationID == uuid.Nil {
-		updated = *target
-	}
-	if err != nil && updated.Status == "" {
-		updated.Status = tenantdb.TargetStatusFailed
-		updated.Metadata = mergeTenantDatabaseMetadata(updated.Metadata, map[string]any{"error": err.Error()})
-	}
-	_ = updater.UpdateTenantDatabaseTarget(ctx, updated)
-	if s.tenantDatabaseBootstrapper != nil && updated.Status == tenantdb.TargetStatusProvisioned {
-		bootstrapInput.OrganizationID = orgID
-		if err := s.tenantDatabaseBootstrapper.BootstrapTenant(ctx, updated, bootstrapInput); err != nil {
-			updated.Status = tenantdb.TargetStatusFailed
-			updated.Metadata = mergeTenantDatabaseMetadata(updated.Metadata, map[string]any{"bootstrap_error": err.Error()})
-			_ = updater.UpdateTenantDatabaseTarget(ctx, updated)
-		}
-	}
-	if recorder, ok := s.repo.(tenantDatabaseMigrationRecorder); ok {
-		_ = recorder.RecordTenantDatabaseMigrationResult(ctx, updated, result.Migration)
-	}
-}
-
-func mergeTenantDatabaseMetadata(base map[string]any, extra map[string]any) map[string]any {
-	out := map[string]any{}
-	for key, value := range base {
-		out[key] = value
-	}
-	for key, value := range extra {
-		out[key] = value
-	}
-	return out
-}
-
 func (s *Service) requirePlatformAdmin(ctx context.Context, userID uuid.UUID) error {
 	return s.requirePlatformPermission(ctx, userID, platformauth.PermissionPlatformRead)
 }
 
 func (s *Service) requirePlatformPermission(ctx context.Context, userID uuid.UUID, permission string) error {
 	role, err := s.repo.GetPlatformRole(ctx, userID)
-	if err != nil || !platformauth.HasPermission(role, permission) {
+	if err != nil || !s.resolvePlatformPermissions(ctx, role)[permission] {
 		return ErrForbidden
 	}
 	return nil
@@ -670,7 +591,7 @@ func (s *Service) requirePlatformPermission(ctx context.Context, userID uuid.UUI
 
 func (s *Service) requireOrgAdmin(ctx context.Context, userID uuid.UUID, orgID uuid.UUID) error {
 	if role, err := s.repo.GetPlatformRole(ctx, userID); err == nil {
-		if platformauth.HasPermission(role, platformauth.PermissionOrganizationManage) {
+		if s.resolvePlatformPermissions(ctx, role)[platformauth.PermissionOrganizationManage] {
 			return nil
 		}
 		return ErrForbidden
@@ -741,20 +662,6 @@ func (s *Service) allModuleKeys(ctx context.Context) ([]string, error) {
 	}
 	keys = append(keys, "organization", "project", "workflow", "finance", "costing", "erp", "inventory", "procurement", "sales", "manufacturing")
 	return normalizeModuleKeys(keys), nil
-}
-
-func ownerProfileName(profile *UserProfile) string {
-	if profile == nil || strings.TrimSpace(profile.Name) == "" {
-		return "Tenant Owner"
-	}
-	return profile.Name
-}
-
-func ownerProfileEmail(profile *UserProfile) string {
-	if profile == nil {
-		return ""
-	}
-	return profile.Email
 }
 
 func validAuthorityTier(value string) bool {

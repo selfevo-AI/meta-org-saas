@@ -1,6 +1,15 @@
+import { getCurrentOrganizationId, normalizeOrganizationId } from './auth'
+import type { SessionScope } from './auth'
+
 export interface StreamEvent<T = unknown> {
   event: string
   data: T
+}
+
+interface StreamRequestOptions {
+  signal?: AbortSignal
+  scope?: SessionScope
+  organizationId?: string | null
 }
 
 function parseFrame<T>(frame: string): StreamEvent<T> | null {
@@ -21,11 +30,11 @@ export async function streamSSE<T>(
   url: string,
   token: string,
   onEvent: (event: StreamEvent<T>) => void,
-  signal?: AbortSignal,
+  options: StreamRequestOptions = {},
 ) {
   const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal,
+    headers: streamHeaders(token, options),
+    signal: options.signal,
   })
   await readSSE(response, onEvent)
 }
@@ -35,15 +44,28 @@ export async function streamSSEPost<T>(
   token: string,
   body: unknown,
   onEvent: (event: StreamEvent<T>) => void,
-  signal?: AbortSignal,
+  options: StreamRequestOptions = {},
 ) {
   const response = await fetch(url, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: streamHeaders(token, options, true),
     body: JSON.stringify(body),
-    signal,
+    signal: options.signal,
   })
   await readSSE(response, onEvent)
+}
+
+function streamHeaders(token: string, options: StreamRequestOptions, includeJSON = false): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+  if (includeJSON) headers['Content-Type'] = 'application/json'
+  const scope = options.scope ?? 'tenant'
+  const organizationId = normalizeOrganizationId(
+    options.organizationId !== undefined ? options.organizationId : scope === 'tenant' ? getCurrentOrganizationId('tenant') : null,
+  )
+  if (organizationId) {
+    headers['X-Organization-ID'] = organizationId
+  }
+  return headers
 }
 
 async function readSSE<T>(response: Response, onEvent: (event: StreamEvent<T>) => void) {

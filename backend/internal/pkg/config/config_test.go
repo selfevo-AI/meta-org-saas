@@ -91,6 +91,21 @@ func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.
 	t.Setenv("TENANT_DATABASE_MODE", "")
 	t.Setenv("TENANT_DATABASE_DEFAULT_CLUSTER", "")
 	t.Setenv("TENANT_DATABASE_DEFAULT_REGION", "")
+	t.Setenv("TENANT_DATABASE_POOL_MAX_ENTRIES", "")
+	t.Setenv("TENANT_DATABASE_POOL_MAX_CONNECTIONS", "")
+	t.Setenv("TENANT_DATABASE_POOL_MIN_CONNECTIONS", "")
+	t.Setenv("TENANT_DATABASE_POOL_IDLE_SECONDS", "")
+	t.Setenv("TENANT_DATABASE_POOL_SWEEP_SECONDS", "")
+	t.Setenv("TENANT_DATABASE_CONNECTION_IDLE_SECONDS", "")
+	t.Setenv("TENANT_DATABASE_CONNECTION_LIFETIME_SECONDS", "")
+	t.Setenv("TENANT_PROJECTION_WORKER_ENABLED", "")
+	t.Setenv("TENANT_PROJECTION_POLL_SECONDS", "")
+	t.Setenv("TENANT_PROJECTION_LEASE_SECONDS", "")
+	t.Setenv("TENANT_PROJECTION_RETRY_SECONDS", "")
+	t.Setenv("TENANT_PROJECTION_BATCH_SIZE", "")
+	t.Setenv("TENANT_PROJECTION_TARGET_LIMIT", "")
+	t.Setenv("TENANT_PROJECTION_ACTIVITY_LIMIT", "")
+	t.Setenv("TENANT_PROJECTION_MAX_ATTEMPTS", "")
 
 	cfg := Load()
 
@@ -118,6 +133,21 @@ func TestLoadDatabaseTopologyConfigDefaultsToPhysicalTenantDatabases(t *testing.
 	if cfg.TenantDatabaseDefaultRegion != "local" {
 		t.Fatalf("TenantDatabaseDefaultRegion = %q, want local", cfg.TenantDatabaseDefaultRegion)
 	}
+	if cfg.TenantDatabasePoolMaxEntries != 16 || cfg.TenantDatabasePoolMaxConnections != 4 || cfg.TenantDatabasePoolMinConnections != 0 {
+		t.Fatalf("tenant pool capacity defaults = %d/%d/%d", cfg.TenantDatabasePoolMaxEntries, cfg.TenantDatabasePoolMaxConnections, cfg.TenantDatabasePoolMinConnections)
+	}
+	if cfg.TenantDatabasePoolIdleSeconds != 900 || cfg.TenantDatabasePoolSweepSeconds != 60 {
+		t.Fatalf("tenant pool eviction defaults = %d/%d", cfg.TenantDatabasePoolIdleSeconds, cfg.TenantDatabasePoolSweepSeconds)
+	}
+	if cfg.TenantDatabaseConnIdleSeconds != 300 || cfg.TenantDatabaseConnLifetimeSeconds != 1800 {
+		t.Fatalf("tenant connection lifetime defaults = %d/%d", cfg.TenantDatabaseConnIdleSeconds, cfg.TenantDatabaseConnLifetimeSeconds)
+	}
+	if !cfg.TenantProjectionWorkerEnabled || cfg.TenantProjectionPollSeconds != 2 || cfg.TenantProjectionLeaseSeconds != 60 || cfg.TenantProjectionRetrySeconds != 5 {
+		t.Fatalf("tenant projection timing defaults = enabled:%t poll:%d lease:%d retry:%d", cfg.TenantProjectionWorkerEnabled, cfg.TenantProjectionPollSeconds, cfg.TenantProjectionLeaseSeconds, cfg.TenantProjectionRetrySeconds)
+	}
+	if cfg.TenantProjectionBatchSize != 100 || cfg.TenantProjectionTargetLimit != 100 || cfg.TenantProjectionActivityLimit != 50 || cfg.TenantProjectionMaxAttempts != 20 {
+		t.Fatalf("tenant projection capacity defaults = %d/%d/%d/%d", cfg.TenantProjectionBatchSize, cfg.TenantProjectionTargetLimit, cfg.TenantProjectionActivityLimit, cfg.TenantProjectionMaxAttempts)
+	}
 }
 
 func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(t *testing.T) {
@@ -129,6 +159,21 @@ func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(
 	t.Setenv("TENANT_DATABASE_MODE", "shared_schema")
 	t.Setenv("TENANT_DATABASE_DEFAULT_CLUSTER", "cn-east-1-a")
 	t.Setenv("TENANT_DATABASE_DEFAULT_REGION", "cn-east-1")
+	t.Setenv("TENANT_DATABASE_POOL_MAX_ENTRIES", "24")
+	t.Setenv("TENANT_DATABASE_POOL_MAX_CONNECTIONS", "8")
+	t.Setenv("TENANT_DATABASE_POOL_MIN_CONNECTIONS", "2")
+	t.Setenv("TENANT_DATABASE_POOL_IDLE_SECONDS", "600")
+	t.Setenv("TENANT_DATABASE_POOL_SWEEP_SECONDS", "30")
+	t.Setenv("TENANT_DATABASE_CONNECTION_IDLE_SECONDS", "120")
+	t.Setenv("TENANT_DATABASE_CONNECTION_LIFETIME_SECONDS", "900")
+	t.Setenv("TENANT_PROJECTION_WORKER_ENABLED", "false")
+	t.Setenv("TENANT_PROJECTION_POLL_SECONDS", "7")
+	t.Setenv("TENANT_PROJECTION_LEASE_SECONDS", "90")
+	t.Setenv("TENANT_PROJECTION_RETRY_SECONDS", "11")
+	t.Setenv("TENANT_PROJECTION_BATCH_SIZE", "25")
+	t.Setenv("TENANT_PROJECTION_TARGET_LIMIT", "40")
+	t.Setenv("TENANT_PROJECTION_ACTIVITY_LIMIT", "30")
+	t.Setenv("TENANT_PROJECTION_MAX_ATTEMPTS", "12")
 
 	cfg := Load()
 
@@ -152,5 +197,20 @@ func TestLoadDatabaseTopologyConfigAllowsExplicitControlPlaneAndTenantAdminURLs(
 	}
 	if cfg.TenantDatabaseDefaultRegion != "cn-east-1" {
 		t.Fatalf("TenantDatabaseDefaultRegion = %q", cfg.TenantDatabaseDefaultRegion)
+	}
+	if cfg.TenantDatabasePoolMaxEntries != 24 || cfg.TenantDatabasePoolMaxConnections != 8 || cfg.TenantDatabasePoolMinConnections != 2 {
+		t.Fatalf("tenant pool capacity = %d/%d/%d", cfg.TenantDatabasePoolMaxEntries, cfg.TenantDatabasePoolMaxConnections, cfg.TenantDatabasePoolMinConnections)
+	}
+	if cfg.TenantDatabasePoolIdleSeconds != 600 || cfg.TenantDatabasePoolSweepSeconds != 30 {
+		t.Fatalf("tenant pool eviction = %d/%d", cfg.TenantDatabasePoolIdleSeconds, cfg.TenantDatabasePoolSweepSeconds)
+	}
+	if cfg.TenantDatabaseConnIdleSeconds != 120 || cfg.TenantDatabaseConnLifetimeSeconds != 900 {
+		t.Fatalf("tenant connection lifetime = %d/%d", cfg.TenantDatabaseConnIdleSeconds, cfg.TenantDatabaseConnLifetimeSeconds)
+	}
+	if cfg.TenantProjectionWorkerEnabled || cfg.TenantProjectionPollSeconds != 7 || cfg.TenantProjectionLeaseSeconds != 90 || cfg.TenantProjectionRetrySeconds != 11 {
+		t.Fatalf("tenant projection timing = enabled:%t poll:%d lease:%d retry:%d", cfg.TenantProjectionWorkerEnabled, cfg.TenantProjectionPollSeconds, cfg.TenantProjectionLeaseSeconds, cfg.TenantProjectionRetrySeconds)
+	}
+	if cfg.TenantProjectionBatchSize != 25 || cfg.TenantProjectionTargetLimit != 40 || cfg.TenantProjectionActivityLimit != 30 || cfg.TenantProjectionMaxAttempts != 12 {
+		t.Fatalf("tenant projection capacity = %d/%d/%d/%d", cfg.TenantProjectionBatchSize, cfg.TenantProjectionTargetLimit, cfg.TenantProjectionActivityLimit, cfg.TenantProjectionMaxAttempts)
 	}
 }

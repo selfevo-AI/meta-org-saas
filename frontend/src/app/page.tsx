@@ -88,7 +88,17 @@ import type {
   SaaSModule,
   SessionOrganization,
 } from '@/lib/api'
-import { clearSession, getCurrentOrganizationId, getSessionUser, getToken, setCurrentOrganizationId, setSession } from '@/lib/auth'
+import {
+  clearSession,
+  getActiveSessionScope,
+  getCurrentOrganizationId,
+  getSessionUser,
+  getToken,
+  setActiveSessionScope,
+  setCurrentOrganizationId,
+  setSession,
+} from '@/lib/auth'
+import type { SessionScope } from '@/lib/auth'
 import { useI18n } from '@/lib/i18n'
 import { apiOperations, getOperationProfile, operationDomains } from '@/lib/operations'
 import type { ApiOperation } from '@/lib/operations'
@@ -1504,6 +1514,7 @@ export default function Home() {
   const selectedOverviewSkill = overviewSkills.find((skill) => skill.id === overviewSkillID)
   const selectedOverviewModel = overviewModels.find((model) => model.id === overviewModelID)
   const isPlatformAdminSession = !!platformRole
+  const activeSessionScope: SessionScope = isPlatformAdminSession || loginSurface === 'platform' ? 'platform' : 'tenant'
   const visibleMenuGroups = isPlatformAdminSession ? platformMenuGroups : menuGroups
 
   useEffect(() => {
@@ -1511,21 +1522,22 @@ export default function Home() {
 
     Promise.resolve().then(() => {
       if (cancelled) return
-      const existingToken = getToken()
-      const sessionUser = getSessionUser()
+      const activeScope = getActiveSessionScope()
+      const existingToken = getToken(activeScope)
+      const sessionUser = getSessionUser(activeScope)
       const sessionPlatformRole = sessionUser?.platform_role || null
+      setLoginSurface(activeScope)
       setToken(existingToken)
       setUserId(sessionUser?.id ?? null)
       setUserType(sessionUser?.type ?? null)
       setPlatformRole(sessionPlatformRole)
       setOnboardingRequired(sessionPlatformRole ? false : !!sessionUser?.onboarding_required)
       setOrganizations(sessionUser?.organizations ?? [])
-      if (sessionPlatformRole) {
-        setCurrentOrganizationId(null)
+      if (activeScope === 'platform' && sessionPlatformRole) {
         setCurrentOrganizationID(null)
         setWorkspaceView('overview')
       } else {
-        setCurrentOrganizationID(getCurrentOrganizationId())
+        setCurrentOrganizationID(getCurrentOrganizationId('tenant'))
       }
       setMenuGroups(loadMenuGroups())
       setExpandedGroups(loadExpandedGroups())
@@ -1564,7 +1576,7 @@ export default function Home() {
       return
     }
     let cancelled = false
-    Promise.all([getMe(token).catch(() => null), listSaaSModules(token).catch(() => [])]).then(([profile, modules]) => {
+    Promise.all([getMe(token, activeSessionScope).catch(() => null), listSaaSModules(token, activeSessionScope).catch(() => [])]).then(([profile, modules]) => {
       if (cancelled) return
       setSaaSModules(modules)
       if (modules.length > 0 && onboardingModules.length === 0) {
@@ -1576,26 +1588,27 @@ export default function Home() {
       setOnboardingRequired(nextPlatformRole ? false : profile.onboarding_required)
       setOrganizations(profile.organizations ?? [])
       if (nextPlatformRole) {
-        setCurrentOrganizationId(null)
+        setActiveSessionScope('platform')
         setCurrentOrganizationID(null)
         setWorkspaceView((current) => (current.startsWith('domain:') ? current : 'overview'))
         return
       }
-      const storedOrgID = getCurrentOrganizationId()
+      setActiveSessionScope('tenant')
+      const storedOrgID = getCurrentOrganizationId('tenant')
       const storedOrgIsValid = !!storedOrgID && profile.organizations?.some((organization) => organization.id === storedOrgID)
       const nextOrgID = storedOrgIsValid ? storedOrgID : profile.default_organization_id || profile.organizations?.[0]?.id || null
       if (nextOrgID) {
-        setCurrentOrganizationId(nextOrgID)
+        setCurrentOrganizationId(nextOrgID, 'tenant')
         setCurrentOrganizationID(nextOrgID)
       } else {
-        setCurrentOrganizationId(null)
+        setCurrentOrganizationId(null, 'tenant')
         setCurrentOrganizationID(null)
       }
     })
     return () => {
       cancelled = true
     }
-  }, [onboardingModules.length, token])
+  }, [activeSessionScope, onboardingModules.length, token])
 
   useEffect(() => {
     if (!orderedOverviewFunctions.some((item) => item.id === overviewFunctionID)) {
@@ -1853,13 +1866,19 @@ export default function Home() {
       if (loginSurface === 'tenant' && nextPlatformRole) {
         throw new Error(t('auth.usePlatformLogin'))
       }
-      setSession(response.token, response.user_id, response.user_type, {
-        onboarding_required: response.onboarding_required,
-        default_organization_id: response.default_organization_id,
-        platform_role: response.platform_role,
-        organizations: response.organizations,
-        enabled_modules: response.enabled_modules,
-      })
+      setSession(
+        response.token,
+        response.user_id,
+        response.user_type,
+        {
+          onboarding_required: response.onboarding_required,
+          default_organization_id: response.default_organization_id,
+          platform_role: response.platform_role,
+          organizations: response.organizations,
+          enabled_modules: response.enabled_modules,
+        },
+        { scope: loginSurface },
+      )
       setOverview(null)
       setToken(response.token)
       setUserId(response.user_id)
@@ -1869,12 +1888,12 @@ export default function Home() {
       setOrganizations(response.organizations ?? [])
       const nextOrgID = nextPlatformRole ? null : response.default_organization_id || response.organizations?.[0]?.id || null
       if (nextPlatformRole) {
-        setCurrentOrganizationId(null)
         setCurrentOrganizationID(null)
         setBusinessNodesByDomain({})
         setBusinessSelection(null)
         setWorkspaceView('overview')
       } else {
+        setCurrentOrganizationId(nextOrgID, 'tenant')
         setCurrentOrganizationID(nextOrgID)
       }
       if (mode === 'register') {
@@ -1913,15 +1932,21 @@ export default function Home() {
         description: onboardingDescription,
         enabled_modules: onboardingModules,
       })
-      setSession(token, result.profile.id, 'human', {
-        onboarding_required: result.profile.onboarding_required,
-        default_organization_id: result.profile.default_organization_id,
-        platform_role: result.profile.platform_role,
-        organizations: result.profile.organizations,
-        enabled_modules: result.profile.enabled_modules,
-      })
+      setSession(
+        token,
+        result.profile.id,
+        'human',
+        {
+          onboarding_required: result.profile.onboarding_required,
+          default_organization_id: result.profile.default_organization_id,
+          platform_role: result.profile.platform_role,
+          organizations: result.profile.organizations,
+          enabled_modules: result.profile.enabled_modules,
+        },
+        { scope: 'tenant' },
+      )
       const nextOrgID = result.profile.default_organization_id || result.organization.id
-      setCurrentOrganizationId(nextOrgID)
+      setCurrentOrganizationId(nextOrgID, 'tenant')
       setCurrentOrganizationID(nextOrgID)
       setPlatformRole(result.profile.platform_role || null)
       setOrganizations(result.profile.organizations ?? [])
@@ -1938,7 +1963,8 @@ export default function Home() {
   }
 
   function handleSignOut() {
-    clearSession()
+    const scope = activeSessionScope
+    clearSession(scope)
     setToken(null)
     setUserId(null)
     setUserType(null)
@@ -1951,6 +1977,7 @@ export default function Home() {
     setBusinessNodesByDomain({})
     setBusinessSelection(null)
     setError(null)
+    setLoginSurface(scope)
     setWorkspaceView('overview')
   }
 
@@ -2286,7 +2313,7 @@ export default function Home() {
   return (
     <main className={`app-dark ${themeMode === 'light' ? 'theme-light' : ''}`}>
       {!token ? (
-        <div className="mx-auto grid min-h-screen max-w-6xl gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[360px_1fr] lg:items-center lg:px-8">
+        <div data-testid="login-shell" className="mx-auto grid min-h-screen max-w-6xl gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[360px_1fr] lg:items-center lg:px-8">
           <section className="studio-panel rounded-lg p-5">
             <div className="mb-8 flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-[#DF6A24]/25 bg-[#DF6A24]/10">
@@ -2300,6 +2327,7 @@ export default function Home() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                data-testid="login-surface-tenant"
                 onClick={() => handleLoginSurfaceChange('tenant')}
                 title={t('auth.organizationLogin')}
                 className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition ${
@@ -2313,6 +2341,7 @@ export default function Home() {
               </button>
               <button
                 type="button"
+                data-testid="login-surface-platform"
                 onClick={() => handleLoginSurfaceChange('platform')}
                 title={t('auth.platformLogin')}
                 className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition ${
@@ -2364,6 +2393,7 @@ export default function Home() {
               <label className="block">
                 <span className="text-sm font-medium text-slate-700">{t('auth.email')}</span>
                 <input
+                  data-testid="auth-email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
@@ -2375,6 +2405,7 @@ export default function Home() {
               <label className="block">
                 <span className="text-sm font-medium text-slate-700">{t('auth.password')}</span>
                 <input
+                  data-testid="auth-password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
@@ -2397,6 +2428,7 @@ export default function Home() {
 
               <button
                 type="submit"
+                data-testid="auth-submit"
                 disabled={loading}
                 className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#AD4714] px-4 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -2543,6 +2575,7 @@ export default function Home() {
               setLocale={setLocale}
               themeMode={themeMode}
               setThemeMode={setThemeMode}
+              sessionScope={activeSessionScope}
               userType={userType}
               platformRole={platformRole}
               organizations={organizations}
@@ -2734,7 +2767,7 @@ export default function Home() {
 					<ERPBusinessModuleWorkspace token={token} module="project" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:DeveloperTools' ? (
 					<div className="space-y-5">
-						<DeveloperToolsWorkspace token={token} />
+						<DeveloperToolsWorkspace token={token} apiScope={isPlatformAdminSession ? 'platform' : 'tenant'} />
 						<ERPCodeWorkspace token={token} module="platform" />
 					</div>
 				) : effectiveWorkspaceView === 'domain:SystemAdmin' || activeDomain.startsWith('PlatformAdmin:') ? (
@@ -2916,6 +2949,7 @@ function Topbar({
   setLocale,
   themeMode,
   setThemeMode,
+  sessionScope,
   userType,
   platformRole,
   organizations,
@@ -2936,6 +2970,7 @@ function Topbar({
   setLocale: (locale: 'zh' | 'en') => void
   themeMode: ThemeMode
   setThemeMode: (mode: ThemeMode) => void
+  sessionScope: SessionScope
   userType: string | null
   platformRole: string | null
   organizations: SessionOrganization[]
@@ -2990,6 +3025,19 @@ function Topbar({
             <span className="text-slate-600">·</span>
             <span>{activeDomain}</span>
           </div>
+          <div
+            data-testid="session-scope"
+            data-scope={sessionScope}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-0 text-xs font-bold sm:w-auto sm:px-3 ${
+              sessionScope === 'platform'
+                ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
+                : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
+            }`}
+            title={t(sessionScope === 'platform' ? 'scope.platformHint' : 'scope.tenantHint')}
+          >
+            {sessionScope === 'platform' ? <ShieldCheck className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">{t(sessionScope === 'platform' ? 'scope.platform' : 'scope.tenant')}</span>
+          </div>
           {!platformRole && organizations.length > 0 && (
             <div className="hidden max-w-64 items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2 text-xs font-semibold text-slate-400 md:flex">
               <span>{t('organization.current')}</span>
@@ -2999,7 +3047,7 @@ function Topbar({
             </div>
           )}
           {platformRole && <StatusPill label={platformRole} tone="green" />}
-          {userType && <StatusPill label={userType === 'ai' ? 'AI Agent' : 'Human'} tone="blue" />}
+          {userType && <StatusPill label={t(userType === 'ai' ? 'actor.ai' : 'actor.human')} tone="blue" />}
           <button
             type="button"
             onClick={onResetLayout}
@@ -3839,32 +3887,35 @@ function OverviewAssistantHome({
   const selectedBusinessFunction = businessFunctions.find((item) => item.id === selectedFunctionID) ?? businessFunctions[0]
 
   return (
-    <div className="overview-assistant-home flex min-h-[calc(100vh-132px)] flex-col">
-      <section className="flex flex-1 flex-col items-center justify-center px-2 py-8 text-center sm:py-12">
-        <div className="relative">
-          <div className="flex h-28 w-28 items-center justify-center rounded-full border border-slate-800 bg-slate-950/45 shadow-[0_20px_80px_rgba(0,0,0,0.24)]">
-            <Bot className="h-14 w-14 text-slate-300" />
+    <div className="overview-assistant-home space-y-5">
+      <section className="space-y-5">
+        <div className="flex items-center gap-4 border-b border-slate-800 pb-5">
+          <div className="relative shrink-0">
+            <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/45">
+              <Bot className="h-7 w-7 text-slate-300" />
+            </div>
+            <button
+              type="button"
+              onClick={onOpenAssistant}
+              aria-label={t('assistant.title')}
+              className="absolute -bottom-1 -right-1 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-slate-300 transition hover:border-[#DF6A24]/50 hover:text-[#F6A66A]"
+            >
+              <Sparkles className="h-3 w-3" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onOpenAssistant}
-            aria-label={t('assistant.title')}
-            className="absolute -right-3 top-9 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-slate-300 transition hover:border-[#DF6A24]/50 hover:text-[#F6A66A]"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-          </button>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-white sm:text-2xl">{t('overview.workspaceTitle')}</h1>
+            <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-400">{t('overview.workspaceSubtitle')}</p>
+          </div>
         </div>
 
-        <h1 className="mt-6 text-balance text-3xl font-extrabold tracking-normal text-white sm:text-4xl">{t('overview.heroTitle')}</h1>
-        <p className="mt-3 max-w-2xl text-sm font-medium leading-6 text-slate-400 sm:text-base">{t('overview.heroSubtitle')}</p>
-
-        <div className="mt-6 inline-flex max-w-full flex-wrap items-center justify-center gap-1 rounded-full bg-slate-200/10 p-1">
+        <div className="inline-flex max-w-full items-center gap-1 self-start rounded-lg bg-slate-200/10 p-1">
           {modes.map(([label, intent, Icon], index) => (
             <button
               key={label}
               type="button"
               onClick={() => onQuickPrompt(t(intent))}
-              className={`inline-flex h-9 items-center gap-2 rounded-full px-4 text-sm font-bold transition ${
+              className={`inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-bold transition ${
                 index === 1 ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:bg-slate-900/70 hover:text-white'
               }`}
             >
@@ -3874,8 +3925,22 @@ function OverviewAssistantHome({
           ))}
         </div>
 
-        <div className="mt-24 w-full max-w-4xl">
-          <div className="mb-3 flex flex-wrap justify-center gap-2">
+        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/25 sm:grid-cols-4">
+          {[
+            [t('meta.activeProjects'), formatNumber(overview.health.active_projects)],
+            [t('meta.pendingWork'), formatNumber(inbox.length)],
+            [t('meta.activeAgents'), `${formatNumber(overview.agents.active)} / ${formatNumber(overview.agents.total)}`],
+            [t('overview.operationalHealth'), formatPercent(healthRatio)],
+          ].map(([label, value]) => (
+            <div key={label} className="border-b border-r border-slate-800 px-4 py-3 last:border-r-0 sm:border-b-0">
+              <p className="text-[11px] font-semibold text-slate-500">{label}</p>
+              <p className="mt-1 text-lg font-bold text-slate-100">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="w-full">
+          <div className="mb-3 flex gap-2 overflow-x-auto pb-2">
             {businessFunctions.map((item) => {
               const Icon = item.icon
               const selected = item.id === selectedFunctionID
@@ -3885,8 +3950,8 @@ function OverviewAssistantHome({
                 type="button"
                 onClick={() => onSelectFunction(item.id)}
                 title={t(item.intentKey)}
-                className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-sm font-semibold shadow-sm transition ${
-                  selected ? 'bg-white text-slate-950 ring-2 ring-[#DF6A24]/50' : 'bg-slate-100 text-slate-800 hover:bg-white'
+                className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition ${
+                  selected ? 'border-[#DF6A24]/60 bg-[#DF6A24]/15 text-white' : 'border-slate-800 bg-slate-950/35 text-slate-300 hover:border-slate-700 hover:text-white'
                 }`}
               >
                 <Icon className="h-4 w-4" />
@@ -3900,13 +3965,13 @@ function OverviewAssistantHome({
               event.preventDefault()
               onSubmitPrompt()
             }}
-            className="rounded-[22px] border border-slate-800 bg-[#17181d] p-3 text-left shadow-[0_24px_90px_rgba(0,0,0,0.26)]"
+            className="rounded-lg border border-slate-800 bg-[#17181d] p-3 text-left"
           >
             <textarea
               value={prompt}
               onChange={(event) => onPromptChange(event.target.value)}
               placeholder={t('overview.promptPlaceholder')}
-              className="min-h-[86px] w-full resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
+              className="min-h-16 w-full resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
             />
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-1 pt-3">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -3957,14 +4022,14 @@ function OverviewAssistantHome({
               <button
                 type="submit"
                 disabled={!prompt.trim()}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#AD4714] text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-45"
+                className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#AD4714] text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-45"
                 aria-label={t('overview.send')}
               >
                 <Send className="h-4 w-4" />
               </button>
             </div>
           </form>
-          <div className="mt-2 flex flex-wrap justify-center gap-2 text-xs">
+          <div className="mt-2 flex flex-wrap gap-2 text-xs">
             <StatusPill label={`${t('overview.business.currentContext')}: ${selectedBusinessFunction ? t(selectedBusinessFunction.label) : t('common.none')}`} tone="blue" />
             {selectedModel && <StatusPill label={selectedModel.display_name || selectedModel.model_key} tone="green" />}
             {selectedSkill && <StatusPill label={selectedSkill.name} tone="amber" />}
@@ -3978,7 +4043,7 @@ function OverviewAssistantHome({
       </section>
 
       {pendingInbox.length > 0 && (
-        <section className="mx-auto mb-6 w-full max-w-4xl rounded-lg border border-slate-800 bg-slate-950/25 p-3">
+        <section className="w-full rounded-lg border border-slate-800 bg-slate-950/25 p-3">
           <div className="flex items-center justify-between gap-3 px-1">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{t('overview.pending')}</p>
             <StatusPill label={formatNumber(inbox.length)} tone="blue" />

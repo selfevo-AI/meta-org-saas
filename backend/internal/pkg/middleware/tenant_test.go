@@ -140,3 +140,61 @@ func TestTenantMiddlewareInvalidOrganization(t *testing.T) {
 		t.Fatalf("body = %q", got)
 	}
 }
+
+func TestTenantMiddlewarePlatformTenantPermissions(t *testing.T) {
+	orgID := uuid.New()
+	tests := []struct {
+		name        string
+		method      string
+		permissions map[string]bool
+		wantStatus  int
+	}{
+		{
+			name:        "auditor can read tenant data",
+			method:      http.MethodGet,
+			permissions: map[string]bool{"tenant.data.read": true},
+			wantStatus:  http.StatusOK,
+		},
+		{
+			name:        "auditor cannot mutate tenant data",
+			method:      http.MethodPost,
+			permissions: map[string]bool{"tenant.data.read": true},
+			wantStatus:  http.StatusForbidden,
+		},
+		{
+			name:        "operator can mutate tenant data",
+			method:      http.MethodPost,
+			permissions: map[string]bool{"tenant.data.read": true, "tenant.data.manage": true},
+			wantStatus:  http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			handler := TenantMiddleware(staticTenantResolver{tenant: &TenantContext{
+				Mode:                "saas",
+				UserID:              uuid.New(),
+				OrganizationID:      &orgID,
+				IsPlatformAdmin:     true,
+				PlatformRole:        "auditor",
+				PlatformPermissions: tt.permissions,
+				EnabledModules:      map[string]bool{"project": true},
+			}})(next)
+			req := httptest.NewRequest(tt.method, "/api/v1/projects", nil)
+			req = req.WithContext(context.WithValue(req.Context(), UserContextKey, AuthenticatedUser{
+				ID:   uuid.New().String(),
+				Type: "human",
+			}))
+			rr := httptest.NewRecorder()
+
+			handler.ServeHTTP(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", rr.Code, tt.wantStatus, rr.Body.String())
+			}
+		})
+	}
+}

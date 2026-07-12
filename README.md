@@ -172,6 +172,17 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `001_erp_code_baseline.sql` | ERP/行业业务基线，包含组织、项目、工作流、财务、成本，以及以 ERP code-table 为主模型的供应链和行业解决方案表。 |
 | `002_erp_platform_integration_baseline.sql` | ERP 与平台管理的运行期投影、模块集成和平台主数据同步。 |
 | `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、上下文、skill、AI 用量，以及跨阶段外键重建。 |
+| `005_industry_solution_consolidation.sql` | 行业方案存储和历史方案数据归并。 |
+| `006_saas_manufacturing_module_seed.sql` | 制造模块及 ERPNext 风格行业方案种子。 |
+| `007_saas_runtime_organization_target_repair.sql` | SaaS 运行组织和租户数据库目标修复。 |
+| `008_ai_gateway_model_group_repair.sql` | 兼容性修复：为已应用旧版 `004` 的本地/开发库补齐 AI Gateway 模型组、访问令牌和余额表。 |
+| `009_platform_tenant_data_permissions.sql` | 平台跨租户读取和管理权限修复，确保审计员只读。 |
+| `010_tenant_database_provisioning_jobs.sql` | 持久化租户数据库开通作业、租约领取、失败重试和存量目标修复。 |
+| `011_ai_module_master_detail_runtime_repair.sql` | 补齐 AI Gateway、Tool Runtime、Assistant 跨阶段主从表、源键与投影触发器。 |
+| `012_tenant_database_target_state_repair.sql` | 防止已开通租户目标被重复 onboarding 降级，并修复“作业成功但目标仍 provisioning”的存量状态。 |
+| `013_tenant_event_projection_infrastructure.sql` | 平台事件 inbox、租户运营/工作流/活动投影，以及 Dashboard/Meta-Org 跨库读模型。 |
+
+租户库按 `migrations/tenant/` 独立迁移：`001_tenant_business_baseline.sql` 建立业务基线，`002_tenant_projection_outbox.sql` 建立带租约、重试和发布状态的事务 outbox。
 
 阶段原则：先有 SaaS 管理平台，再由平台创建或调整行业解决方案，最后落到 ERP 基线和 AI 能力基线。未来任何数据库结构、表关系、外键、索引、种子数据或 schema 生成逻辑调整，都必须同步更新对应阶段 SQL 和 `migrations/BASELINE_RESTRUCTURE.md`。
 
@@ -284,7 +295,10 @@ npm install
 npm run dev
 npm run lint
 npm run build
+npm run test:e2e
 ```
+
+`npm run test:e2e` 使用 Playwright 验证桌面与移动端的平台/租户登录、会话作用域和横向溢出；执行前需启动 `8080` 后端和 `3000` 前端。CI 会自动安装 Chromium 并启动完整测试环境。
 
 前端默认读取：
 
@@ -330,13 +344,13 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
   Select-Object StatusCode,Content
 ```
 
-成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 返回 `{"status":"ok"}`。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
+成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 的 `status` 为 `ok`，并在 `tenant_database_pools` 中返回无租户标识的连接池聚合指标。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
 
-AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启动时必须确认四个阶段基线 `000/001/002/004` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或 ERP 工作台出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`，或缺少 `MITW`、`MPOR`、`MRDR`、`MRPS`、`MDRQ` 等 ERP code-table 关系，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。若出现 `relation platform.database_maintenance_jobs does not exist` 或 `relation platform.tenant_database_targets does not exist`，通常是后端仍连接旧 `meta_org` 或不完整的平台库。处理顺序：
+AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启动时必须确认阶段基线与兼容性修复 `000/001/002/004/008` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或 ERP 工作台出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation ai_model_groups does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`，或缺少 `MITW`、`MPOR`、`MRDR`、`MRPS`、`MDRQ` 等 ERP code-table 关系，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。若出现 `relation platform.database_maintenance_jobs does not exist` 或 `relation platform.tenant_database_targets does not exist`，通常是后端仍连接旧 `meta_org` 或不完整的平台库。处理顺序：
 
 1. 确认 `DATABASE_URL` 和 `PLATFORM_DATABASE_URL` 指向当前 `meta_org_saas` 平台管理库。
 2. 确认从 `backend/` 本地运行时使用 `MIGRATIONS_PATH=../migrations`。
-3. 重启后端，让迁移器执行 `000_saas_platform_management_baseline.sql`、`001_erp_code_baseline.sql`、`002_erp_platform_integration_baseline.sql` 和 `004_ai_capability_baseline.sql`。
+3. 重启后端，让迁移器执行 `000_saas_platform_management_baseline.sql`、`001_erp_code_baseline.sql`、`002_erp_platform_integration_baseline.sql`、`004_ai_capability_baseline.sql` 和 `008_ai_gateway_model_group_repair.sql`。
 4. 再打开模型设置，检查 Channels / Keys、Routing、Usage Analysis 页面是否能加载。
 
 如果租户侧 Finance / ERP 接口出现 `relation gl_journal_entries does not exist`，检查当前组织对应的 `meta_org_xxxx` 租户库是否由 tenant migrator 创建。手工 `psql -f migrations/tenant/001_tenant_business_baseline.sql` 不会展开 `tenantdb:include`，会导致 ERP/Finance 表缺失。
@@ -360,6 +374,21 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `TENANT_DATABASE_MODE` | `dedicated_database` | 租户数据库目标模式；`dedicated_database` 为每租户物理库，`shared_schema` 为兼容的单库多 schema。 |
 | `TENANT_DATABASE_DEFAULT_CLUSTER` | `local-primary` | 平台目录中默认租户数据库集群 key。 |
 | `TENANT_DATABASE_DEFAULT_REGION` | `local` | 平台目录中默认租户数据库区域。 |
+| `TENANT_DATABASE_POOL_MAX_ENTRIES` | `16` | 单个后端实例最多缓存的租户数据库连接池数；达到上限时回收无活跃租约的最久未使用池。 |
+| `TENANT_DATABASE_POOL_MAX_CONNECTIONS` | `4` | 每个租户连接池的最大 PostgreSQL 连接数；应与实例数及数据库总连接预算一起规划。 |
+| `TENANT_DATABASE_POOL_MIN_CONNECTIONS` | `0` | 每个租户连接池保持的最小连接数；默认不为非活跃租户预占连接。 |
+| `TENANT_DATABASE_POOL_IDLE_SECONDS` | `900` | 无活跃查询或事务的租户池在回收前可空闲的秒数。 |
+| `TENANT_DATABASE_POOL_SWEEP_SECONDS` | `60` | 后台扫描空闲租户池的周期秒数。 |
+| `TENANT_DATABASE_CONNECTION_IDLE_SECONDS` | `300` | pgx 在单个租户池内回收空闲连接前的秒数。 |
+| `TENANT_DATABASE_CONNECTION_LIFETIME_SECONDS` | `1800` | 单个租户数据库连接的最长生命周期秒数。 |
+| `TENANT_PROJECTION_WORKER_ENABLED` | `true` | 启用租户 outbox 到平台投影的后台 Worker。 |
+| `TENANT_PROJECTION_POLL_SECONDS` | `2` | 无事件时的轮询间隔。 |
+| `TENANT_PROJECTION_LEASE_SECONDS` | `60` | 单批 outbox 事件租约时长。 |
+| `TENANT_PROJECTION_RETRY_SECONDS` | `5` | 投影失败后的基础重试间隔。 |
+| `TENANT_PROJECTION_BATCH_SIZE` | `100` | 每租户单次领取的最大事件数。 |
+| `TENANT_PROJECTION_TARGET_LIMIT` | `100` | 每轮扫描的最大已开通租户数。 |
+| `TENANT_PROJECTION_ACTIVITY_LIMIT` | `50` | 每租户保留的近期活动投影数。 |
+| `TENANT_PROJECTION_MAX_ATTEMPTS` | `20` | outbox 事件最大处理尝试次数。 |
 | `JWT_SECRET` | `dev-secret-change-in-production` | JWT 签名密钥，生产环境必须替换。 |
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32 字符密钥，用于模型供应商和财务适配器密钥加密，生产环境必须替换。 |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | 允许访问 API 的前端来源。 |

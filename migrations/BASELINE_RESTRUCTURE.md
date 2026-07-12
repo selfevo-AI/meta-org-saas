@@ -7,10 +7,20 @@ This directory now uses staged baseline migrations instead of the historical
 2. `001_erp_code_baseline.sql`
 3. `002_erp_platform_integration_baseline.sql`
 4. `004_ai_capability_baseline.sql`
+5. `005_industry_solution_consolidation.sql`
+6. `006_saas_manufacturing_module_seed.sql`
+7. `007_saas_runtime_organization_target_repair.sql`
+8. `008_ai_gateway_model_group_repair.sql`
+9. `009_platform_tenant_data_permissions.sql`
+10. `010_tenant_database_provisioning_jobs.sql`
+11. `011_ai_module_master_detail_runtime_repair.sql`
+12. `012_tenant_database_target_state_repair.sql`
+13. `013_tenant_event_projection_infrastructure.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
 1. `tenant/001_tenant_business_baseline.sql`
+2. `tenant/002_tenant_projection_outbox.sql`
 
 The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
@@ -252,12 +262,53 @@ platform pool as the compatibility fallback. Tenant-facing routes for those
 business domains remain mounted in the tenant closure so new tenants are created
 through the same permission, module entitlement, and database provisioning flow.
 
-SaaS onboarding now records the target first in the platform transaction and
-then attempts physical tenant database provisioning after the transaction has
-committed. A successful provisioning attempt marks the target `provisioned` and
-records the migration version. A failed attempt marks the target `failed` with
-diagnostic metadata while preserving the already-created platform organization,
-so a later maintenance/retry worker can continue from the catalog state.
+SaaS onboarding records the organization, tenant database target, and an
+idempotent `tenant_database_provisioning_jobs` row in the same platform
+transaction. The background provisioner claims work with row locking and a
+worker lease, creates and migrates the physical database, then bootstraps tenant
+projections. Transient failures move to `retry_scheduled` with exponential
+backoff; the final attempt marks both the job and target `failed`. Expired leases
+are reclaimable, so provisioning does not depend on the lifetime of an HTTP
+request or one backend process.
+
+`010_tenant_database_provisioning_jobs.sql` repairs existing dedicated targets
+that are still `provisioning` or `failed` by creating an idempotent pending job.
+Worker tuning is environment-driven through
+`TENANT_PROVISIONING_WORKER_ENABLED`, `TENANT_PROVISIONING_POLL_SECONDS`,
+`TENANT_PROVISIONING_LEASE_SECONDS`, `TENANT_PROVISIONING_RETRY_SECONDS`, and
+`TENANT_PROVISIONING_RETRY_MAX_SECONDS`.
+
+`012_tenant_database_target_state_repair.sql` enforces the tenant database
+target state-machine invariant that a repeated onboarding or sample-tenant
+upsert cannot downgrade an unchanged `provisioned` topology back to
+`provisioning`. It restores existing targets when a succeeded provisioning job
+and the physical database both exist, preserves the migration version and
+connection secret reference on unchanged targets, and installs a database
+trigger so non-Go writers follow the same rule. Provisioning job idempotency
+keys include a stable topology fingerprint; terminal jobs can be re-queued only
+when the target is again in a provisioning or failed state.
+
+`013_tenant_event_projection_infrastructure.sql` repairs existing platform
+databases; the same schema is folded into
+`000_saas_platform_management_baseline.sql` for fresh installations. Tenant
+migration `tenant/002_tenant_projection_outbox.sql` emits minimal change events
+for requirements, projects, workflows, tasks, decisions, and project costs. The
+projection worker leases events, recomputes organization snapshots from tenant
+databases, deduplicates them in `platform.tenant_integration_inbox`, and
+transactionally replaces operational, workflow, and activity projections.
+Dashboard and Meta-Org read these platform projections rather than tenant-owned
+tables through the platform connection. Health reports worker throughput,
+failures, latest lag, and tenant pool usage.
+
+`011_ai_module_master_detail_runtime_repair.sql` completes the cross-stage
+contract between the ERP master/detail framework and the AI capability stage.
+It creates the canonical identity, AI Gateway, Tool Runtime, and Assistant
+master/detail tables, initializes stable source `master_key` values without
+renumbering existing keys, refreshes projections, and installs triggers for AI
+tables added after `001`. The `skill_details` table retains its own parent
+`master_key` semantics and is intentionally not registered as a generic source
+table. This repair prevents organization writes from failing when the projection
+trigger discovers AI Gateway child sources.
 
 `002_erp_platform_integration_baseline.sql` owns runtime integration between the
 ERP baseline and the SaaS platform: platform projections, module synchronization,
@@ -278,6 +329,19 @@ belong in the same stage, as do `ai_invocations` and `ai_usage_ledger`
 references to access tokens, model groups, reserved amount, settled amount, and
 upstream routing status. These structures are platform-managed AI capability
 controls; tenant ERP/industry tables must not duplicate them.
+
+`008_ai_gateway_model_group_repair.sql` is an idempotent compatibility repair for
+existing databases that already recorded an older `004_ai_capability_baseline.sql`
+before the AI gateway model group/access-token/balance structures were folded
+into that baseline. Fresh databases still get those structures from `004`; the
+repair keeps already-migrated local or development databases aligned without
+editing migration history.
+
+`009_platform_tenant_data_permissions.sql` introduces explicit platform-to-tenant
+read and manage permissions. Platform auditors receive read-only tenant access;
+owner, admin, and operator roles receive read and manage access. Tenant middleware
+must enforce these permissions before a platform user can enter an organization
+business context, so a platform role is not itself an unrestricted tenant bypass.
 
 Phase 4 Verified Context + Tool Loop changes also belong to `004`: context
 change proposals include the `applied` lifecycle state plus `apply_result` and

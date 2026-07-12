@@ -22,11 +22,11 @@ func NewRepository(db *pgxpool.Pool) *PostgresRepository {
 
 func (r *PostgresRepository) Overview(ctx context.Context) (Overview, error) {
 	orgID := currentTenantOrganizationID(ctx)
-	health, err := r.health(ctx, orgID)
+	health, err := r.projectedHealth(ctx, orgID)
 	if err != nil {
 		return Overview{}, err
 	}
-	projects, err := r.projectSummary(ctx, orgID)
+	projects, err := r.projectedProjectSummary(ctx, orgID)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -34,7 +34,7 @@ func (r *PostgresRepository) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	cost, err := r.costSummary(ctx, orgID)
+	cost, err := r.projectedCostSummary(ctx, orgID)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -42,7 +42,11 @@ func (r *PostgresRepository) Overview(ctx context.Context) (Overview, error) {
 	if err != nil {
 		return Overview{}, err
 	}
-	activity, err := r.activity(ctx, orgID, 10)
+	activity, err := r.projectedActivity(ctx, orgID, 10)
+	if err != nil {
+		return Overview{}, err
+	}
+	freshness, err := r.projectionFreshness(ctx, orgID)
 	if err != nil {
 		return Overview{}, err
 	}
@@ -54,6 +58,7 @@ func (r *PostgresRepository) Overview(ctx context.Context) (Overview, error) {
 		Cost:        cost,
 		Risks:       risks,
 		Activity:    activity,
+		Projection:  freshness,
 	}, nil
 }
 

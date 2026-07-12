@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/platformauth"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -302,6 +303,32 @@ func (r *Repository) GetPlatformRole(ctx context.Context, userID uuid.UUID) (str
 	return role, nil
 }
 
+func (r *Repository) ListPlatformRolePermissions(ctx context.Context, roleKey string) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT permission_key
+		FROM platform.platform_role_permissions
+		WHERE role_key = $1 AND status = 'active'
+		ORDER BY permission_key
+	`, platformauth.NormalizeRole(roleKey))
+	if err != nil {
+		return nil, fmt.Errorf("list platform role permissions: %w", err)
+	}
+	defer rows.Close()
+
+	permissions := []string{}
+	for rows.Next() {
+		var permission string
+		if err := rows.Scan(&permission); err != nil {
+			return nil, fmt.Errorf("scan platform role permission: %w", err)
+		}
+		permissions = append(permissions, permission)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate platform role permissions: %w", err)
+	}
+	return permissions, nil
+}
+
 func (r *Repository) ListModules(ctx context.Context) ([]Module, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT module_key, display_name, category, enabled_default, license_scope, metadata
@@ -357,7 +384,9 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 	defer tx.Rollback(ctx)
 
 	var status string
-	if err := tx.QueryRow(ctx, `SELECT onboarding_status FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&status); err != nil {
+	var ownerName string
+	var ownerEmail string
+	if err := tx.QueryRow(ctx, `SELECT onboarding_status, name, email FROM users WHERE id = $1 FOR UPDATE`, userID).Scan(&status, &ownerName, &ownerEmail); err != nil {
 		return nil, fmt.Errorf("lock onboarding user: %w", err)
 	}
 	if status == OnboardingComplete {
@@ -438,7 +467,19 @@ func (r *Repository) CompleteOnboarding(ctx context.Context, userID uuid.UUID, i
 	if _, err := tx.Exec(ctx, `SELECT platform.provision_runtime_organization($1)`, org.ID); err != nil {
 		return nil, fmt.Errorf("provision runtime organization schema: %w", err)
 	}
-	if err := r.upsertTenantDatabaseTarget(ctx, tx, r.tenantDatabaseDefaults.TargetForOrganization(org.ID)); err != nil {
+	target := r.tenantDatabaseDefaults.TargetForOrganization(org.ID)
+	if err := r.upsertTenantDatabaseTarget(ctx, tx, target); err != nil {
+		return nil, err
+	}
+	if err := r.enqueueTenantDatabaseProvisioningJob(ctx, tx, target, tenantdb.TenantBootstrapInput{
+		OrganizationID:   org.ID,
+		OrganizationName: org.Name,
+		Description:      org.Description,
+		OwnerUserID:      userID,
+		OwnerName:        ownerName,
+		OwnerEmail:       ownerEmail,
+		EnabledModules:   enabledModules,
+	}, "onboarding"); err != nil {
 		return nil, err
 	}
 
@@ -607,7 +648,21 @@ func (r *Repository) CreateBusinessClosureSampleTenant(ctx context.Context, reco
 	if _, err := tx.Exec(ctx, `SELECT platform.provision_runtime_organization($1)`, org.ID); err != nil {
 		return nil, fmt.Errorf("provision sample runtime organization schema: %w", err)
 	}
-	if err := r.upsertTenantDatabaseTarget(ctx, tx, r.tenantDatabaseDefaults.TargetForOrganization(org.ID)); err != nil {
+	target := r.tenantDatabaseDefaults.TargetForOrganization(org.ID)
+	if err := r.upsertTenantDatabaseTarget(ctx, tx, target); err != nil {
+		return nil, err
+	}
+	if err := r.enqueueTenantDatabaseProvisioningJob(ctx, tx, target, tenantdb.TenantBootstrapInput{
+		OrganizationID:               org.ID,
+		OrganizationName:             org.Name,
+		Description:                  org.Description,
+		OwnerUserID:                  ownerID,
+		OwnerName:                    record.OwnerName,
+		OwnerEmail:                   record.OwnerEmail,
+		EnabledModules:               record.EnabledModules,
+		SampleKey:                    record.SampleKey,
+		IncludeBusinessClosureSample: true,
+	}, "sample_tenant"); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -730,15 +785,25 @@ func (r *Repository) UpdateTenantDatabaseTarget(ctx context.Context, target tena
 }
 
 func (r *Repository) RecordTenantDatabaseMigrationResult(ctx context.Context, target tenantdb.Target, result tenantdb.MigrationResult) error {
-	records := tenantMigrationRecordsFromResult(target, result)
-	if len(records) == 0 {
-		return nil
-	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tenant database migration record: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	if err := r.recordTenantDatabaseMigrationResult(ctx, tx, target, result); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tenant database migration record: %w", err)
+	}
+	return nil
+}
+
+func (r *Repository) recordTenantDatabaseMigrationResult(ctx context.Context, tx pgx.Tx, target tenantdb.Target, result tenantdb.MigrationResult) error {
+	records := tenantMigrationRecordsFromResult(target, result)
+	if len(records) == 0 {
+		return nil
+	}
 
 	var targetID uuid.UUID
 	if err := tx.QueryRow(ctx, `
@@ -771,10 +836,6 @@ func (r *Repository) RecordTenantDatabaseMigrationResult(ctx context.Context, ta
 		`, targetID, record.Key, record.Stage, record.Status, record.Checksum, record.ErrorMessage, metadataJSON); err != nil {
 			return fmt.Errorf("upsert tenant database migration %s: %w", record.Key, err)
 		}
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit tenant database migration record: %w", err)
 	}
 	return nil
 }
@@ -1239,19 +1300,51 @@ func (r *Repository) upsertTenantDatabaseTarget(ctx context.Context, tx pgx.Tx, 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO platform.tenant_database_targets(
 		    organization_id, deployment_mode, cluster_key, region, database_name, schema_name,
-		    connection_secret_ref, migration_version, status, metadata
+		    connection_secret_ref, migration_version, status, last_provisioned_at, metadata
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+		        CASE WHEN $9 = 'provisioned' THEN NOW() ELSE NULL END, $10::jsonb)
 		ON CONFLICT (organization_id) DO UPDATE SET
 		    deployment_mode = EXCLUDED.deployment_mode,
 		    cluster_key = EXCLUDED.cluster_key,
 		    region = EXCLUDED.region,
 		    database_name = EXCLUDED.database_name,
 		    schema_name = EXCLUDED.schema_name,
-		    connection_secret_ref = EXCLUDED.connection_secret_ref,
-		    migration_version = EXCLUDED.migration_version,
+		    connection_secret_ref = CASE
+		        WHEN platform.tenant_database_targets.status = 'provisioned'
+		         AND platform.tenant_database_targets.deployment_mode = EXCLUDED.deployment_mode
+		         AND platform.tenant_database_targets.cluster_key = EXCLUDED.cluster_key
+		         AND platform.tenant_database_targets.region = EXCLUDED.region
+		         AND platform.tenant_database_targets.database_name IS NOT DISTINCT FROM EXCLUDED.database_name
+		         AND platform.tenant_database_targets.schema_name IS NOT DISTINCT FROM EXCLUDED.schema_name
+		         AND EXCLUDED.connection_secret_ref = ''
+		        THEN platform.tenant_database_targets.connection_secret_ref
+		        ELSE EXCLUDED.connection_secret_ref
+		    END,
+		    migration_version = CASE
+		        WHEN platform.tenant_database_targets.status = 'provisioned'
+		         AND platform.tenant_database_targets.deployment_mode = EXCLUDED.deployment_mode
+		         AND platform.tenant_database_targets.cluster_key = EXCLUDED.cluster_key
+		         AND platform.tenant_database_targets.region = EXCLUDED.region
+		         AND platform.tenant_database_targets.database_name IS NOT DISTINCT FROM EXCLUDED.database_name
+		         AND platform.tenant_database_targets.schema_name IS NOT DISTINCT FROM EXCLUDED.schema_name
+		         AND EXCLUDED.migration_version = ''
+		        THEN platform.tenant_database_targets.migration_version
+		        ELSE EXCLUDED.migration_version
+		    END,
+		    last_provisioned_at = CASE
+		        WHEN EXCLUDED.status = 'provisioned' THEN NOW()
+		        ELSE platform.tenant_database_targets.last_provisioned_at
+		    END,
 		    status = CASE
 		        WHEN platform.tenant_database_targets.status = 'archived' THEN 'archived'
+		        WHEN platform.tenant_database_targets.status = 'provisioned'
+		         AND platform.tenant_database_targets.deployment_mode = EXCLUDED.deployment_mode
+		         AND platform.tenant_database_targets.cluster_key = EXCLUDED.cluster_key
+		         AND platform.tenant_database_targets.region = EXCLUDED.region
+		         AND platform.tenant_database_targets.database_name IS NOT DISTINCT FROM EXCLUDED.database_name
+		         AND platform.tenant_database_targets.schema_name IS NOT DISTINCT FROM EXCLUDED.schema_name
+		        THEN 'provisioned'
 		        ELSE EXCLUDED.status
 		    END,
 		    metadata = platform.tenant_database_targets.metadata || EXCLUDED.metadata,
@@ -1261,6 +1354,45 @@ func (r *Repository) upsertTenantDatabaseTarget(ctx context.Context, tx pgx.Tx, 
 		return fmt.Errorf("upsert tenant database target: %w", err)
 	}
 	return nil
+}
+
+func (r *Repository) enqueueTenantDatabaseProvisioningJob(ctx context.Context, tx pgx.Tx, target tenantdb.Target, input tenantdb.TenantBootstrapInput, source string) error {
+	if target.DeploymentMode != tenantdb.DeploymentModeDedicatedDatabase {
+		return nil
+	}
+	payload := mustJSON(input)
+	idempotencyKey := tenantDatabaseProvisioningIdempotencyKey(target)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO platform.tenant_database_provisioning_jobs AS jobs(
+		    organization_id, tenant_database_id, idempotency_key, status,
+		    bootstrap_payload, metadata
+		)
+		SELECT $1, id, $2, 'pending', $3::jsonb, jsonb_build_object('source', $4::text)
+		FROM platform.tenant_database_targets
+		WHERE organization_id = $1 AND status IN ('provisioning', 'failed')
+		ON CONFLICT (idempotency_key) DO UPDATE SET
+		    status = 'pending',
+		    attempt_count = 0,
+		    available_at = NOW(),
+		    lease_owner = '',
+		    lease_expires_at = NULL,
+		    bootstrap_payload = EXCLUDED.bootstrap_payload,
+		    last_error = '',
+		    started_at = NULL,
+		    completed_at = NULL,
+		    metadata = jobs.metadata || EXCLUDED.metadata,
+		    updated_at = NOW()
+		WHERE jobs.status IN ('failed', 'cancelled', 'succeeded')
+	`, target.OrganizationID, idempotencyKey, payload, source); err != nil {
+		return fmt.Errorf("enqueue tenant database provisioning job: %w", err)
+	}
+	return nil
+}
+
+func tenantDatabaseProvisioningIdempotencyKey(target tenantdb.Target) string {
+	material := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s", target.DeploymentMode, target.ClusterKey, target.Region, target.DatabaseName, target.SchemaName)
+	fingerprint := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("tenant-database-provision:%s:v2:%s", target.OrganizationID, hex.EncodeToString(fingerprint[:8]))
 }
 
 type tenantMigrationRecord struct {
