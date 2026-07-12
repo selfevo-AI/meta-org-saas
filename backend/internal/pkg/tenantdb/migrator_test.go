@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 4 {
-		t.Fatalf("tenant migration file count = %d, want 4", len(files))
+	if len(files) != 6 {
+		t.Fatalf("tenant migration file count = %d, want 6", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -144,6 +144,28 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 	} {
 		if !strings.Contains(organizationScopeSQL, snippet) {
 			t.Fatalf("tenant project organization scope migration SQL missing %q", snippet)
+		}
+	}
+	requirementProjectionSQL := files[4].SQL
+	for _, snippet := range []string{
+		"tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql",
+		"tenantdb:include ../020_requirement_erp_authoritative_projection.sql",
+		`CREATE OR REPLACE VIEW "MREQ"`,
+		`CREATE OR REPLACE VIEW "REQ1"`,
+		"write_mreq_requirement_projection",
+	} {
+		if !strings.Contains(requirementProjectionSQL, snippet) {
+			t.Fatalf("tenant requirement projection migration SQL missing %q", snippet)
+		}
+	}
+	businessKeyLinkSQL := files[5].SQL
+	for _, snippet := range []string{
+		"tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql",
+		"tenantdb:include ../021_project_requirement_business_key_link.sql",
+		"metadata->>'erp_requirement_code'",
+	} {
+		if !strings.Contains(businessKeyLinkSQL, snippet) {
+			t.Fatalf("tenant project requirement business-key migration SQL missing %q", snippet)
 		}
 	}
 }

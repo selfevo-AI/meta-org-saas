@@ -230,6 +230,21 @@ and platform repair `019_project_erp_organization_scope.sql` update the writer
 and backfill earlier compatibility-created rows so project APIs and ERP views
 apply the same organization scope.
 
+Requirements follow the same ownership rule. `requirements` is authoritative,
+`MREQ` is its updatable ERP compatibility view, and `REQ1` is a read-only
+projection of `requirement_documents`. Root repair `020_requirement_erp_authoritative_projection.sql`
+is reused by tenant repair `005_requirement_erp_authoritative_projection.sql`;
+it imports legacy requirements and makes ERP conversion populate the resulting
+project's real `requirement_id`. Sales delivery `MDLN`, cost receipt `MCST`, and
+feedback receipt `MFDB` remain ERP business documents rather than aliases for
+project deliverables, cost entries, or evaluations.
+
+Requirement-to-project conversion resolves both UUID identifiers and stable ERP
+business keys. Root repair `021_project_requirement_business_key_link.sql` and
+tenant repair `006_project_requirement_business_key_link.sql` ensure a project
+created from `REQ-xxxx` receives the authoritative requirement UUID in
+`projects.requirement_id`.
+
 Supply-chain domain ownership is now code-table-only for fresh tenant
 databases:
 

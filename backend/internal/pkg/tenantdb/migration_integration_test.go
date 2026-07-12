@@ -58,8 +58,8 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run fresh tenant migrations: %v", err)
 	}
-	if result.Version != "004_project_erp_organization_scope" {
-		t.Fatalf("tenant migration version = %q, want 004_project_erp_organization_scope", result.Version)
+	if result.Version != "006_project_requirement_business_key_link" {
+		t.Fatalf("tenant migration version = %q, want 006_project_requirement_business_key_link", result.Version)
 	}
 
 	targetPool, err = pgxpool.New(ctx, targetURL)
@@ -82,6 +82,8 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 		`public."MCNT"`,
 		`public."MPRJ"`,
 		`public."APRJ"`,
+		`public."MREQ"`,
+		`public."REQ1"`,
 	} {
 		assertTenantTableExists(t, ctx, targetPool, tableRef)
 	}
@@ -117,6 +119,56 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	}
 
 	assertProjectERPProjection(t, ctx, targetPool, orgID)
+	assertRequirementERPProjection(t, ctx, targetPool, orgID)
+}
+
+func assertRequirementERPProjection(t *testing.T, ctx context.Context, db *pgxpool.Pool, orgID uuid.UUID) {
+	t.Helper()
+	requirementID := uuid.New()
+	if _, err := db.Exec(ctx, `INSERT INTO requirements(id, organization_id, title) VALUES ($1, $2, 'Lifecycle Requirement')`, requirementID, orgID); err != nil {
+		t.Fatalf("create lifecycle requirement: %v", err)
+	}
+	var projectedTitle string
+	if err := db.QueryRow(ctx, `SELECT "Payload"->>'Title' FROM "MREQ" WHERE "ReqCode" = $1`, requirementID.String()).Scan(&projectedTitle); err != nil {
+		t.Fatalf("read lifecycle requirement through MREQ: %v", err)
+	}
+	if projectedTitle != "Lifecycle Requirement" {
+		t.Fatalf("MREQ lifecycle requirement title = %q", projectedTitle)
+	}
+
+	if _, err := db.Exec(ctx, `INSERT INTO "MREQ"("ReqCode", "Payload") VALUES ('REQ-COMPAT', '{"Payload":{"Name":"ERP Compatibility Requirement"}}')`); err != nil {
+		t.Fatalf("create requirement through MREQ: %v", err)
+	}
+	var compatibilityRequirementID, compatibilityOrganizationID uuid.UUID
+	if err := db.QueryRow(ctx, `SELECT id, organization_id FROM requirements WHERE metadata->>'erp_requirement_code' = 'REQ-COMPAT'`).Scan(&compatibilityRequirementID, &compatibilityOrganizationID); err != nil {
+		t.Fatalf("read MREQ-created authoritative requirement: %v", err)
+	}
+	if compatibilityOrganizationID != orgID {
+		t.Fatalf("MREQ requirement organization = %s, want %s", compatibilityOrganizationID, orgID)
+	}
+
+	documentID := uuid.New()
+	if _, err := db.Exec(ctx, `INSERT INTO requirement_documents(id, requirement_id, file_name, content_type, size_bytes, content) VALUES ($1, $2, 'scope.md', 'text/markdown', 5, $3)`, documentID, compatibilityRequirementID, []byte("scope")); err != nil {
+		t.Fatalf("create requirement document: %v", err)
+	}
+	var projectedDocumentID string
+	if err := db.QueryRow(ctx, `SELECT "Payload"->>'RequirementDocumentID' FROM "REQ1" WHERE "ReqCode" = 'REQ-COMPAT'`).Scan(&projectedDocumentID); err != nil {
+		t.Fatalf("read requirement document through REQ1: %v", err)
+	}
+	if projectedDocumentID != documentID.String() {
+		t.Fatalf("REQ1 document id = %q, want %q", projectedDocumentID, documentID)
+	}
+
+	if _, err := db.Exec(ctx, `INSERT INTO "MPRJ"("PrjCode", "Payload") VALUES ('PRJ-FROM-REQ', JSONB_BUILD_OBJECT('Name', 'Converted Project', 'RequirementCode', 'REQ-COMPAT'))`); err != nil {
+		t.Fatalf("create requirement-linked project through MPRJ: %v", err)
+	}
+	var linkedRequirementID uuid.UUID
+	if err := db.QueryRow(ctx, `SELECT requirement_id FROM projects WHERE metadata->>'erp_project_code' = 'PRJ-FROM-REQ'`).Scan(&linkedRequirementID); err != nil {
+		t.Fatalf("read requirement link on MPRJ project: %v", err)
+	}
+	if linkedRequirementID != compatibilityRequirementID {
+		t.Fatalf("MPRJ requirement id = %s, want %s", linkedRequirementID, compatibilityRequirementID)
+	}
 }
 
 func assertProjectERPProjection(t *testing.T, ctx context.Context, db *pgxpool.Pool, orgID uuid.UUID) {

@@ -1,0 +1,3 @@
+-- Apply the shared business-key requirement link repair to tenant databases.
+-- tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql
+-- tenantdb:include ../021_project_requirement_business_key_link.sql

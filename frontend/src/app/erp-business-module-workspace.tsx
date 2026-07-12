@@ -670,10 +670,10 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
               onRefresh={() => void loadRecords(activeDocument)}
               onCreateHeader={handleWorkbenchCreateHeader}
               onUpdateHeader={handleWorkbenchUpdateHeader}
-              onDeleteHeader={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchDeleteHeader}
-              onCreateLine={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchCreateLine}
-              onUpdateLine={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchUpdateLine}
-              onDeleteLine={activeDocument.tableCode === 'MPRJ' ? undefined : handleWorkbenchDeleteLine}
+              onDeleteHeader={['MREQ', 'MPRJ'].includes(activeDocument.tableCode) ? undefined : handleWorkbenchDeleteHeader}
+              onCreateLine={['MREQ', 'MPRJ'].includes(activeDocument.tableCode) ? undefined : handleWorkbenchCreateLine}
+              onUpdateLine={['MREQ', 'MPRJ'].includes(activeDocument.tableCode) ? undefined : handleWorkbenchUpdateLine}
+              onDeleteLine={['MREQ', 'MPRJ'].includes(activeDocument.tableCode) ? undefined : handleWorkbenchDeleteLine}
               busy={busy}
             />
           )}
@@ -739,7 +739,7 @@ export function ERPBusinessModuleWorkspace({ token, module, externalSelection, a
               </section>
             )}
 
-            {activeDocument.kind !== 'report' && activeDocument.childCode && activeDocument.tableCode !== 'MPRJ' && (
+            {activeDocument.kind !== 'report' && activeDocument.childCode && !['MREQ', 'MPRJ'].includes(activeDocument.tableCode) && (
               <section className="rounded-lg border border-slate-200 bg-white p-4">
                 <h3 className="text-sm font-semibold text-slate-950">{t('erp.business.createLine')}</h3>
                 <div className="mt-3 space-y-2">

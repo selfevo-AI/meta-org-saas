@@ -1,0 +1,4 @@
+-- Reuse the governed root repair so platform-era and tenant schemas share one
+-- requirement compatibility implementation.
+-- tenantdb:accept-checksum-drift 001_tenant_business_baseline.sql
+-- tenantdb:include ../020_requirement_erp_authoritative_projection.sql
