@@ -93,6 +93,9 @@ const literalOperationKeys = Array.from(
     ...[...operationsSource.matchAll(/label:\s*'([^']+)'/g)].map((match) => match[1]),
   ].filter((key) => /[\u3400-\u9fff]/u.test(key))),
 )
+const operationDomainKeys = Array.from(
+  new Set([...operations.map((operation) => operation.domain), 'FinanceCostAccounting']),
+)
 
 function hasKey(dictionary, key) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -108,6 +111,8 @@ function hasKey(dictionary, key) {
 const missingEnKeys = operationKeys.filter((key) => !hasKey(enDictionary, key))
 const missingZhKeys = operationKeys.filter((key) => !hasKey(zhDictionary, key))
 const missingEnglishLiteralKeys = literalOperationKeys.filter((key) => !hasKey(enDictionary, key))
+const missingEnglishDomainKeys = operationDomainKeys.filter((key) => !hasKey(enDictionary, key))
+const missingChineseDomainKeys = operationDomainKeys.filter((key) => !hasKey(zhDictionary, key))
 
 const failures = []
 if (missingRoutes.length > 0) {
@@ -133,6 +138,14 @@ if (missingEnglishLiteralKeys.length > 0) {
       .join('\n')}`,
   )
 }
+if (missingEnglishDomainKeys.length > 0 || missingChineseDomainKeys.length > 0) {
+  failures.push(
+    `Operation domains must have bilingual mappings:\n${[
+      ...missingChineseDomainKeys.map((key) => `  - zh: ${key}`),
+      ...missingEnglishDomainKeys.map((key) => `  - en: ${key}`),
+    ].join('\n')}`,
+  )
+}
 
 if (failures.length > 0) {
   console.error(failures.join('\n\n'))
@@ -140,5 +153,5 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Verified ${requiredRoutes.length} supply-chain routes, ${operationKeys.length} stable operation keys, and ${literalOperationKeys.length} legacy bilingual keys.`,
+  `Verified ${requiredRoutes.length} supply-chain routes, ${operationKeys.length} stable operation keys, ${literalOperationKeys.length} legacy bilingual keys, and ${operationDomainKeys.length} domain keys.`,
 )
