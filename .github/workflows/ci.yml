@@ -104,6 +104,7 @@ jobs:
           npm run test:supply-chain
           npm run test:bundle
           npm run test:i18n-bundle
+          npm run test:routing
       - name: Build
         working-directory: frontend
         run: npm run build

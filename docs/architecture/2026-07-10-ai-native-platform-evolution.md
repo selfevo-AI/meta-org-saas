@@ -351,6 +351,13 @@ deployment:
 The login surface selects the application boundary. Platform and tenant tokens,
 navigation, permissions and current context remain visually distinct.
 
+The first routing stage now publishes canonical `/platform/<workspace>` and
+`/tenant/<organizationId>/<workspace>` deep links while reusing the established
+workbench component. Login, navigation, refresh, organization validation, and
+browser history synchronize through these URLs. This is a compatibility step;
+platform and tenant layouts, server read models, and nested ERP document routes
+still need to move out of the shared client page in later stages.
+
 ### Operational Design System
 
 The target UI is a dense, quiet operational workspace inspired by professional

@@ -37,6 +37,7 @@ import {
   X,
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
+import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
@@ -103,6 +104,8 @@ import type { SessionScope } from '@/lib/auth'
 import { useI18n } from '@/lib/i18n'
 import { apiOperations, getOperationProfile, operationDomains } from '@/lib/operations'
 import type { ApiOperation } from '@/lib/operations'
+import { parseWorkspacePath, workspacePath } from '@/lib/workspace-routes'
+import type { WorkspaceView } from '@/lib/workspace-routes'
 import { AIAssistant } from './ai-assistant'
 
 const CapabilityEvaluationWorkspace = dynamic(() => import('./control-workspaces').then((module) => module.CapabilityEvaluationWorkspace), { loading: WorkspaceLoading })
@@ -120,7 +123,6 @@ const SystemAdminWorkspace = dynamic(() => import('./system-admin-workspace').th
 
 type AuthMode = 'login' | 'register'
 type LoginSurface = 'tenant' | 'platform'
-type WorkspaceView = 'overview' | `domain:${string}`
 type ThemeMode = 'dark' | 'light'
 
 function WorkspaceLoading() {
@@ -1446,6 +1448,8 @@ function agentIntentForOperation(operation: ApiOperation, context: Record<string
 
 export default function Home() {
   const { locale, setLocale, t } = useI18n()
+  const pathname = usePathname()
+  const router = useRouter()
   const [ready, setReady] = useState(false)
   const [mode, setMode] = useState<AuthMode>('login')
   const [loginSurface, setLoginSurface] = useState<LoginSurface>('tenant')
@@ -1526,6 +1530,43 @@ export default function Home() {
   const isPlatformAdminSession = !!platformRole
   const activeSessionScope: SessionScope = isPlatformAdminSession || loginSurface === 'platform' ? 'platform' : 'tenant'
   const visibleMenuGroups = isPlatformAdminSession ? platformMenuGroups : menuGroups
+
+  useEffect(() => {
+    if (!ready) return
+    const route = parseWorkspacePath(pathname)
+    if (!token) {
+      if (route) return deferStateUpdate(() => setLoginSurface(route.scope))
+      return
+    }
+
+    const sessionScope: SessionScope = platformRole ? 'platform' : 'tenant'
+    if (!route || route.scope !== sessionScope) {
+      const target = workspacePath(sessionScope, currentOrganizationID, 'overview')
+      if (target !== '/' && target !== pathname) router.replace(target)
+      return
+    }
+
+    if (sessionScope === 'tenant') {
+      const routeOrganizationID = route.organizationId
+      const routeOrganizationIsValid = !!routeOrganizationID && organizations.some((organization) => organization.id === routeOrganizationID)
+      if (!routeOrganizationIsValid) {
+        const target = workspacePath('tenant', currentOrganizationID, 'overview')
+        if (target !== '/' && target !== pathname) router.replace(target)
+        return
+      }
+      if (routeOrganizationID !== currentOrganizationID) {
+        return deferStateUpdate(() => {
+          setCurrentOrganizationId(routeOrganizationID, 'tenant')
+          setCurrentOrganizationID(routeOrganizationID)
+          setOverview(null)
+          setBusinessNodesByDomain({})
+          setBusinessSelection(null)
+          setWorkspaceView(route.view)
+        })
+      }
+    }
+    return deferStateUpdate(() => setWorkspaceView(route.view))
+  }, [currentOrganizationID, organizations, pathname, platformRole, ready, router, token])
 
   useEffect(() => {
     let cancelled = false
@@ -1902,9 +1943,11 @@ export default function Home() {
         setBusinessNodesByDomain({})
         setBusinessSelection(null)
         setWorkspaceView('overview')
+        router.replace(workspacePath('platform', null, 'overview'))
       } else {
         setCurrentOrganizationId(nextOrgID, 'tenant')
         setCurrentOrganizationID(nextOrgID)
+        if (nextOrgID) router.replace(workspacePath('tenant', nextOrgID, 'overview'))
       }
       if (mode === 'register') {
         setNotice(t('auth.accountCreated'))
@@ -1964,6 +2007,7 @@ export default function Home() {
       setBusinessNodesByDomain({})
       setOverview(null)
       setNotice(t('onboarding.created'))
+      router.replace(workspacePath('tenant', nextOrgID, 'overview'))
       await loadOverview(token)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('onboarding.failed'))
@@ -1989,6 +2033,7 @@ export default function Home() {
     setError(null)
     setLoginSurface(scope)
     setWorkspaceView('overview')
+    router.replace('/')
   }
 
   async function handleOwnPasswordChange(event: FormEvent<HTMLFormElement>) {
@@ -2219,7 +2264,7 @@ export default function Home() {
     if (!nextFunction) return
     setCurrentSupplyChainFunctionID(functionID)
     setActiveTenantDocumentID(buildTenantDocumentMenuItems(nextFunction.domain)[0]?.documentID ?? null)
-    setWorkspaceView(`domain:${nextFunction.domain}`)
+    navigateToWorkspace(`domain:${nextFunction.domain}`)
     setBusinessSelection(null)
     setMobileMenuOpen(false)
     setMobileBusinessOpen(false)
@@ -2230,7 +2275,7 @@ export default function Home() {
     const selectedSupplyChainFunction = supplyChainFunctionForTarget(item.domain, item.targetType)
     setCurrentSupplyChainFunctionID(selectedSupplyChainFunction?.id ?? null)
     setActiveTenantDocumentID(item.documentID)
-    setWorkspaceView(view)
+    navigateToWorkspace(view)
     setBusinessSelection({
       id: item.id,
       domain: item.domain,
@@ -2253,7 +2298,7 @@ export default function Home() {
       setCurrentSupplyChainFunctionID(null)
       setActiveTenantDocumentID(buildTenantDocumentMenuItems(nextDomain)[0]?.documentID ?? null)
     }
-    setWorkspaceView(view)
+    navigateToWorkspace(view)
     setBusinessSelection(null)
     setMobileMenuOpen(false)
     setMobileBusinessOpen(false)
@@ -2270,7 +2315,7 @@ export default function Home() {
     const selectedSupplyChainFunction = supplyChainFunctionForTarget(node.domain, node.targetType)
     if (selectedSupplyChainFunction) setCurrentSupplyChainFunctionID(selectedSupplyChainFunction.id)
     setActiveTenantDocumentID(buildTenantDocumentMenuItems(node.domain).find((item) => item.targetType === node.targetType)?.documentID ?? null)
-    setWorkspaceView(view)
+    navigateToWorkspace(view)
     setBusinessSelection(node)
     setOperationContext((current) => ({
       ...current,
@@ -2281,6 +2326,12 @@ export default function Home() {
       operation_id: node.targetType === 'api_operation' ? node.targetID ?? '' : current.operation_id ?? '',
     }))
     setMobileBusinessOpen(false)
+  }
+
+  function navigateToWorkspace(view: WorkspaceView) {
+    setWorkspaceView(view)
+    const target = workspacePath(activeSessionScope, currentOrganizationID, view)
+    if (target !== '/' && target !== pathname) router.push(target)
   }
 
   async function handleToolApproval(id: string, decision: 'approve' | 'reject') {

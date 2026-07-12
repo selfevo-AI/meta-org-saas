@@ -16,6 +16,7 @@
     "test:supply-chain": "node verify-supply-chain-workspace.mjs",
     "test:bundle": "node verify-workspace-code-splitting.mjs",
     "test:i18n-bundle": "node verify-i18n-code-splitting.mjs",
+    "test:routing": "node verify-workspace-routing.mjs",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
