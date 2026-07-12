@@ -49,6 +49,7 @@ type InvocationRepository interface {
 type CatalogRepository interface {
 	CreateProvider(ctx context.Context, input CreateProviderInput) (*ModelProvider, error)
 	ListProviders(ctx context.Context, limit int) ([]ModelProvider, error)
+	ListActiveProviders(ctx context.Context, limit int) ([]ModelProvider, error)
 	UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error)
 	RotateProviderKey(ctx context.Context, id uuid.UUID, apiKey string) (*ModelProvider, error)
 	UpdateProviderTestResult(ctx context.Context, id uuid.UUID, status string, message string) error
@@ -931,6 +932,20 @@ func (s *Service) ListProviders(ctx context.Context, limit int) ([]ModelProvider
 	return s.catalogRepo().ListProviders(ctx, limit)
 }
 
+func (s *Service) ListTenantProviders(ctx context.Context, limit int) ([]TenantModelProvider, error) {
+	providers, err := s.catalogRepo().ListActiveProviders(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]TenantModelProvider, 0, len(providers))
+	for _, provider := range providers {
+		result = append(result, TenantModelProvider{
+			ID: provider.ID, Name: provider.Name, ProviderType: provider.ProviderType, Status: provider.Status,
+		})
+	}
+	return result, nil
+}
+
 func (s *Service) UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error) {
 	return s.catalogRepo().UpdateProvider(ctx, id, input)
 }
@@ -982,6 +997,29 @@ func (s *Service) CreateModel(ctx context.Context, input CreateModelInput) (*Mod
 
 func (s *Service) ListModels(ctx context.Context, providerID *uuid.UUID, limit int) ([]Model, error) {
 	return s.catalogRepo().ListModels(ctx, providerID, limit)
+}
+
+func (s *Service) ListTenantModels(ctx context.Context, providerID *uuid.UUID, limit int) ([]TenantModel, error) {
+	models, err := s.catalogRepo().ListActiveModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	limit = normalizeLimit(limit)
+	result := make([]TenantModel, 0, min(limit, len(models)))
+	for _, model := range models {
+		if providerID != nil && model.ProviderID != *providerID {
+			continue
+		}
+		result = append(result, TenantModel{
+			ID: model.ID, ProviderID: model.ProviderID, ModelKey: model.ModelKey, DisplayName: model.DisplayName,
+			ContextWindow: model.ContextWindow, MaxOutputTokens: model.MaxOutputTokens,
+			Capabilities: append([]string(nil), model.Capabilities...), Status: model.Status,
+		})
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) UpdateModel(ctx context.Context, id uuid.UUID, input UpdateModelInput) (*Model, error) {

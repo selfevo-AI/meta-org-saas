@@ -14,11 +14,31 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
   if ((page.viewportSize()?.width ?? 1440) < 1024) {
     await page.getByTestId('mobile-menu-open').click()
   }
+  const providerCatalogResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET' && response.url().endsWith('/api/v1/model-providers')
+  ))
+  const modelCatalogResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET' && response.url().endsWith('/api/v1/models')
+  ))
   await page.getByTestId('domain-nav-Project').click()
   await page.getByTestId('erp-document-project').click()
 
   const workbench = page.getByTestId('business-ai-workbench')
   await expect(workbench).toBeVisible()
+  const providers = await (await providerCatalogResponse).json() as Array<Record<string, unknown>>
+  const models = await (await modelCatalogResponse).json() as Array<Record<string, unknown>>
+  expect(providers.length).toBeGreaterThan(0)
+  expect(models.length).toBeGreaterThan(0)
+  for (const provider of providers) {
+    for (const forbidden of ['base_url', 'masked_api_key', 'last_test_error', 'metadata', 'tags']) {
+      expect(provider).not.toHaveProperty(forbidden)
+    }
+  }
+  for (const model of models) {
+    for (const forbidden of ['metadata', 'created_at', 'updated_at']) {
+      expect(model).not.toHaveProperty(forbidden)
+    }
+  }
   const stages = [
     ['plan', /project\.(match_members|bind_workflow|estimate_cost)/],
     ['change', /project\.(update_status|bind_workflow|match_members)/],

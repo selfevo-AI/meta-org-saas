@@ -38,6 +38,13 @@ type ModelProvider struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
+type TenantModelProvider struct {
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	ProviderType string    `json:"provider_type"`
+	Status       string    `json:"status"`
+}
+
 type Model struct {
 	ID              uuid.UUID      `json:"id"`
 	ProviderID      uuid.UUID      `json:"provider_id"`
@@ -50,6 +57,17 @@ type Model struct {
 	Metadata        map[string]any `json:"metadata"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
+}
+
+type TenantModel struct {
+	ID              uuid.UUID `json:"id"`
+	ProviderID      uuid.UUID `json:"provider_id"`
+	ModelKey        string    `json:"model_key"`
+	DisplayName     string    `json:"display_name"`
+	ContextWindow   int       `json:"context_window"`
+	MaxOutputTokens int       `json:"max_output_tokens"`
+	Capabilities    []string  `json:"capabilities"`
+	Status          string    `json:"status"`
 }
 
 type PriceVersion struct {

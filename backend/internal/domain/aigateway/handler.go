@@ -62,14 +62,33 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 }
 
 func (h *Handler) RegisterTenantRoutes(r chi.Router) {
-	r.Get("/model-providers", h.listProviders)
-	r.Get("/models", h.listModels)
+	r.Get("/model-providers", h.listTenantProviders)
+	r.Get("/models", h.listTenantModels)
 	r.Post("/ai-gateway/invoke", h.invoke)
 	r.Get("/ai-gateway/stream", h.stream)
 	r.Post("/ai-gateway/stream", h.streamPost)
 	r.Get("/ai-gateway/invocations", h.listInvocations)
 	r.Get("/ai-gateway/invocations/{id}", h.getInvocation)
 	r.Get("/ai-gateway/cost-summary", h.costSummary)
+}
+
+func (h *Handler) listTenantProviders(w http.ResponseWriter, r *http.Request) {
+	result, err := h.service.ListTenantProviders(r.Context(), queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) listTenantModels(w http.ResponseWriter, r *http.Request) {
+	var providerID *uuid.UUID
+	if raw := r.URL.Query().Get("provider_id"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provider_id"})
+			return
+		}
+		providerID = &parsed
+	}
+	result, err := h.service.ListTenantModels(r.Context(), providerID, queryLimit(r))
+	writeResult(w, http.StatusOK, result, err)
 }
 
 func (h *Handler) RegisterCompatibleRoutes(r chi.Router, middlewares ...func(http.Handler) http.Handler) {

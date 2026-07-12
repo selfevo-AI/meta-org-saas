@@ -39,6 +39,22 @@ func TestRepositoryApplyChannelUsesModelGroupAbilities(t *testing.T) {
 	}
 }
 
+func TestRepositoryActiveModelsRequireActiveProviders(t *testing.T) {
+	source := readRepositorySource(t)
+	start := strings.Index(source, "func (r *PostgresRepository) ListActiveModels")
+	if start < 0 {
+		t.Fatal("could not locate ListActiveModels implementation")
+	}
+	end := strings.Index(source[start:], "func (r *PostgresRepository) UpdateModel")
+	if end < 0 {
+		t.Fatal("could not locate ListActiveModels implementation")
+	}
+	implementation := source[start : start+end]
+	if !strings.Contains(implementation, "JOIN model_providers") || !strings.Contains(implementation, "p.status = 'active'") {
+		t.Fatal("ListActiveModels must exclude models belonging to inactive providers")
+	}
+}
+
 func readRepositorySource(t *testing.T) string {
 	t.Helper()
 	data, err := os.ReadFile("repository.go")

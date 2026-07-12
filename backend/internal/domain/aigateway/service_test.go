@@ -13,25 +13,26 @@ import (
 )
 
 type fakeGatewayRepo struct {
-	target          ResolvedModel
-	recorded        bool
-	completed       bool
-	failed          bool
-	pricingResolved bool
-	ledgerCount     int
-	lastLedger      CreateUsageLedgerInput
-	lastComplete    CompleteInvocationInput
-	accessToken     AccessTokenContext
-	reserved        bool
-	settled         bool
-	refunded        bool
-	reservation     BalanceReservation
-	lastReserve     ReserveBalanceInput
-	lastSettle      SettleBalanceInput
-	lastTokenStore  CreateAccessTokenStoreInput
-	lastAdjustment  AdjustGatewayBalanceInput
-	catalogModels   []Model
-	abilities       []ModelChannelAbility
+	target           ResolvedModel
+	recorded         bool
+	completed        bool
+	failed           bool
+	pricingResolved  bool
+	ledgerCount      int
+	lastLedger       CreateUsageLedgerInput
+	lastComplete     CompleteInvocationInput
+	accessToken      AccessTokenContext
+	reserved         bool
+	settled          bool
+	refunded         bool
+	reservation      BalanceReservation
+	lastReserve      ReserveBalanceInput
+	lastSettle       SettleBalanceInput
+	lastTokenStore   CreateAccessTokenStoreInput
+	lastAdjustment   AdjustGatewayBalanceInput
+	catalogProviders []ModelProvider
+	catalogModels    []Model
+	abilities        []ModelChannelAbility
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -477,7 +478,23 @@ func (f *fakeGatewayRepo) CreateProvider(context.Context, CreateProviderInput) (
 }
 
 func (f *fakeGatewayRepo) ListProviders(context.Context, int) ([]ModelProvider, error) {
-	return nil, errors.New("unexpected catalog call")
+	if f.catalogProviders == nil {
+		return nil, errors.New("unexpected catalog call")
+	}
+	return f.catalogProviders, nil
+}
+
+func (f *fakeGatewayRepo) ListActiveProviders(context.Context, int) ([]ModelProvider, error) {
+	if f.catalogProviders == nil {
+		return nil, errors.New("unexpected catalog call")
+	}
+	result := make([]ModelProvider, 0, len(f.catalogProviders))
+	for _, provider := range f.catalogProviders {
+		if provider.Status == "active" {
+			result = append(result, provider)
+		}
+	}
+	return result, nil
 }
 
 func (f *fakeGatewayRepo) UpdateProvider(context.Context, uuid.UUID, UpdateProviderInput) (*ModelProvider, error) {

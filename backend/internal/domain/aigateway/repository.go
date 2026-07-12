@@ -71,6 +71,23 @@ func (r *PostgresRepository) ListProviders(ctx context.Context, limit int) ([]Mo
 	return scanProviders(rows)
 }
 
+func (r *PostgresRepository) ListActiveProviders(ctx context.Context, limit int) ([]ModelProvider, error) {
+	limit = normalizeLimit(limit)
+	rows, err := r.db.Query(ctx, `
+		SELECT id, name, provider_type, base_url, masked_api_key, status, timeout_ms, retry_count,
+			risk_level, tags, metadata, last_test_status, last_test_error, last_tested_at, created_at, updated_at
+		FROM model_providers
+		WHERE status = 'active'
+		ORDER BY created_at DESC
+		LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list active model providers: %w", err)
+	}
+	defer rows.Close()
+	return scanProviders(rows)
+}
+
 func (r *PostgresRepository) UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error) {
 	tagsJSON, metaJSON, err := providerJSON(input.Tags, input.Metadata)
 	if err != nil {
@@ -215,11 +232,12 @@ func (r *PostgresRepository) ListModels(ctx context.Context, providerID *uuid.UU
 
 func (r *PostgresRepository) ListActiveModels(ctx context.Context) ([]Model, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, provider_id, model_key, display_name, context_window, max_output_tokens,
-			capabilities, status, metadata, created_at, updated_at
-		FROM models
-		WHERE status = 'active'
-		ORDER BY created_at DESC
+		SELECT m.id, m.provider_id, m.model_key, m.display_name, m.context_window, m.max_output_tokens,
+			m.capabilities, m.status, m.metadata, m.created_at, m.updated_at
+		FROM models m
+		JOIN model_providers p ON p.id = m.provider_id
+		WHERE m.status = 'active' AND p.status = 'active'
+		ORDER BY m.created_at DESC
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("list active models: %w", err)
