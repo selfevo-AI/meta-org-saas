@@ -91,6 +91,15 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 	if !authRateLimitTableExists {
 		t.Fatal("authentication rate limit bucket table missing")
 	}
+	var securityNonceTableExists bool
+	if err := targetPool.QueryRow(ctx, `
+		SELECT to_regclass('platform.security_request_nonces') IS NOT NULL
+	`).Scan(&securityNonceTableExists); err != nil {
+		t.Fatalf("check security request nonce table: %v", err)
+	}
+	if !securityNonceTableExists {
+		t.Fatal("security request nonce table missing")
+	}
 	var businessAIStageTableExists bool
 	if err := targetPool.QueryRow(ctx, `
 		SELECT to_regclass('public.business_stage_ai_runs') IS NOT NULL

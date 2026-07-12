@@ -20,6 +20,12 @@ This directory now uses staged baseline migrations instead of the historical
 15. `015_authentication_rate_limit_buckets.sql`
 16. `016_business_stage_ai_runs.sql`
 17. `017_business_ai_tool_proposal_execution.sql`
+18. `018_project_erp_authoritative_projection.sql`
+19. `019_project_erp_organization_scope.sql`
+20. `020_requirement_erp_authoritative_projection.sql`
+21. `021_project_requirement_business_key_link.sql`
+22. `022_business_ai_stage_tool_contract.sql`
+23. `023_security_kernel_replay_ledger.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -369,6 +375,15 @@ Registration consumes a client-only bucket. Forwarded client headers are trusted
 only when the direct peer belongs to `TRUSTED_PROXY_CIDRS`. Rate-limit storage
 errors fail closed with HTTP 503, threshold blocks return HTTP 429 and
 `Retry-After`, and aggregate counters are exposed from the health endpoint.
+
+`023_security_kernel_replay_ledger.sql` adds the shared
+`platform.security_request_nonces` ledger used by every security-kernel replica.
+Nonce claims are atomic across instances, remain reserved until the signed
+request timestamp can no longer pass the configured clock-skew window, and are
+cleaned asynchronously. Database or ledger unavailability fails closed; the
+security-kernel health endpoint is ready only when the shared ledger exists.
+The same table belongs to `000_saas_platform_management_baseline.sql` for fresh
+platform databases.
 
 `016_business_stage_ai_runs.sql` adds the platform-owned audit record for
 project AI analysis across the Plan, Do, Change, Accept, and Learn stages. Each

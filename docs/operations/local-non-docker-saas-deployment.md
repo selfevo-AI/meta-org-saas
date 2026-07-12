@@ -76,6 +76,10 @@ Build and start the security kernel:
 ```powershell
 cd D:\project\meta-org-saas\security-kernel
 cargo build
+$env:SECURITY_KERNEL_PORT = '8090'
+$env:SECURITY_KERNEL_SHARED_SECRET = 'dev-security-kernel-shared-secret'
+$env:SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS = '60'
+$env:SECURITY_KERNEL_DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable'
 Start-Process -FilePath 'D:\project\meta-org-saas\target\debug\security-kernel.exe' `
   -WorkingDirectory 'D:\project\meta-org-saas\security-kernel' `
   -WindowStyle Hidden `

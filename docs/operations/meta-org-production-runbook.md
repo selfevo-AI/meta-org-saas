@@ -24,6 +24,7 @@ Backend:
 | `SECURITY_KERNEL_URL` | no | External authorization service URL. Empty means the client is not configured and allows requests. |
 | `SECURITY_KERNEL_SHARED_SECRET` | if kernel enabled | Shared secret for security-kernel calls. |
 | `SECURITY_KERNEL_ENFORCEMENT_MODE` | no | Defaults to `blocking`; use `audit` only for controlled rollout. |
+| `SECURITY_KERNEL_DATABASE_URL` | security-kernel service | PostgreSQL URL for the `meta_org_saas` platform database. All replicas use its shared nonce ledger for replay protection. |
 
 Frontend:
 
@@ -57,7 +58,7 @@ Keep both values in the deployment secret manager. Do not commit them.
 
 1. Create an empty PostgreSQL database named `meta_org_saas`.
 2. Set backend environment variables, including `DATABASE_URL`, `PLATFORM_DATABASE_URL`, `TENANT_DATABASE_ADMIN_URL`, `JWT_SECRET`, `MODEL_SECRET_KEY`, `MIGRATIONS_PATH`, and `TENANT_MIGRATIONS_PATH`.
-3. If using an external security kernel, set `SECURITY_KERNEL_URL`, `SECURITY_KERNEL_SHARED_SECRET`, and choose `SECURITY_KERNEL_ENFORCEMENT_MODE`.
+3. If using an external security kernel, set `SECURITY_KERNEL_URL`, `SECURITY_KERNEL_SHARED_SECRET`, and choose `SECURITY_KERNEL_ENFORCEMENT_MODE`. Configure every security-kernel replica with the same `SECURITY_KERNEL_DATABASE_URL` for `meta_org_saas`.
 4. Start the backend. It applies the staged SQL baselines automatically in filename order: `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, and `004_ai_capability_baseline.sql`.
 5. For SaaS mode, bootstrap the platform administrator with `META_ORG_PLATFORM_ADMIN_EMAIL` and `META_ORG_PLATFORM_ADMIN_PASSWORD_HASH`.
 6. Start the frontend with `NEXT_PUBLIC_API_URL` pointing at `/api/v1`.
@@ -167,6 +168,12 @@ If tenant finance or ERP APIs fail with `relation gl_journal_entries does not ex
 If browser calls fail with `Failed to fetch`, verify both network reachability and CORS response headers. Windows PowerShell startup commands must quote comma-separated `CORS_ORIGINS`; otherwise the backend can start without matching `Access-Control-Allow-Origin`.
 
 If onboarding fails with `security kernel denied owner_attestation verify`, verify the security kernel process is reachable, `SECURITY_KERNEL_SHARED_SECRET` matches on both sides, the security kernel binary accepts the JSON distribution mode value `saas`, and the backend sends owner attestation as a `general` security feature gate rather than as a tenant business module entitlement.
+
+If security-kernel `/healthz` reports `security_nonce_table_unavailable`, start
+the backend migration process and confirm migration `023_security_kernel_replay_ledger.sql`
+has created `platform.security_request_nonces`. A database error or missing
+ledger intentionally fails authorization closed so a horizontally scaled
+deployment cannot silently fall back to per-process replay protection.
 
 Meta Resource sync intentionally reads existing source tables without owning them. If sync fails after a schema change, check these source assumptions first:
 

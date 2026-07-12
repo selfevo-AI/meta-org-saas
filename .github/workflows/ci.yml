@@ -53,12 +53,28 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: meta_org_saas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Format
         run: cargo fmt --check
       - name: Test security kernel
+        env:
+          SECURITY_KERNEL_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
         run: cargo test
 
   frontend:
@@ -86,6 +102,8 @@ jobs:
           npm run test:runtime-workbench
           npm run test:unified-workbench
           npm run test:supply-chain
+          npm run test:bundle
+          npm run test:i18n-bundle
       - name: Build
         working-directory: frontend
         run: npm run build

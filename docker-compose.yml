@@ -23,6 +23,7 @@ services:
       SECURITY_KERNEL_PORT: "8090"
       SECURITY_KERNEL_SHARED_SECRET: "dev-security-kernel-shared-secret"
       SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS: "60"
+      SECURITY_KERNEL_DATABASE_URL: "postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable"
       RUST_LOG: "info"
     ports:
       - "8090:8090"
@@ -93,7 +94,7 @@ services:
       postgres:
         condition: service_healthy
       security-kernel:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health >/dev/null"]
       interval: 5s

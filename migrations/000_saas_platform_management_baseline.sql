@@ -1829,6 +1829,17 @@ CREATE TABLE IF NOT EXISTS identity_challenges (
 CREATE INDEX IF NOT EXISTS idx_identity_challenges_subject
     ON identity_challenges(subject_id, subject_type, status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS platform.security_request_nonces (
+    nonce             UUID PRIMARY KEY,
+    request_timestamp TIMESTAMPTZ NOT NULL,
+    claimed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at        TIMESTAMPTZ NOT NULL,
+    metadata          JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object')
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_request_nonces_expires
+    ON platform.security_request_nonces(expires_at);
+
 CREATE TABLE IF NOT EXISTS ownership_attestations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -3556,7 +3567,6 @@ ON CONFLICT (solution_id, asset_key) DO UPDATE SET
     payload = EXCLUDED.payload,
     metadata = platform.industry_solution_assets.metadata || EXCLUDED.metadata,
     updated_at = NOW();
-
 
 
 

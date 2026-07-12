@@ -14,17 +14,20 @@ use security_kernel::{
     ServiceSignatureInput, VerifyIdentityRequest,
 };
 use serde_json::json;
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
-use tokio::sync::Mutex;
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
+
+mod nonce_store;
+
+use nonce_store::PostgresNonceStore;
 
 #[derive(Clone)]
 struct AppState {
     shared_secret: Arc<String>,
     max_clock_skew_seconds: i64,
-    seen_nonces: Arc<Mutex<HashMap<String, i64>>>,
+    nonce_store: PostgresNonceStore,
 }
 
 #[tokio::main]
@@ -49,11 +52,19 @@ async fn main() {
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(60);
+    let database_url = env::var("SECURITY_KERNEL_DATABASE_URL").unwrap_or_default();
+    if database_url.trim().is_empty() {
+        panic!("SECURITY_KERNEL_DATABASE_URL must not be empty");
+    }
+    let nonce_store = PostgresNonceStore::connect(database_url.trim())
+        .await
+        .expect("connect security nonce database");
     let state = AppState {
         shared_secret: Arc::new(shared_secret),
         max_clock_skew_seconds,
-        seen_nonces: Arc::new(Mutex::new(HashMap::new())),
+        nonce_store: nonce_store.clone(),
     };
+    tokio::spawn(run_nonce_cleanup(nonce_store, max_clock_skew_seconds));
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let app = Router::new()
         .route("/healthz", get(healthz))
@@ -79,8 +90,25 @@ async fn main() {
         .expect("run security kernel");
 }
 
-async fn healthz() -> impl IntoResponse {
-    Json(json!({"status":"ok"}))
+async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+    match state.nonce_store.is_ready().await {
+        Ok(true) => (StatusCode::OK, Json(json!({"status":"ok"}))).into_response(),
+        Ok(false) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status":"starting","reason":"security_nonce_table_unavailable"})),
+        )
+            .into_response(),
+        Err(error) => {
+            tracing::error!(%error, "security nonce database health check failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(
+                    json!({"status":"unavailable","reason":"security_nonce_database_unavailable"}),
+                ),
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn verify_service_request(
@@ -111,7 +139,16 @@ async fn verify_service_request(
         .get("X-Security-Nonce")
         .and_then(|value| value.to_str().ok())
     {
-        Some(value) if Uuid::parse_str(value).is_ok() => value.to_string(),
+        Some(value) => match Uuid::parse_str(value) {
+            Ok(value) => value,
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error":"missing or invalid security nonce"})),
+                )
+                    .into_response()
+            }
+        },
         _ => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -120,10 +157,6 @@ async fn verify_service_request(
                 .into_response()
         }
     };
-    let now = now_unix_seconds() as i64;
-    if let Err(error) = validate_request_timestamp(&timestamp, now, state.max_clock_skew_seconds) {
-        return (StatusCode::UNAUTHORIZED, Json(json!({"error": error}))).into_response();
-    }
     let signature = match parts
         .headers
         .get("X-Security-Signature")
@@ -150,7 +183,7 @@ async fn verify_service_request(
     };
     let input = ServiceSignatureInput {
         timestamp,
-        nonce: nonce.clone(),
+        nonce: nonce.to_string(),
         body: bytes.to_vec(),
     };
     if let Err(err) = verify_service_signature(&state.shared_secret, &input, &signature) {
@@ -160,12 +193,35 @@ async fn verify_service_request(
         )
             .into_response();
     }
-    if !claim_nonce(&state, &nonce, now).await {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"security request replay detected"})),
-        )
-            .into_response();
+    let now = now_unix_seconds() as i64;
+    let request_timestamp =
+        match validate_request_timestamp(&input.timestamp, now, state.max_clock_skew_seconds) {
+            Ok(value) => value,
+            Err(error) => {
+                return (StatusCode::UNAUTHORIZED, Json(json!({ "error": error }))).into_response()
+            }
+        };
+    match state
+        .nonce_store
+        .claim(&nonce, request_timestamp, state.max_clock_skew_seconds)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error":"security request replay detected"})),
+            )
+                .into_response()
+        }
+        Err(error) => {
+            tracing::error!(%error, "security nonce claim failed");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error":"security replay store unavailable"})),
+            )
+                .into_response();
+        }
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
@@ -185,14 +241,19 @@ fn validate_request_timestamp(
     Ok(parsed)
 }
 
-async fn claim_nonce(state: &AppState, nonce: &str, now: i64) -> bool {
-    let mut seen = state.seen_nonces.lock().await;
-    seen.retain(|_, seen_at| now.saturating_sub(*seen_at) <= state.max_clock_skew_seconds);
-    if seen.contains_key(nonce) {
-        return false;
+async fn run_nonce_cleanup(store: PostgresNonceStore, max_clock_skew_seconds: i64) {
+    let interval_seconds = max_clock_skew_seconds.max(30) as u64;
+    let mut interval = tokio::time::interval(Duration::from_secs(interval_seconds));
+    loop {
+        interval.tick().await;
+        match store.delete_expired().await {
+            Ok(deleted) if deleted > 0 => {
+                tracing::debug!(deleted, "expired security nonces deleted");
+            }
+            Ok(_) => {}
+            Err(error) => tracing::error!(%error, "expired security nonce cleanup failed"),
+        }
     }
-    seen.insert(nonce.to_string(), now);
-    true
 }
 
 async fn identity_challenge(Json(input): Json<serde_json::Value>) -> impl IntoResponse {
@@ -249,16 +310,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nonce_can_only_be_claimed_once_within_window() {
-        let state = AppState {
-            shared_secret: Arc::new("test-secret".to_string()),
-            max_clock_skew_seconds: 60,
-            seen_nonces: Arc::new(Mutex::new(HashMap::new())),
+    async fn postgres_nonce_is_claimed_once_across_store_instances() {
+        let Ok(database_url) = env::var("SECURITY_KERNEL_TEST_DATABASE_URL") else {
+            return;
         };
-        let nonce = Uuid::new_v4().to_string();
+        let first = PostgresNonceStore::connect(&database_url).await.unwrap();
+        let second = PostgresNonceStore::connect(&database_url).await.unwrap();
+        first
+            .client_for_test()
+            .batch_execute(
+                r#"
+                CREATE SCHEMA IF NOT EXISTS platform;
+                CREATE TABLE IF NOT EXISTS platform.security_request_nonces (
+                    nonce UUID PRIMARY KEY,
+                    request_timestamp TIMESTAMPTZ NOT NULL,
+                    claimed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    metadata JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(metadata) = 'object')
+                );
+                "#,
+            )
+            .await
+            .unwrap();
+        assert!(first.is_ready().await.unwrap());
+        let nonce = Uuid::new_v4();
+        let now = now_unix_seconds() as i64;
 
-        assert!(claim_nonce(&state, &nonce, 100).await);
-        assert!(!claim_nonce(&state, &nonce, 101).await);
-        assert!(claim_nonce(&state, &nonce, 200).await);
+        assert!(first.claim(&nonce, now, 60).await.unwrap());
+        assert!(!second.claim(&nonce, now, 60).await.unwrap());
+        first.delete_for_test(&nonce).await.unwrap();
     }
 }
