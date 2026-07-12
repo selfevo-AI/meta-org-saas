@@ -46,6 +46,13 @@ type Config struct {
 	AuthRateLimitFailureThreshold     int
 	AuthRateLimitBlockSeconds         int
 	AuthRegistrationMaxAttempts       int
+	SensitiveRateLimitWindowSeconds   int
+	SensitiveRateLimitMaxAttempts     int
+	SensitiveRateLimitBlockSeconds    int
+	InvitationAcceptMaxAttempts       int
+	AIGatewayRateLimitWindowSeconds   int
+	AIGatewayRateLimitMaxRequests     int
+	AIGatewayRateLimitBlockSeconds    int
 	BusinessAIProviderType            string
 	BusinessAIModel                   string
 	BusinessAIMaxTokens               int
@@ -110,6 +117,13 @@ func Load() *Config {
 		AuthRateLimitFailureThreshold:     getEnvInt("AUTH_RATE_LIMIT_FAILURE_THRESHOLD", 5),
 		AuthRateLimitBlockSeconds:         getEnvInt("AUTH_RATE_LIMIT_BLOCK_SECONDS", 300),
 		AuthRegistrationMaxAttempts:       getEnvInt("AUTH_REGISTRATION_MAX_ATTEMPTS", 5),
+		SensitiveRateLimitWindowSeconds:   getEnvInt("SENSITIVE_RATE_LIMIT_WINDOW_SECONDS", 60),
+		SensitiveRateLimitMaxAttempts:     getEnvInt("SENSITIVE_RATE_LIMIT_MAX_ATTEMPTS", 20),
+		SensitiveRateLimitBlockSeconds:    getEnvInt("SENSITIVE_RATE_LIMIT_BLOCK_SECONDS", 300),
+		InvitationAcceptMaxAttempts:       getEnvInt("INVITATION_ACCEPT_RATE_LIMIT_MAX_ATTEMPTS", 10),
+		AIGatewayRateLimitWindowSeconds:   getEnvInt("AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS", 60),
+		AIGatewayRateLimitMaxRequests:     getEnvInt("AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS", 120),
+		AIGatewayRateLimitBlockSeconds:    getEnvInt("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", 60),
 		BusinessAIProviderType:            strings.TrimSpace(getEnv("BUSINESS_AI_PROVIDER_TYPE", "")),
 		BusinessAIModel:                   strings.TrimSpace(getEnv("BUSINESS_AI_MODEL", "")),
 		BusinessAIMaxTokens:               getEnvInt("BUSINESS_AI_MAX_TOKENS", 1800),

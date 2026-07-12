@@ -88,6 +88,9 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	if response.AuthenticationRateLimits == nil {
 		t.Fatal("authentication_rate_limits missing")
 	}
+	if response.RequestRateLimits == nil || response.RequestRateLimits.ChecksTotal != 9 || response.RequestRateLimits.RateLimitedTotal != 2 || response.RequestRateLimits.BlocksApplied != 1 {
+		t.Fatalf("request rate limit stats = %#v", response.RequestRateLimits)
+	}
 	if response.AuthenticationRateLimits.ChecksTotal != 9 || response.AuthenticationRateLimits.RateLimitedTotal != 2 || response.AuthenticationRateLimits.BlocksApplied != 1 {
 		t.Fatalf("authentication rate limit stats = %#v", response.AuthenticationRateLimits)
 	}

@@ -325,6 +325,9 @@ code or schema mutation.
 - Security-kernel requests require freshness and replay protection.
 - Secrets move from environment defaults to a secret manager in production.
 - Login, access-token, invitation and model endpoints require rate limits.
+- Sensitive management writes use shared actor and client-IP buckets; public
+  invitation acceptance uses IP and invitation-token buckets; compatible AI
+  Gateway traffic uses access-token and IP buckets. Storage failure fails closed.
 - Audit records use structured events, tamper evidence and retention policy.
 - Sensitive context and logs use field classification and redaction.
 

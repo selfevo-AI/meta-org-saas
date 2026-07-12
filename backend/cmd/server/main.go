@@ -72,6 +72,36 @@ func main() {
 		log.Fatalf("trusted proxy configuration invalid: %v", err)
 	}
 	authLimiter := authlimit.NewPostgresLimiter(db)
+	sensitiveOperationRateLimit := middleware.RequestRateLimit(
+		authLimiter,
+		clientIPResolver,
+		authlimit.Policy{
+			Window:        time.Duration(cfg.SensitiveRateLimitWindowSeconds) * time.Second,
+			MaxAttempts:   cfg.SensitiveRateLimitMaxAttempts,
+			BlockDuration: time.Duration(cfg.SensitiveRateLimitBlockSeconds) * time.Second,
+		},
+		middleware.AuthenticatedSensitiveRateLimitBuckets,
+	)
+	publicInvitationRateLimit := middleware.RequestRateLimit(
+		authLimiter,
+		clientIPResolver,
+		authlimit.Policy{
+			Window:        time.Duration(cfg.SensitiveRateLimitWindowSeconds) * time.Second,
+			MaxAttempts:   cfg.InvitationAcceptMaxAttempts,
+			BlockDuration: time.Duration(cfg.SensitiveRateLimitBlockSeconds) * time.Second,
+		},
+		middleware.PublicInvitationRateLimitBuckets,
+	)
+	aiGatewayCompatibleRateLimit := middleware.RequestRateLimit(
+		authLimiter,
+		clientIPResolver,
+		authlimit.Policy{
+			Window:        time.Duration(cfg.AIGatewayRateLimitWindowSeconds) * time.Second,
+			MaxAttempts:   cfg.AIGatewayRateLimitMaxRequests,
+			BlockDuration: time.Duration(cfg.AIGatewayRateLimitBlockSeconds) * time.Second,
+		},
+		middleware.AIGatewayCompatibleRateLimitBuckets,
+	)
 	tenantBusinessDB := tenantdb.NewPoolRouterWithConfig(db, cfg.TenantDatabaseAdminURL, tenantdb.PoolRouterConfig{
 		MaxCachedPools:        cfg.TenantDatabasePoolMaxEntries,
 		MaxConnectionsPerPool: int32(cfg.TenantDatabasePoolMaxConnections),
@@ -393,6 +423,9 @@ func main() {
 		TenantPoolStatsProvider:              tenantBusinessDB,
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,
+		PublicInvitationRateLimit:            publicInvitationRateLimit,
+		AuthenticatedSensitiveLimit:          sensitiveOperationRateLimit,
+		AIGatewayCompatibleRateLimit:         aiGatewayCompatibleRateLimit,
 	})
 
 	srv := server.New(router, cfg.ServerPort)

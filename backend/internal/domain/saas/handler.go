@@ -20,8 +20,12 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
-func (h *Handler) RegisterPublicRoutes(r chi.Router) {
-	r.Post("/auth/invitations/{token}/accept", h.acceptInvitation)
+func (h *Handler) RegisterPublicRoutes(r chi.Router, middlewares ...func(http.Handler) http.Handler) {
+	router := r
+	if len(middlewares) > 0 {
+		router = r.With(middlewares...)
+	}
+	router.Post("/auth/invitations/{token}/accept", h.acceptInvitation)
 }
 
 func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {

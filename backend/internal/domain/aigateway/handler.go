@@ -72,13 +72,17 @@ func (h *Handler) RegisterTenantRoutes(r chi.Router) {
 	r.Get("/ai-gateway/cost-summary", h.costSummary)
 }
 
-func (h *Handler) RegisterCompatibleRoutes(r chi.Router) {
-	r.Get("/v1/models", h.compatibleListModels)
-	r.Post("/v1/chat/completions", h.compatibleChatCompletions)
-	r.Post("/v1/embeddings", h.compatibleUnsupportedOperation("embeddings"))
-	r.Post("/v1/images/generations", h.compatibleUnsupportedOperation("images"))
-	r.Post("/v1/audio/transcriptions", h.compatibleUnsupportedOperation("audio"))
-	r.Post("/v1/moderations", h.compatibleUnsupportedOperation("moderations"))
+func (h *Handler) RegisterCompatibleRoutes(r chi.Router, middlewares ...func(http.Handler) http.Handler) {
+	router := r
+	if len(middlewares) > 0 {
+		router = r.With(middlewares...)
+	}
+	router.Get("/v1/models", h.compatibleListModels)
+	router.Post("/v1/chat/completions", h.compatibleChatCompletions)
+	router.Post("/v1/embeddings", h.compatibleUnsupportedOperation("embeddings"))
+	router.Post("/v1/images/generations", h.compatibleUnsupportedOperation("images"))
+	router.Post("/v1/audio/transcriptions", h.compatibleUnsupportedOperation("audio"))
+	router.Post("/v1/moderations", h.compatibleUnsupportedOperation("moderations"))
 }
 
 func (h *Handler) createProvider(w http.ResponseWriter, r *http.Request) {

@@ -80,6 +80,9 @@ type Dependencies struct {
 	AuthenticationRateLimitStatsProvider interface {
 		Stats() authlimit.Stats
 	}
+	PublicInvitationRateLimit    func(http.Handler) http.Handler
+	AuthenticatedSensitiveLimit  func(http.Handler) http.Handler
+	AIGatewayCompatibleRateLimit func(http.Handler) http.Handler
 }
 
 func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
@@ -87,7 +90,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		panic("gateway.RegisterRoutes: deps must not be nil")
 	}
 	if deps.AIGatewayHandler != nil {
-		deps.AIGatewayHandler.RegisterCompatibleRoutes(r)
+		deps.AIGatewayHandler.RegisterCompatibleRoutes(r, optionalMiddleware(deps.AIGatewayCompatibleRateLimit)...)
 	}
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", healthCheck(
@@ -99,10 +102,13 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
 		}
 		if deps.SaaSHandler != nil {
-			deps.SaaSHandler.RegisterPublicRoutes(r)
+			deps.SaaSHandler.RegisterPublicRoutes(r, optionalMiddleware(deps.PublicInvitationRateLimit)...)
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.AuthMiddleware(deps.JWTSecret))
+			if deps.AuthenticatedSensitiveLimit != nil {
+				r.Use(deps.AuthenticatedSensitiveLimit)
+			}
 			if deps.IdentityHandler != nil {
 				deps.IdentityHandler.RegisterSelfServiceRoutes(r)
 			}
@@ -123,6 +129,13 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			})
 		})
 	})
+}
+
+func optionalMiddleware(value func(http.Handler) http.Handler) []func(http.Handler) http.Handler {
+	if value == nil {
+		return nil
+	}
+	return []func(http.Handler) http.Handler{value}
 }
 
 func registerPlatformAssistantRoutes(r chi.Router, deps *Dependencies) {
@@ -251,6 +264,7 @@ type healthResponse struct {
 	Status                   string                        `json:"status"`
 	TenantDatabasePools      *tenantdb.PoolRouterStats     `json:"tenant_database_pools,omitempty"`
 	TenantProjectionWorker   *tenantprojection.WorkerStats `json:"tenant_projection_worker,omitempty"`
+	RequestRateLimits        *authlimit.Stats              `json:"request_rate_limits,omitempty"`
 	AuthenticationRateLimits *authlimit.Stats              `json:"authentication_rate_limits,omitempty"`
 }
 
@@ -273,6 +287,7 @@ func healthCheck(poolProvider interface {
 		}
 		if authLimitProvider != nil {
 			stats := authLimitProvider.Stats()
+			response.RequestRateLimits = &stats
 			response.AuthenticationRateLimits = &stats
 		}
 		w.Header().Set("Content-Type", "application/json")

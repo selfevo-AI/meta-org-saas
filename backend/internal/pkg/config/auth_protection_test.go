@@ -12,6 +12,13 @@ func TestLoadAuthenticationProtectionConfig(t *testing.T) {
 	t.Setenv("AUTH_RATE_LIMIT_FAILURE_THRESHOLD", "4")
 	t.Setenv("AUTH_RATE_LIMIT_BLOCK_SECONDS", "600")
 	t.Setenv("AUTH_REGISTRATION_MAX_ATTEMPTS", "3")
+	t.Setenv("SENSITIVE_RATE_LIMIT_WINDOW_SECONDS", "120")
+	t.Setenv("SENSITIVE_RATE_LIMIT_MAX_ATTEMPTS", "8")
+	t.Setenv("SENSITIVE_RATE_LIMIT_BLOCK_SECONDS", "900")
+	t.Setenv("INVITATION_ACCEPT_RATE_LIMIT_MAX_ATTEMPTS", "4")
+	t.Setenv("AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS", "30")
+	t.Setenv("AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS", "55")
+	t.Setenv("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", "45")
 
 	cfg := Load()
 
@@ -23,5 +30,11 @@ func TestLoadAuthenticationProtectionConfig(t *testing.T) {
 	}
 	if cfg.AuthRateLimitBlockSeconds != 600 || cfg.AuthRegistrationMaxAttempts != 3 {
 		t.Fatalf("auth block/registration max = %d/%d", cfg.AuthRateLimitBlockSeconds, cfg.AuthRegistrationMaxAttempts)
+	}
+	if cfg.SensitiveRateLimitWindowSeconds != 120 || cfg.SensitiveRateLimitMaxAttempts != 8 || cfg.SensitiveRateLimitBlockSeconds != 900 || cfg.InvitationAcceptMaxAttempts != 4 {
+		t.Fatalf("sensitive rate limit config = %d/%d/%d invitation=%d", cfg.SensitiveRateLimitWindowSeconds, cfg.SensitiveRateLimitMaxAttempts, cfg.SensitiveRateLimitBlockSeconds, cfg.InvitationAcceptMaxAttempts)
+	}
+	if cfg.AIGatewayRateLimitWindowSeconds != 30 || cfg.AIGatewayRateLimitMaxRequests != 55 || cfg.AIGatewayRateLimitBlockSeconds != 45 {
+		t.Fatalf("AI gateway rate limit config = %d/%d/%d", cfg.AIGatewayRateLimitWindowSeconds, cfg.AIGatewayRateLimitMaxRequests, cfg.AIGatewayRateLimitBlockSeconds)
 	}
 }

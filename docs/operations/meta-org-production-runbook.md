@@ -25,6 +25,13 @@ Backend:
 | `SECURITY_KERNEL_SHARED_SECRET` | if kernel enabled | Shared secret for security-kernel calls. |
 | `SECURITY_KERNEL_ENFORCEMENT_MODE` | no | Defaults to `blocking`; use `audit` only for controlled rollout. |
 | `SECURITY_KERNEL_DATABASE_URL` | security-kernel service | PostgreSQL URL for the `meta_org_saas` platform database. All replicas use its shared nonce ledger for replay protection. |
+| `SENSITIVE_RATE_LIMIT_WINDOW_SECONDS` | no | Shared window for invitation creation, access-token creation, model configuration, key rotation, account administration, balance adjustment, and database maintenance writes. Defaults to `60`. |
+| `SENSITIVE_RATE_LIMIT_MAX_ATTEMPTS` | no | Maximum sensitive writes per actor and client IP in the window. Defaults to `20`. |
+| `SENSITIVE_RATE_LIMIT_BLOCK_SECONDS` | no | Block duration after a sensitive-operation bucket exceeds its budget. Defaults to `300`. |
+| `INVITATION_ACCEPT_RATE_LIMIT_MAX_ATTEMPTS` | no | Public invitation acceptance attempts per IP and invitation token per window. Defaults to `10`. |
+| `AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS` | no | Window for OpenAI-compatible API traffic. Defaults to `60`. |
+| `AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS` | no | OpenAI-compatible requests per access token and client IP in `AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS`. Defaults to `120`. |
+| `AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS` | no | Block duration after an AI Gateway token or IP bucket exceeds its budget. Defaults to `60`. |
 
 Frontend:
 
@@ -174,6 +181,16 @@ the backend migration process and confirm migration `023_security_kernel_replay_
 has created `platform.security_request_nonces`. A database error or missing
 ledger intentionally fails authorization closed so a horizontally scaled
 deployment cannot silently fall back to per-process replay protection.
+
+Sensitive management writes, public invitation acceptance, and OpenAI-compatible
+AI Gateway calls use the shared PostgreSQL rate-limit buckets. Limits apply to
+both the authenticated actor or presented token and the resolved client IP.
+`X-Forwarded-For` and `X-Real-IP` are considered only when the direct peer is in
+`TRUSTED_PROXY_CIDRS`. A blocked request returns HTTP 429 with `Retry-After`; a
+bucket-store error returns HTTP 503 so replicas cannot silently bypass limits.
+Aggregate checks, blocks, and storage failures are exposed as
+`request_rate_limits` in `/api/v1/health`; the legacy
+`authentication_rate_limits` field remains during the compatibility window.
 
 Meta Resource sync intentionally reads existing source tables without owning them. If sync fails after a schema change, check these source assumptions first:
 
