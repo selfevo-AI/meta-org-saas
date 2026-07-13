@@ -2330,9 +2330,15 @@ export default function Home() {
   }
 
   function navigateToWorkspace(view: WorkspaceView) {
+    const routeOrganizationID = parseWorkspacePath(pathname)?.organizationId ?? null
+    const navigationOrganizationID =
+      activeSessionScope === 'tenant'
+        ? currentOrganizationID || routeOrganizationID || getCurrentOrganizationId('tenant')
+        : null
+    const target = workspacePath(activeSessionScope, navigationOrganizationID, view)
+    if (target === '/') return
     setWorkspaceView(view)
-    const target = workspacePath(activeSessionScope, currentOrganizationID, view)
-    if (target !== '/' && target !== pathname) router.push(target)
+    if (target !== pathname) router.push(target)
   }
 
   async function handleToolApproval(id: string, decision: 'approve' | 'reject') {
