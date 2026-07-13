@@ -27,7 +27,7 @@ func (r *PostgresRepository) ListOperations(ctx context.Context) ([]OperationDef
 	rows, err := r.db.Query(ctx, `
 		SELECT operation_key, domain, title, method, path, auth, path_params, query_params,
 		       body_template, operation_kind, danger_level, result_view, assistant_eligible,
-		       requires_entity_context, status, action_type, entity_key, adapter_key, metadata,
+		       requires_entity_context, status, action_type, COALESCE(entity_key, ''), adapter_key, metadata,
 		       created_at, updated_at
 		FROM platform.runtime_operations
 		ORDER BY domain, operation_key
@@ -55,7 +55,7 @@ func (r *PostgresRepository) GetOperation(ctx context.Context, operationID strin
 	item, err := scanOperation(r.db.QueryRow(ctx, `
 		SELECT operation_key, domain, title, method, path, auth, path_params, query_params,
 		       body_template, operation_kind, danger_level, result_view, assistant_eligible,
-		       requires_entity_context, status, action_type, entity_key, adapter_key, metadata,
+		       requires_entity_context, status, action_type, COALESCE(entity_key, ''), adapter_key, metadata,
 		       created_at, updated_at
 		FROM platform.runtime_operations
 		WHERE operation_key = $1

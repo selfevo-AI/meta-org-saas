@@ -1,0 +1,54 @@
+package runtime
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestRuntimeOperationRepositoryAcceptsOptionalEntityKey(t *testing.T) {
+	if os.Getenv("RUN_RUNTIME_DB_TEST") != "1" {
+		t.Skip("set RUN_RUNTIME_DB_TEST=1 to run runtime database verification")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := os.Getenv("RUNTIME_TEST_DATABASE_URL")
+	if url == "" {
+		url = "postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable"
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	repo := NewRepository(pool)
+
+	operation, err := repo.GetOperation(ctx, "erp.finance.trial_balance.run")
+	if err != nil {
+		t.Fatalf("GetOperation() error = %v", err)
+	}
+	if operation.EntityKey != "" || operation.ActionType != "finance.gl.trial_balance" {
+		t.Fatalf("operation entity/action = %q/%q", operation.EntityKey, operation.ActionType)
+	}
+
+	operations, err := repo.ListOperations(ctx)
+	if err != nil {
+		t.Fatalf("ListOperations() error = %v", err)
+	}
+	found := false
+	for _, item := range operations {
+		if item.ID == operation.ID {
+			found = true
+			if item.EntityKey != "" {
+				t.Fatalf("listed operation entity_key = %q, want empty", item.EntityKey)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ListOperations() did not include %q", operation.ID)
+	}
+}
