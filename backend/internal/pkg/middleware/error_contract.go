@@ -13,6 +13,8 @@ import (
 
 const RequestIDHeader = "X-Request-ID"
 
+const statusClientClosedRequest = 499
+
 type requestIDContextKey struct{}
 
 type errorEnvelope struct {
@@ -28,7 +30,7 @@ func APIErrorContract(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, requestID))
 		writer := &errorContractWriter{ResponseWriter: w}
 		next.ServeHTTP(writer, r)
-		writer.finish(requestID)
+		writer.finish(r.Context(), requestID)
 	})
 }
 
@@ -87,7 +89,7 @@ func (w *errorContractWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
-func (w *errorContractWriter) finish(requestID string) {
+func (w *errorContractWriter) finish(ctx context.Context, requestID string) {
 	if !w.capture {
 		return
 	}
@@ -97,18 +99,31 @@ func (w *errorContractWriter) finish(requestID string) {
 		_, _ = w.ResponseWriter.Write(w.body.Bytes())
 		return
 	}
+	status := w.status
+	if ctxErr := ctx.Err(); ctxErr != nil && strings.Contains(strings.ToLower(message), ctxErr.Error()) {
+		switch ctxErr {
+		case context.Canceled:
+			status = statusClientClosedRequest
+			existingCode = "client_closed_request"
+			message = "request_canceled"
+		case context.DeadlineExceeded:
+			status = http.StatusGatewayTimeout
+			existingCode = "service_unavailable"
+			message = "request_deadline_exceeded"
+		}
+	}
 	code := existingCode
 	if code == "" {
-		code = errorCodeForStatus(w.status)
+		code = errorCodeForStatus(status)
 	}
-	if w.status >= http.StatusInternalServerError && !isStablePublicError(message) {
-		log.Printf("api request failed: request_id=%s status=%d error=%s", requestID, w.status, message)
+	if status >= http.StatusInternalServerError && !isStablePublicError(message) {
+		log.Printf("api request failed: request_id=%s status=%d error=%s", requestID, status, message)
 		message = publicMessageForCode(code)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Del("Content-Length")
 	w.Header().Set("X-Error-Code", code)
-	w.ResponseWriter.WriteHeader(w.status)
+	w.ResponseWriter.WriteHeader(status)
 	if err := json.NewEncoder(w.ResponseWriter).Encode(errorEnvelope{Error: message, Code: code, RequestID: requestID}); err != nil {
 		log.Printf("api error response failed: request_id=%s error=%v", requestID, err)
 	}
@@ -155,6 +170,8 @@ func errorCodeForStatus(status int) string {
 		return "unsupported_media_type"
 	case http.StatusTooManyRequests:
 		return "rate_limited"
+	case statusClientClosedRequest:
+		return "client_closed_request"
 	case http.StatusBadGateway:
 		return "upstream_unavailable"
 	case http.StatusServiceUnavailable, http.StatusGatewayTimeout:

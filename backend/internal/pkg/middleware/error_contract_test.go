@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -87,6 +88,46 @@ func TestAPIErrorContractPreservesSuccessfulStreaming(t *testing.T) {
 
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "event: done\ndata: {}\n\n" {
 		t.Fatalf("response = %d %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAPIErrorContractClassifiesClientCancellationAs499(t *testing.T) {
+	handler := APIErrorContract(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"list platform details: context canceled"}`))
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/platform/admin/details", nil).WithContext(ctx))
+
+	var response errorEnvelope
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if recorder.Code != statusClientClosedRequest || response.Code != "client_closed_request" || response.Error != "request_canceled" {
+		t.Fatalf("canceled response = status:%d body:%#v", recorder.Code, response)
+	}
+}
+
+func TestAPIErrorContractClassifiesRequestDeadlineAs504(t *testing.T) {
+	handler := APIErrorContract(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"query timed out: context deadline exceeded"}`))
+	}))
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/platform/admin/details", nil).WithContext(ctx))
+
+	var response errorEnvelope
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if recorder.Code != http.StatusGatewayTimeout || response.Code != "service_unavailable" || response.Error != "request_deadline_exceeded" {
+		t.Fatalf("deadline response = status:%d body:%#v", recorder.Code, response)
 	}
 }
 
