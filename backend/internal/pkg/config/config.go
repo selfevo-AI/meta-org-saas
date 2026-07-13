@@ -54,6 +54,8 @@ type Config struct {
 	AIGatewayRateLimitWindowSeconds   int
 	AIGatewayRateLimitMaxRequests     int
 	AIGatewayRateLimitBlockSeconds    int
+	AIGatewayInvokeTimeoutSeconds     int
+	AIGatewayStreamTimeoutSeconds     int
 	AuditRetentionWorkerEnabled       bool
 	AuditRetentionDays                int
 	AuditRetentionPollSeconds         int
@@ -131,6 +133,8 @@ func Load() *Config {
 		AIGatewayRateLimitWindowSeconds:   getEnvInt("AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS", 60),
 		AIGatewayRateLimitMaxRequests:     getEnvInt("AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS", 120),
 		AIGatewayRateLimitBlockSeconds:    getEnvInt("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", 60),
+		AIGatewayInvokeTimeoutSeconds:     getEnvInt("AI_GATEWAY_INVOKE_TIMEOUT_SECONDS", 60),
+		AIGatewayStreamTimeoutSeconds:     getEnvInt("AI_GATEWAY_STREAM_TIMEOUT_SECONDS", 600),
 		AuditRetentionWorkerEnabled:       getEnvBool("AUDIT_RETENTION_WORKER_ENABLED", true),
 		AuditRetentionDays:                getEnvInt("AUDIT_RETENTION_DAYS", 365),
 		AuditRetentionPollSeconds:         getEnvInt("AUDIT_RETENTION_POLL_SECONDS", 86400),

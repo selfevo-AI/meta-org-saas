@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/httpstream"
 )
 
 type Handler struct {
@@ -427,6 +428,10 @@ func (h *Handler) streamPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writeStream(w http.ResponseWriter, r *http.Request, input InvokeInput) {
+	if err := httpstream.Prepare(w); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming setup failed"})
+		return
+	}
 	result, err := h.service.Stream(r.Context(), input)
 	if err != nil {
 		writeJSON(w, statusFromError(err), map[string]string{"error": err.Error()})

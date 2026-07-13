@@ -404,6 +404,8 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | 触发账号或客户端临时封禁的认证失败数。 |
 | `AUTH_RATE_LIMIT_BLOCK_SECONDS` | `300` | 限流或失败阈值触发后的封禁时长。 |
 | `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | 每客户端在窗口内允许的最大注册请求数。 |
+| `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | `60` | 非流式模型调用的部署级最大执行时间；实际时限取该值与 provider `timeout_ms` 中较小的正值。 |
+| `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | `600` | AI Gateway 和 Assistant SSE 流的部署级最大生命周期；Gateway 流同时受 provider `timeout_ms` 约束，且不受全局 15 秒写超时截断。 |
 | `BUSINESS_AI_PROVIDER_TYPE` | 空 | 业务五阶段 AI 默认 provider 类型，例如 `openai`；也可在单次请求中指定。 |
 | `BUSINESS_AI_MODEL` | 空 | 业务五阶段 AI 默认模型键；必须对应 AI Gateway 中已启用的模型。 |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | 单次业务阶段结构化分析允许的最大输出 token。 |

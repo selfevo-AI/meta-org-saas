@@ -19,6 +19,8 @@ func TestLoadAuthenticationProtectionConfig(t *testing.T) {
 	t.Setenv("AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS", "30")
 	t.Setenv("AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS", "55")
 	t.Setenv("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", "45")
+	t.Setenv("AI_GATEWAY_INVOKE_TIMEOUT_SECONDS", "75")
+	t.Setenv("AI_GATEWAY_STREAM_TIMEOUT_SECONDS", "900")
 
 	cfg := Load()
 
@@ -36,5 +38,8 @@ func TestLoadAuthenticationProtectionConfig(t *testing.T) {
 	}
 	if cfg.AIGatewayRateLimitWindowSeconds != 30 || cfg.AIGatewayRateLimitMaxRequests != 55 || cfg.AIGatewayRateLimitBlockSeconds != 45 {
 		t.Fatalf("AI gateway rate limit config = %d/%d/%d", cfg.AIGatewayRateLimitWindowSeconds, cfg.AIGatewayRateLimitMaxRequests, cfg.AIGatewayRateLimitBlockSeconds)
+	}
+	if cfg.AIGatewayInvokeTimeoutSeconds != 75 || cfg.AIGatewayStreamTimeoutSeconds != 900 {
+		t.Fatalf("AI gateway timeouts = %d/%d", cfg.AIGatewayInvokeTimeoutSeconds, cfg.AIGatewayStreamTimeoutSeconds)
 	}
 }

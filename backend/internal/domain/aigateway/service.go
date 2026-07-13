@@ -90,6 +90,8 @@ type Service struct {
 	observability  ObservabilityRecorder
 	costRecorder   CostRecorder
 	securityKernel securitykernel.Client
+	invokeTimeout  time.Duration
+	streamTimeout  time.Duration
 }
 
 type ServiceOption func(*Service)
@@ -116,16 +118,29 @@ func WithSecurityKernel(client securitykernel.Client) ServiceOption {
 	}
 }
 
+func WithInvocationTimeouts(invokeTimeout, streamTimeout time.Duration) ServiceOption {
+	return func(s *Service) {
+		if invokeTimeout > 0 {
+			s.invokeTimeout = invokeTimeout
+		}
+		if streamTimeout > 0 {
+			s.streamTimeout = streamTimeout
+		}
+	}
+}
+
 func NewService(repo InvocationRepository, adapters AdapterRegistry, opts ...ServiceOption) *Service {
 	catalog, _ := repo.(CatalogRepository)
 	if adapters == nil {
 		adapters = AdapterRegistry{}
 	}
 	s := &Service{
-		repo:     repo,
-		catalog:  catalog,
-		adapters: adapters,
-		client:   &http.Client{Timeout: 60 * time.Second},
+		repo:          repo,
+		catalog:       catalog,
+		adapters:      adapters,
+		client:        &http.Client{},
+		invokeTimeout: 60 * time.Second,
+		streamTimeout: 10 * time.Minute,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -149,6 +164,7 @@ type ResolvedModel struct {
 	Price               Price
 	Currency            string
 	MaxOutputTokens     int
+	TimeoutMS           int
 	ProviderRequestHint string
 	RateMultiplier      float64
 }
@@ -461,6 +477,7 @@ type ProviderSecret struct {
 	BaseURL      string
 	APIKey       string
 	Status       string
+	TimeoutMS    int
 }
 
 type RotateProviderKeyInput struct {
@@ -577,6 +594,7 @@ type ChannelSecret struct {
 	BaseURL      string
 	APIKey       string
 	Status       string
+	TimeoutMS    int
 }
 
 type RotateChannelKeyInput struct {
@@ -776,13 +794,13 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		}
 	}()
 
-	resp, err := adapter.Invoke(ctx, ProviderRequest{
+	resp, err := s.invokeAdapter(ctx, adapter, ProviderRequest{
 		Model:       target.Model,
 		Messages:    input.Messages,
 		Temperature: input.Temperature,
 		MaxTokens:   maxTokens(input.MaxTokens, target.MaxOutputTokens),
 		Tools:       input.Tools,
-	})
+	}, target.TimeoutMS)
 	if err != nil {
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
 		if reservation != nil {
@@ -905,7 +923,8 @@ func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult,
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
-	events, err := adapter.Stream(ctx, ProviderRequest{
+	streamCtx, streamCancel := context.WithTimeout(ctx, effectiveTimeout(s.streamTimeout, target.TimeoutMS))
+	events, err := adapter.Stream(streamCtx, ProviderRequest{
 		Model:       target.Model,
 		Messages:    input.Messages,
 		Temperature: input.Temperature,
@@ -913,12 +932,13 @@ func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult,
 		Tools:       input.Tools,
 	})
 	if err != nil {
+		streamCancel()
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
 		s.recordInvocationSpan(ctx, trace, observability.SpanAIStream, invocation.ID, target, input.Attribution, StatusFailed, err.Error(), int(time.Since(started).Milliseconds()))
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
-	return &StreamResult{InvocationID: invocation.ID, Events: s.recordingStream(ctx, invocation.ID, target, input.Attribution, normalizedServiceTier(input.ServiceTier), strings.TrimSpace(input.ReasoningEffort), started, events, trace)}, nil
+	return &StreamResult{InvocationID: invocation.ID, Events: s.recordingStream(streamCtx, streamCancel, invocation.ID, target, input.Attribution, normalizedServiceTier(input.ServiceTier), strings.TrimSpace(input.ReasoningEffort), started, events, trace)}, nil
 }
 
 func (s *Service) CreateProvider(ctx context.Context, input CreateProviderInput) (*ModelProvider, error) {
@@ -968,6 +988,7 @@ func (s *Service) TestProvider(ctx context.Context, id uuid.UUID, input TestProv
 		BaseURL:      provider.BaseURL,
 		APIKey:       provider.APIKey,
 		Model:        input.Model,
+		TimeoutMS:    provider.TimeoutMS,
 	}
 	if target.Model == "" {
 		target.Model = defaultTestModel(provider.ProviderType)
@@ -976,11 +997,11 @@ func (s *Service) TestProvider(ctx context.Context, id uuid.UUID, input TestProv
 	if err != nil {
 		return err
 	}
-	_, err = adapter.Invoke(ctx, ProviderRequest{
+	_, err = s.invokeAdapter(ctx, adapter, ProviderRequest{
 		Model:     target.Model,
 		Messages:  []Message{{Role: "user", Content: "ping"}},
 		MaxTokens: 8,
-	})
+	}, target.TimeoutMS)
 	if err != nil {
 		_ = s.catalogRepo().UpdateProviderTestResult(ctx, id, "failed", err.Error())
 		return err
@@ -1073,6 +1094,7 @@ func (s *Service) TestChannel(ctx context.Context, id uuid.UUID, input TestChann
 		BaseURL:      channel.BaseURL,
 		APIKey:       channel.APIKey,
 		Model:        input.Model,
+		TimeoutMS:    channel.TimeoutMS,
 	}
 	if target.Model == "" {
 		target.Model = defaultTestModel(channel.ProviderType)
@@ -1081,7 +1103,7 @@ func (s *Service) TestChannel(ctx context.Context, id uuid.UUID, input TestChann
 	if err != nil {
 		return err
 	}
-	_, err = adapter.Invoke(ctx, ProviderRequest{Model: target.Model, Messages: []Message{{Role: "user", Content: "ping"}}, MaxTokens: 8})
+	_, err = s.invokeAdapter(ctx, adapter, ProviderRequest{Model: target.Model, Messages: []Message{{Role: "user", Content: "ping"}}, MaxTokens: 8}, target.TimeoutMS)
 	if err != nil {
 		_ = s.catalogRepo().UpdateChannelTestResult(ctx, id, "failed", err.Error())
 		return err
@@ -1215,31 +1237,54 @@ func (s *Service) AdapterCatalog() []AdapterDescriptor {
 	}
 }
 
-func (s *Service) recordingStream(ctx context.Context, invocationID uuid.UUID, target ResolvedModel, attribution Attribution, serviceTier string, reasoningEffort string, started time.Time, events <-chan StreamEvent, trace *observability.Trace) <-chan StreamEvent {
+func (s *Service) invokeAdapter(ctx context.Context, adapter ProviderAdapter, request ProviderRequest, providerTimeoutMS int) (*ProviderResponse, error) {
+	providerCtx, cancel := context.WithTimeout(ctx, effectiveTimeout(s.invokeTimeout, providerTimeoutMS))
+	defer cancel()
+	return adapter.Invoke(providerCtx, request)
+}
+
+func effectiveTimeout(deploymentLimit time.Duration, providerTimeoutMS int) time.Duration {
+	providerLimit := time.Duration(providerTimeoutMS) * time.Millisecond
+	if providerLimit <= 0 {
+		return deploymentLimit
+	}
+	if deploymentLimit <= 0 || providerLimit < deploymentLimit {
+		return providerLimit
+	}
+	return deploymentLimit
+}
+
+func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc, invocationID uuid.UUID, target ResolvedModel, attribution Attribution, serviceTier string, reasoningEffort string, started time.Time, events <-chan StreamEvent, trace *observability.Trace) <-chan StreamEvent {
 	out := make(chan StreamEvent)
 	go func() {
+		defer cancel()
 		defer close(out)
 		usage := TokenUsage{}
 		failed := ""
-		for event := range events {
-			if event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
-				usage = event.Usage
-			}
-			if event.Error != "" {
-				failed = event.Error
-			}
+		for {
 			select {
 			case <-ctx.Done():
-				_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: "cancelled", Message: ctx.Err().Error(), DurationMS: int(time.Since(started).Milliseconds()), Cancelled: true})
-				_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, 0)
-				durationMS := int(time.Since(started).Milliseconds())
-				s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, attribution, StatusCancelled, ctx.Err().Error(), durationMS)
-				s.recordMetric(context.Background(), observability.MetricReliability, "ai_stream_disconnect", &invocationID, "ai_invocation", 1, map[string]any{"provider_type": target.ProviderType, "model": target.Model})
-				s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
+				s.recordCancelledStream(ctx.Err(), invocationID, target, attribution, started, trace)
 				return
-			case out <- event:
+			case event, ok := <-events:
+				if !ok {
+					goto complete
+				}
+				if event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
+					usage = event.Usage
+				}
+				if event.Error != "" {
+					failed = event.Error
+				}
+				select {
+				case <-ctx.Done():
+					s.recordCancelledStream(ctx.Err(), invocationID, target, attribution, started, trace)
+					return
+				case out <- event:
+				}
 			}
 		}
+	complete:
 		breakdown := CalculateCostBreakdown(usage, target.Price, target.RateMultiplier, serviceTier)
 		cost := breakdown.ActualCost
 		currency := currencyOrDefault(target.Currency)
@@ -1281,6 +1326,21 @@ func (s *Service) recordingStream(ctx context.Context, invocationID uuid.UUID, t
 		s.completeObservationTrace(context.Background(), trace, observability.TraceComplete)
 	}()
 	return out
+}
+
+func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, target ResolvedModel, attribution Attribution, started time.Time, trace *observability.Trace) {
+	errorType := "cancelled"
+	metricName := "ai_stream_disconnect"
+	if errors.Is(cause, context.DeadlineExceeded) {
+		errorType = "timeout"
+		metricName = "ai_stream_timeout"
+	}
+	durationMS := int(time.Since(started).Milliseconds())
+	_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: errorType, Message: cause.Error(), DurationMS: durationMS, Cancelled: true})
+	_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, 0)
+	s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, attribution, StatusCancelled, cause.Error(), durationMS)
+	s.recordMetric(context.Background(), observability.MetricReliability, metricName, &invocationID, "ai_invocation", 1, map[string]any{"provider_type": target.ProviderType, "model": target.Model})
+	s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
 }
 
 func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, target ResolvedModel, started time.Time, cause error) {

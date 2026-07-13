@@ -387,6 +387,8 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | Authentication failures that trigger a temporary client or subject block. |
 | `AUTH_RATE_LIMIT_BLOCK_SECONDS` | `300` | Block duration after attempt or failure thresholds are exceeded. |
 | `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | Maximum registration requests per client during the window. |
+| `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | `60` | Deployment ceiling for non-streaming model calls; the effective limit is the smaller positive value of this setting and provider `timeout_ms`. |
+| `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | `600` | Deployment ceiling for AI Gateway and Assistant SSE streams; Gateway streams also honor provider `timeout_ms` and bypass the global 15-second write deadline. |
 | `BUSINESS_AI_PROVIDER_TYPE` | empty | Default provider type for five-stage business AI, such as `openai`; requests may override it. |
 | `BUSINESS_AI_MODEL` | empty | Default five-stage business AI model key; it must match an active AI Gateway model. |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | Maximum output tokens for one structured business-stage analysis. |

@@ -33,6 +33,8 @@ Backend:
 | `AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS` | no | Window for OpenAI-compatible API traffic. Defaults to `60`. |
 | `AI_GATEWAY_RATE_LIMIT_MAX_REQUESTS` | no | OpenAI-compatible requests per access token and client IP in `AI_GATEWAY_RATE_LIMIT_WINDOW_SECONDS`. Defaults to `120`. |
 | `AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS` | no | Block duration after an AI Gateway token or IP bucket exceeds its budget. Defaults to `60`. |
+| `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | no | Deployment ceiling for non-streaming provider calls. Defaults to `60`; provider `timeout_ms` may impose a lower limit. |
+| `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | no | Deployment ceiling for AI Gateway and Assistant SSE duration. Defaults to `600`; Gateway provider `timeout_ms` may impose a lower limit. |
 
 Frontend:
 
@@ -253,6 +255,13 @@ Check:
 - Invocation logs distinguish provider errors from cancelled streams.
 
 For proxy deployments, disable response buffering for `/api/v1/ai-gateway/stream`.
+The backend clears its per-response write deadline only for AI Gateway and
+Assistant SSE handlers; other routes retain the server-wide 15-second write
+timeout. The effective Gateway timeout is the smaller positive value of the
+provider `timeout_ms` and the matching deployment ceiling. Stream timeout is
+governed by `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` and
+is audited as `ai_stream_timeout`, while client disconnects remain
+`ai_stream_disconnect`.
 
 ## Finance Export Retry
 

@@ -301,6 +301,12 @@ conditions. High-risk actions always pass through Tool Runtime and human or
 policy approval. Agent identity, delegated authority, tool calls, model calls,
 context packages, proposals, approvals, outputs and costs share one trace.
 
+Streaming model and assistant responses use endpoint-specific write-deadline
+control plus bounded invocation contexts. Non-streaming calls and SSE streams
+have separate deployment ceilings, provider `timeout_ms` can only reduce those
+ceilings, and timeout versus client disconnect is recorded as a
+different reliability outcome.
+
 Long-term memory is separated into:
 
 - immutable business facts referenced from source records;

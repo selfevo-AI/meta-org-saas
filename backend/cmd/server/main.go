@@ -299,7 +299,10 @@ func main() {
 	monitoringScheduler.Start(appCtx)
 
 	aiRepo := aigateway.NewRepository(db, modelSecretBox)
-	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel))
+	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel), aigateway.WithInvocationTimeouts(
+		time.Duration(cfg.AIGatewayInvokeTimeoutSeconds)*time.Second,
+		time.Duration(cfg.AIGatewayStreamTimeoutSeconds)*time.Second,
+	))
 	aiHandler := aigateway.NewHandler(aiSvc)
 	businessAIRepo := businessai.NewRepository(db)
 	businessAISvc := businessai.NewService(businessAIRepo, aiSvc, businessai.Config{
@@ -401,7 +404,7 @@ func main() {
 	assistantRuntime := assistant.NewAssistantRuntime(assistantSvc, contextEngine, toolRunner, eventSink)
 	assistantSvc.SetRuntime(assistantRuntime)
 	toolSvc.RegisterAdapters(toolruntime.ContextProposalTools(assistantSvc))
-	assistantHandler := assistant.NewHandler(assistantSvc)
+	assistantHandler := assistant.NewHandler(assistantSvc, assistant.WithStreamTimeout(time.Duration(cfg.AIGatewayStreamTimeoutSeconds)*time.Second))
 
 	verRepo := verification.NewRepository(db)
 	verSvc := verification.NewService(verRepo)

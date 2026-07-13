@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
@@ -21,6 +22,7 @@ type fakeGatewayRepo struct {
 	ledgerCount      int
 	lastLedger       CreateUsageLedgerInput
 	lastComplete     CompleteInvocationInput
+	lastFailure      FailInvocationInput
 	accessToken      AccessTokenContext
 	reserved         bool
 	settled          bool
@@ -92,6 +94,100 @@ func TestServiceInvokeWithAccessTokenReservesAndSettlesBalance(t *testing.T) {
 	}
 	if repo.lastLedger.Metadata["access_token_id"] != tokenID.String() {
 		t.Fatalf("ledger access_token_id metadata = %#v, want %s", repo.lastLedger.Metadata["access_token_id"], tokenID)
+	}
+}
+
+func TestServiceInvokeEnforcesConfiguredProviderTimeout(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: timeoutAdapter{}}, WithInvocationTimeouts(15*time.Millisecond, time.Second))
+
+	_, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "timeout"}},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Invoke() error = %v, want deadline exceeded", err)
+	}
+	if !repo.failed {
+		t.Fatal("timed out invocation was not recorded as failed")
+	}
+}
+
+func TestServiceInvokeUsesProviderTimeoutBelowDeploymentLimit(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.TimeoutMS = 15
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: timeoutAdapter{}}, WithInvocationTimeouts(time.Second, time.Second))
+
+	_, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "timeout"}},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Invoke() error = %v, want provider deadline exceeded", err)
+	}
+}
+
+func TestServiceStreamRecordsConfiguredTimeoutAsCancellation(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: timeoutAdapter{}}, WithInvocationTimeouts(time.Second, 15*time.Millisecond))
+
+	result, err := svc.Stream(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "timeout"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	for range result.Events {
+	}
+	if !repo.failed || repo.completed {
+		t.Fatalf("stream terminal state = failed:%t completed:%t", repo.failed, repo.completed)
+	}
+	if repo.lastFailure.ErrorType != "timeout" || !repo.lastFailure.Cancelled {
+		t.Fatalf("stream failure = %#v", repo.lastFailure)
+	}
+}
+
+func TestServiceStreamUsesProviderTimeoutBelowDeploymentLimit(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.TimeoutMS = 15
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: timeoutAdapter{}}, WithInvocationTimeouts(time.Second, time.Second))
+
+	result, err := svc.Stream(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI,
+		Model:        "gpt-test",
+		Messages:     []Message{{Role: "user", Content: "timeout"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	for range result.Events {
+	}
+	if repo.lastFailure.ErrorType != "timeout" || !repo.lastFailure.Cancelled {
+		t.Fatalf("stream failure = %#v", repo.lastFailure)
+	}
+}
+
+func TestEffectiveTimeoutUsesDeploymentLimitAsCeiling(t *testing.T) {
+	tests := []struct {
+		name              string
+		deploymentLimit   time.Duration
+		providerTimeoutMS int
+		want              time.Duration
+	}{
+		{name: "provider is stricter", deploymentLimit: time.Minute, providerTimeoutMS: 2500, want: 2500 * time.Millisecond},
+		{name: "deployment is stricter", deploymentLimit: time.Second, providerTimeoutMS: 2500, want: time.Second},
+		{name: "provider default", deploymentLimit: time.Minute, providerTimeoutMS: 0, want: time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := effectiveTimeout(tt.deploymentLimit, tt.providerTimeoutMS); got != tt.want {
+				t.Fatalf("effectiveTimeout() = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -431,8 +527,9 @@ func (f *fakeGatewayRepo) CompleteInvocation(_ context.Context, id uuid.UUID, in
 	return nil
 }
 
-func (f *fakeGatewayRepo) FailInvocation(context.Context, uuid.UUID, FailInvocationInput) error {
+func (f *fakeGatewayRepo) FailInvocation(_ context.Context, _ uuid.UUID, input FailInvocationInput) error {
 	f.failed = true
+	f.lastFailure = input
 	return nil
 }
 
@@ -642,6 +739,22 @@ func (f *fakeGatewayRepo) AdjustGatewayBalance(_ context.Context, input AdjustGa
 type fakeAdapter struct {
 	resp ProviderResponse
 	err  error
+}
+
+type timeoutAdapter struct{}
+
+func (timeoutAdapter) Invoke(ctx context.Context, _ ProviderRequest) (*ProviderResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (timeoutAdapter) Stream(ctx context.Context, _ ProviderRequest) (<-chan StreamEvent, error) {
+	events := make(chan StreamEvent)
+	go func() {
+		<-ctx.Done()
+		close(events)
+	}()
+	return events, nil
 }
 
 func (a fakeAdapter) Invoke(context.Context, ProviderRequest) (*ProviderResponse, error) {

@@ -149,9 +149,9 @@ func (r *PostgresRepository) GetProviderSecret(ctx context.Context, id uuid.UUID
 	var provider ProviderSecret
 	var encrypted string
 	err := r.db.QueryRow(ctx, `
-		SELECT id, name, provider_type, base_url, encrypted_api_key, status
+		SELECT id, name, provider_type, base_url, encrypted_api_key, status, timeout_ms
 		FROM model_providers WHERE id = $1
-	`, id).Scan(&provider.ID, &provider.Name, &provider.ProviderType, &provider.BaseURL, &encrypted, &provider.Status)
+	`, id).Scan(&provider.ID, &provider.Name, &provider.ProviderType, &provider.BaseURL, &encrypted, &provider.Status, &provider.TimeoutMS)
 	if err != nil {
 		return provider, fmt.Errorf("get provider secret: %w", err)
 	}
@@ -342,7 +342,8 @@ func (r *PostgresRepository) ResolveInvocationTarget(ctx context.Context, input 
 			COALESCE(pv.billing_mode, 'token'),
 			COALESCE(pv.pricing_source, 'manual'),
 			COALESCE(pv.currency, 'CNY'),
-			m.max_output_tokens
+			m.max_output_tokens,
+			p.timeout_ms
 		FROM model_providers p
 		JOIN models m ON m.provider_id = p.id
 		LEFT JOIN LATERAL (
@@ -367,7 +368,7 @@ func (r *PostgresRepository) ResolveInvocationTarget(ctx context.Context, input 
 		Scan(&target.ProviderID, &target.ModelID, &target.ProviderType, &target.BaseURL, &providerEncrypted, &target.Model, &priceVersionID,
 			&inputPrice, &outputPrice, &cacheCreationPrice, &cacheReadPrice, &cacheCreation5mPrice, &cacheCreation1hPrice, &imageOutputPrice,
 			&priorityInputPrice, &priorityOutputPrice, &priorityCacheReadPrice, &longContextThreshold, &longContextInputMultiplier,
-			&longContextOutputMultiplier, &billingMode, &pricingSource, &currency, &target.MaxOutputTokens)
+			&longContextOutputMultiplier, &billingMode, &pricingSource, &currency, &target.MaxOutputTokens, &target.TimeoutMS)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return target, fmt.Errorf("%w: no active model matches provider/model selection", ErrUnavailable)
@@ -823,11 +824,11 @@ func (r *PostgresRepository) GetChannelSecret(ctx context.Context, id uuid.UUID)
 	var channel ChannelSecret
 	var encrypted string
 	err := r.db.QueryRow(ctx, `
-		SELECT c.id, c.provider_id, p.provider_type, c.name, COALESCE(NULLIF(c.base_url, ''), p.base_url), c.encrypted_api_key, c.status
+		SELECT c.id, c.provider_id, p.provider_type, c.name, COALESCE(NULLIF(c.base_url, ''), p.base_url), c.encrypted_api_key, c.status, p.timeout_ms
 		FROM model_provider_channels c
 		JOIN model_providers p ON p.id = c.provider_id
 		WHERE c.id = $1
-	`, id).Scan(&channel.ID, &channel.ProviderID, &channel.ProviderType, &channel.Name, &channel.BaseURL, &encrypted, &channel.Status)
+	`, id).Scan(&channel.ID, &channel.ProviderID, &channel.ProviderType, &channel.Name, &channel.BaseURL, &encrypted, &channel.Status, &channel.TimeoutMS)
 	if err != nil {
 		return channel, fmt.Errorf("get channel secret: %w", err)
 	}

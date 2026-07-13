@@ -1,6 +1,7 @@
 package assistant
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,20 +9,37 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/httpstream"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
-	service *Service
+	service       *Service
+	streamTimeout time.Duration
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+type HandlerOption func(*Handler)
+
+func WithStreamTimeout(timeout time.Duration) HandlerOption {
+	return func(handler *Handler) {
+		if timeout > 0 {
+			handler.streamTimeout = timeout
+		}
+	}
+}
+
+func NewHandler(service *Service, options ...HandlerOption) *Handler {
+	handler := &Handler{service: service, streamTimeout: 10 * time.Minute}
+	for _, option := range options {
+		option(handler)
+	}
+	return handler
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -196,7 +214,13 @@ func (h *Handler) runSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	events, err := h.service.Run(r.Context(), id, actorID, actorType, input)
+	if err := httpstream.Prepare(w); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming setup failed"})
+		return
+	}
+	streamCtx, cancel := context.WithTimeout(r.Context(), h.streamTimeout)
+	defer cancel()
+	events, err := h.service.Run(streamCtx, id, actorID, actorType, input)
 	if err != nil {
 		writeJSON(w, statusFromError(err), map[string]string{"error": err.Error()})
 		return
@@ -234,7 +258,13 @@ func (h *Handler) resumeSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	events, err := h.service.Resume(r.Context(), id, actorID, actorType, input)
+	if err := httpstream.Prepare(w); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming setup failed"})
+		return
+	}
+	streamCtx, cancel := context.WithTimeout(r.Context(), h.streamTimeout)
+	defer cancel()
+	events, err := h.service.Resume(streamCtx, id, actorID, actorType, input)
 	if err != nil {
 		writeJSON(w, statusFromError(err), map[string]string{"error": err.Error()})
 		return
