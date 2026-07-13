@@ -65,6 +65,7 @@ func TestValidateRejectsInvalidRuntimeBounds(t *testing.T) {
 	cfg.AuthRateLimitFailureThreshold = cfg.AuthRateLimitMaxAttempts + 1
 	cfg.MonitoringAgentDailyTime = "25:00"
 	cfg.AIGatewayStreamTimeoutSeconds = 0
+	cfg.AIGatewayReservationStaleSeconds = 0
 
 	err := cfg.Validate()
 	if err == nil {
@@ -73,11 +74,22 @@ func TestValidateRejectsInvalidRuntimeBounds(t *testing.T) {
 	for _, expected := range []string{
 		"TENANT_DATABASE_POOL_MIN_CONNECTIONS", "TENANT_PROVISIONING_RETRY_MAX_SECONDS",
 		"AUTH_RATE_LIMIT_FAILURE_THRESHOLD", "MONITORING_AGENT_DAILY_TIME",
-		"AI_GATEWAY_STREAM_TIMEOUT_SECONDS",
+		"AI_GATEWAY_STREAM_TIMEOUT_SECONDS", "AI_GATEWAY_RESERVATION_STALE_SECONDS",
 	} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Fatalf("Validate() error = %v, missing %q", err, expected)
 		}
+	}
+}
+
+func TestValidateRequiresReservationRecoveryAfterStreamCeiling(t *testing.T) {
+	cfg := validTestConfig()
+	cfg.AIGatewayStreamTimeoutSeconds = 900
+	cfg.AIGatewayReservationStaleSeconds = 900
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "AI_GATEWAY_RESERVATION_STALE_SECONDS must be greater than AI_GATEWAY_STREAM_TIMEOUT_SECONDS") {
+		t.Fatalf("Validate() error = %v", err)
 	}
 }
 

@@ -406,6 +406,11 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | 每客户端在窗口内允许的最大注册请求数。 |
 | `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | `60` | 非流式模型调用的部署级最大执行时间；实际时限取该值与 provider `timeout_ms` 中较小的正值。 |
 | `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | `600` | AI Gateway 和 Assistant SSE 流的部署级最大生命周期；Gateway 流同时受 provider `timeout_ms` 约束，且不受全局 15 秒写超时截断。 |
+| `AI_GATEWAY_RESERVATION_RECOVERY_ENABLED` | `true` | 启用 AI Gateway 未完成余额预留恢复 worker。 |
+| `AI_GATEWAY_RESERVATION_STALE_SECONDS` | `1800` | 预留进入恢复队列前的最短年龄；必须大于流式调用上限。 |
+| `AI_GATEWAY_RESERVATION_POLL_SECONDS` | `300` | 恢复 worker 扫描间隔。 |
+| `AI_GATEWAY_RESERVATION_LEASE_SECONDS` | `60` | 多副本恢复任务租约时长。 |
+| `AI_GATEWAY_RESERVATION_BATCH_SIZE` | `100` | 单次最多恢复的预留数量，上限 `1000`。 |
 | `BUSINESS_AI_PROVIDER_TYPE` | 空 | 业务五阶段 AI 默认 provider 类型，例如 `openai`；也可在单次请求中指定。 |
 | `BUSINESS_AI_MODEL` | 空 | 业务五阶段 AI 默认模型键；必须对应 AI Gateway 中已启用的模型。 |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | 单次业务阶段结构化分析允许的最大输出 token。 |

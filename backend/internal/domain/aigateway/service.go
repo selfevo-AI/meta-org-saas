@@ -42,6 +42,7 @@ type InvocationRepository interface {
 	ReleaseChannel(ctx context.Context, id *uuid.UUID, amount float64) error
 	AuthenticateAccessToken(ctx context.Context, token string) (AccessTokenContext, error)
 	ReserveAccessTokenBalance(ctx context.Context, input ReserveBalanceInput) (BalanceReservation, error)
+	AttachBalanceReservation(ctx context.Context, reservationID uuid.UUID, invocationID uuid.UUID) error
 	SettleAccessTokenBalance(ctx context.Context, input SettleBalanceInput) error
 	RefundAccessTokenBalance(ctx context.Context, reservationID uuid.UUID, reason string) error
 }
@@ -782,6 +783,14 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
+	if reservation != nil {
+		if err := s.repo.AttachBalanceReservation(ctx, reservation.ID, invocation.ID); err != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			_ = s.repo.FailInvocation(context.Background(), invocation.ID, FailInvocationInput{ErrorType: "reservation_attach_error", Message: err.Error(), DurationMS: int(time.Since(started).Milliseconds())})
+			s.completeObservationTrace(ctx, trace, observability.TraceFailed)
+			return nil, err
+		}
+	}
 	resp, err := s.invokeAdapter(ctx, adapter, ProviderRequest{
 		Model:       target.Model,
 		Messages:    input.Messages,
@@ -960,6 +969,14 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
+	}
+	if reservation != nil {
+		if err := s.repo.AttachBalanceReservation(ctx, reservation.ID, invocation.ID); err != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			_ = s.repo.FailInvocation(context.Background(), invocation.ID, FailInvocationInput{ErrorType: "reservation_attach_error", Message: err.Error(), DurationMS: int(time.Since(started).Milliseconds())})
+			s.completeObservationTrace(ctx, trace, observability.TraceFailed)
+			return nil, err
+		}
 	}
 	streamCtx, streamCancel := context.WithTimeout(ctx, effectiveTimeout(s.streamTimeout, target.TimeoutMS))
 	events, err := adapter.Stream(streamCtx, ProviderRequest{

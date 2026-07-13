@@ -39,6 +39,8 @@ type fakeGatewayRepo struct {
 	releaseCount     int
 	lastReleaseCost  float64
 	ledgerErr        error
+	attached         bool
+	attachErr        error
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -86,6 +88,9 @@ func TestServiceInvokeWithAccessTokenReservesAndSettlesBalance(t *testing.T) {
 	}
 	if !repo.settled {
 		t.Fatalf("balance was not settled")
+	}
+	if !repo.attached {
+		t.Fatal("balance reservation was not attached to the invocation")
 	}
 	if repo.refunded {
 		t.Fatalf("balance was refunded for successful invocation")
@@ -276,6 +281,29 @@ func TestServiceInvokeReleasesChannelWhenBalanceReservationFails(t *testing.T) {
 	})
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("InvokeWithAccessToken() error = %v, want ErrForbidden", err)
+	}
+	if repo.releaseCount != 1 {
+		t.Fatalf("release count = %d, want 1", repo.releaseCount)
+	}
+}
+
+func TestServiceInvokeRefundsAndFailsInvocationWhenReservationAttachFails(t *testing.T) {
+	channelID := uuid.New()
+	repo := newFakeGatewayRepo()
+	repo.target.ChannelID = &channelID
+	repo.accessToken = AccessTokenContext{ID: uuid.New(), OrganizationID: uuid.New(), Status: "active"}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.01, Currency: "CNY"}
+	repo.attachErr = errors.New("reservation attach failed")
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{}})
+
+	_, err := svc.InvokeWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, repo.attachErr) {
+		t.Fatalf("InvokeWithAccessToken() error = %v", err)
+	}
+	if !repo.refunded || !repo.failed || repo.lastFailure.ErrorType != "reservation_attach_error" {
+		t.Fatalf("attach failure state = refunded:%t failed:%t failure:%#v", repo.refunded, repo.failed, repo.lastFailure)
 	}
 	if repo.releaseCount != 1 {
 		t.Fatalf("release count = %d, want 1", repo.releaseCount)
@@ -695,6 +723,11 @@ func (f *fakeGatewayRepo) ReserveAccessTokenBalance(_ context.Context, input Res
 		f.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: input.EstimatedAmount, Currency: input.Currency}
 	}
 	return f.reservation, nil
+}
+
+func (f *fakeGatewayRepo) AttachBalanceReservation(_ context.Context, reservationID uuid.UUID, invocationID uuid.UUID) error {
+	f.attached = reservationID != uuid.Nil && invocationID != uuid.Nil
+	return f.attachErr
 }
 
 func (f *fakeGatewayRepo) SettleAccessTokenBalance(_ context.Context, input SettleBalanceInput) error {

@@ -389,6 +389,11 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `AUTH_REGISTRATION_MAX_ATTEMPTS` | `5` | Maximum registration requests per client during the window. |
 | `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | `60` | Deployment ceiling for non-streaming model calls; the effective limit is the smaller positive value of this setting and provider `timeout_ms`. |
 | `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | `600` | Deployment ceiling for AI Gateway and Assistant SSE streams; Gateway streams also honor provider `timeout_ms` and bypass the global 15-second write deadline. |
+| `AI_GATEWAY_RESERVATION_RECOVERY_ENABLED` | `true` | Enables recovery of unfinished AI Gateway balance reservations. |
+| `AI_GATEWAY_RESERVATION_STALE_SECONDS` | `1800` | Minimum reservation age before recovery; it must exceed the streaming ceiling. |
+| `AI_GATEWAY_RESERVATION_POLL_SECONDS` | `300` | Reservation recovery scan interval. |
+| `AI_GATEWAY_RESERVATION_LEASE_SECONDS` | `60` | Multi-replica recovery lease duration. |
+| `AI_GATEWAY_RESERVATION_BATCH_SIZE` | `100` | Maximum reservations recovered per run, capped at `1000`. |
 | `BUSINESS_AI_PROVIDER_TYPE` | empty | Default provider type for five-stage business AI, such as `openai`; requests may override it. |
 | `BUSINESS_AI_MODEL` | empty | Default five-stage business AI model key; it must match an active AI Gateway model. |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | Maximum output tokens for one structured business-stage analysis. |

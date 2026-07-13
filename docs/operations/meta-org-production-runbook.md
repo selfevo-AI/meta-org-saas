@@ -35,6 +35,11 @@ Backend:
 | `AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS` | no | Block duration after an AI Gateway token or IP bucket exceeds its budget. Defaults to `60`. |
 | `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | no | Deployment ceiling for non-streaming provider calls. Defaults to `60`; provider `timeout_ms` may impose a lower limit. |
 | `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | no | Deployment ceiling for AI Gateway and Assistant SSE duration. Defaults to `600`; Gateway provider `timeout_ms` may impose a lower limit. |
+| `AI_GATEWAY_RESERVATION_RECOVERY_ENABLED` | no | Enables unfinished balance-reservation recovery. Defaults to `true`. |
+| `AI_GATEWAY_RESERVATION_STALE_SECONDS` | no | Age before a reservation is recoverable. Defaults to `1800` and must exceed the stream timeout. |
+| `AI_GATEWAY_RESERVATION_POLL_SECONDS` | no | Recovery scan interval. Defaults to `300`. |
+| `AI_GATEWAY_RESERVATION_LEASE_SECONDS` | no | Recovery lease duration for multi-replica workers. Defaults to `60`. |
+| `AI_GATEWAY_RESERVATION_BATCH_SIZE` | no | Maximum reservations per recovery run. Defaults to `100`, maximum `1000`. |
 
 Frontend:
 
@@ -267,6 +272,14 @@ provider `timeout_ms` and the matching deployment ceiling. Stream timeout is
 governed by `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` and
 is audited as `ai_stream_timeout`, while client disconnects remain
 `ai_stream_disconnect`.
+
+The health response exposes `ai_gateway_reservation_recovery`. A rising
+`failures_total` or non-empty `last_error` indicates that stale reservations may
+still hold organization balance or token quota. The worker refunds reservations
+that never reached invocation creation, settles attached terminal invocations,
+and cancels abandoned `started` or `streaming` invocations while releasing their
+provider channel. Keep `AI_GATEWAY_RESERVATION_STALE_SECONDS` above every allowed
+stream lifetime; startup rejects an unsafe lower value.
 
 ## Finance Export Retry
 

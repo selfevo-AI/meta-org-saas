@@ -56,6 +56,11 @@ type Config struct {
 	AIGatewayRateLimitBlockSeconds    int
 	AIGatewayInvokeTimeoutSeconds     int
 	AIGatewayStreamTimeoutSeconds     int
+	AIGatewayRecoveryEnabled          bool
+	AIGatewayReservationStaleSeconds  int
+	AIGatewayReservationPollSeconds   int
+	AIGatewayReservationLeaseSeconds  int
+	AIGatewayReservationBatchSize     int
 	AuditRetentionWorkerEnabled       bool
 	AuditRetentionDays                int
 	AuditRetentionPollSeconds         int
@@ -135,6 +140,11 @@ func Load() *Config {
 		AIGatewayRateLimitBlockSeconds:    getEnvInt("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", 60),
 		AIGatewayInvokeTimeoutSeconds:     getEnvInt("AI_GATEWAY_INVOKE_TIMEOUT_SECONDS", 60),
 		AIGatewayStreamTimeoutSeconds:     getEnvInt("AI_GATEWAY_STREAM_TIMEOUT_SECONDS", 600),
+		AIGatewayRecoveryEnabled:          getEnvBool("AI_GATEWAY_RESERVATION_RECOVERY_ENABLED", true),
+		AIGatewayReservationStaleSeconds:  getEnvInt("AI_GATEWAY_RESERVATION_STALE_SECONDS", 1800),
+		AIGatewayReservationPollSeconds:   getEnvInt("AI_GATEWAY_RESERVATION_POLL_SECONDS", 300),
+		AIGatewayReservationLeaseSeconds:  getEnvInt("AI_GATEWAY_RESERVATION_LEASE_SECONDS", 60),
+		AIGatewayReservationBatchSize:     getEnvInt("AI_GATEWAY_RESERVATION_BATCH_SIZE", 100),
 		AuditRetentionWorkerEnabled:       getEnvBool("AUDIT_RETENTION_WORKER_ENABLED", true),
 		AuditRetentionDays:                getEnvInt("AUDIT_RETENTION_DAYS", 365),
 		AuditRetentionPollSeconds:         getEnvInt("AUDIT_RETENTION_POLL_SECONDS", 86400),

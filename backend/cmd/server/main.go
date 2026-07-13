@@ -299,6 +299,14 @@ func main() {
 	monitoringScheduler.Start(appCtx)
 
 	aiRepo := aigateway.NewRepository(db, modelSecretBox)
+	reservationRecoveryWorker := aigateway.NewReservationRecoveryWorker(aiRepo, aigateway.ReservationRecoveryWorkerConfig{
+		Enabled:       cfg.AIGatewayRecoveryEnabled,
+		StaleAfter:    time.Duration(cfg.AIGatewayReservationStaleSeconds) * time.Second,
+		PollInterval:  time.Duration(cfg.AIGatewayReservationPollSeconds) * time.Second,
+		LeaseDuration: time.Duration(cfg.AIGatewayReservationLeaseSeconds) * time.Second,
+		BatchSize:     cfg.AIGatewayReservationBatchSize,
+	})
+	reservationRecoveryWorker.Start(appCtx)
 	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel), aigateway.WithInvocationTimeouts(
 		time.Duration(cfg.AIGatewayInvokeTimeoutSeconds)*time.Second,
 		time.Duration(cfg.AIGatewayStreamTimeoutSeconds)*time.Second,
@@ -446,6 +454,7 @@ func main() {
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,
 		AuditRetentionStatsProvider:          retentionWorker,
+		AIGatewayReservationStatsProvider:    reservationRecoveryWorker,
 		PlatformDatabaseHealthProvider:       db,
 		SecurityKernelHealthProvider:         securityKernel.(securitykernel.HealthChecker),
 		PublicInvitationRateLimit:            publicInvitationRateLimit,

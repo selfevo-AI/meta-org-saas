@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/aigateway"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/auditretention"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/authlimit"
@@ -38,6 +39,10 @@ type fakeAuditRetentionStatsProvider struct {
 	stats auditretention.WorkerStats
 }
 
+type fakeReservationRecoveryStatsProvider struct {
+	stats aigateway.ReservationRecoveryWorkerStats
+}
+
 type fakeSecurityKernelHealthProvider struct {
 	err error
 }
@@ -55,6 +60,10 @@ func (p fakeSecurityKernelHealthProvider) CheckHealth(context.Context) error {
 }
 
 func (p fakeAuditRetentionStatsProvider) Stats() auditretention.WorkerStats {
+	return p.stats
+}
+
+func (p fakeReservationRecoveryStatsProvider) Stats() aigateway.ReservationRecoveryWorkerStats {
 	return p.stats
 }
 
@@ -85,7 +94,10 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	retentionProvider := fakeAuditRetentionStatsProvider{stats: auditretention.WorkerStats{
 		Running: true, RunsTotal: 3, RowsRedactedTotal: 42,
 	}}
-	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider, fakePlatformDatabaseHealthProvider{}, fakeSecurityKernelHealthProvider{}).ServeHTTP(recorder, request)
+	reservationProvider := fakeReservationRecoveryStatsProvider{stats: aigateway.ReservationRecoveryWorkerStats{
+		WorkerID: "reservation-test", Running: true, RunsTotal: 4, RecoveredTotal: 6,
+	}}
+	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider, reservationProvider, fakePlatformDatabaseHealthProvider{}, fakeSecurityKernelHealthProvider{}).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -127,6 +139,9 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	if response.AuditRetentionWorker == nil || !response.AuditRetentionWorker.Running || response.AuditRetentionWorker.RunsTotal != 3 || response.AuditRetentionWorker.RowsRedactedTotal != 42 {
 		t.Fatalf("audit retention worker stats = %#v", response.AuditRetentionWorker)
 	}
+	if response.AIGatewayReservationRecovery == nil || !response.AIGatewayReservationRecovery.Running || response.AIGatewayReservationRecovery.WorkerID != "reservation-test" || response.AIGatewayReservationRecovery.RecoveredTotal != 6 {
+		t.Fatalf("AI gateway reservation recovery stats = %#v", response.AIGatewayReservationRecovery)
+	}
 	if response.SecurityKernel == nil || response.SecurityKernel.Status != "ok" {
 		t.Fatalf("security kernel health = %#v", response.SecurityKernel)
 	}
@@ -138,7 +153,7 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	healthCheck(nil, nil, nil, nil, nil, fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}).ServeHTTP(recorder, request)
+	healthCheck(nil, nil, nil, nil, nil, nil, fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
@@ -154,7 +169,7 @@ func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
 func TestHealthCheckFailsWhenPlatformDatabaseIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	healthCheck(nil, nil, nil, nil, fakePlatformDatabaseHealthProvider{err: errors.New("connection refused")}, nil).ServeHTTP(recorder, request)
+	healthCheck(nil, nil, nil, nil, nil, fakePlatformDatabaseHealthProvider{err: errors.New("connection refused")}, nil).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}

@@ -86,6 +86,9 @@ type Dependencies struct {
 	AuditRetentionStatsProvider interface {
 		Stats() auditretention.WorkerStats
 	}
+	AIGatewayReservationStatsProvider interface {
+		Stats() aigateway.ReservationRecoveryWorkerStats
+	}
 	SecurityKernelHealthProvider interface {
 		CheckHealth(context.Context) error
 	}
@@ -117,6 +120,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			deps.TenantProjectionStatsProvider,
 			deps.AuthenticationRateLimitStatsProvider,
 			deps.AuditRetentionStatsProvider,
+			deps.AIGatewayReservationStatsProvider,
 			deps.PlatformDatabaseHealthProvider,
 			deps.SecurityKernelHealthProvider,
 		))
@@ -291,14 +295,15 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 }
 
 type healthResponse struct {
-	Status                   string                        `json:"status"`
-	TenantDatabasePools      *tenantdb.PoolRouterStats     `json:"tenant_database_pools,omitempty"`
-	TenantProjectionWorker   *tenantprojection.WorkerStats `json:"tenant_projection_worker,omitempty"`
-	RequestRateLimits        *authlimit.Stats              `json:"request_rate_limits,omitempty"`
-	AuthenticationRateLimits *authlimit.Stats              `json:"authentication_rate_limits,omitempty"`
-	AuditRetentionWorker     *auditretention.WorkerStats   `json:"audit_retention_worker,omitempty"`
-	PlatformDatabase         *dependencyHealth             `json:"platform_database,omitempty"`
-	SecurityKernel           *dependencyHealth             `json:"security_kernel,omitempty"`
+	Status                       string                                    `json:"status"`
+	TenantDatabasePools          *tenantdb.PoolRouterStats                 `json:"tenant_database_pools,omitempty"`
+	TenantProjectionWorker       *tenantprojection.WorkerStats             `json:"tenant_projection_worker,omitempty"`
+	RequestRateLimits            *authlimit.Stats                          `json:"request_rate_limits,omitempty"`
+	AuthenticationRateLimits     *authlimit.Stats                          `json:"authentication_rate_limits,omitempty"`
+	AuditRetentionWorker         *auditretention.WorkerStats               `json:"audit_retention_worker,omitempty"`
+	AIGatewayReservationRecovery *aigateway.ReservationRecoveryWorkerStats `json:"ai_gateway_reservation_recovery,omitempty"`
+	PlatformDatabase             *dependencyHealth                         `json:"platform_database,omitempty"`
+	SecurityKernel               *dependencyHealth                         `json:"security_kernel,omitempty"`
 }
 
 type dependencyHealth struct {
@@ -314,6 +319,8 @@ func healthCheck(poolProvider interface {
 	Stats() authlimit.Stats
 }, retentionProvider interface {
 	Stats() auditretention.WorkerStats
+}, reservationRecoveryProvider interface {
+	Stats() aigateway.ReservationRecoveryWorkerStats
 }, platformDatabaseProvider interface {
 	Ping(context.Context) error
 }, securityKernelProvider interface {
@@ -340,6 +347,10 @@ func healthCheck(poolProvider interface {
 		if retentionProvider != nil {
 			stats := retentionProvider.Stats()
 			response.AuditRetentionWorker = &stats
+		}
+		if reservationRecoveryProvider != nil {
+			stats := reservationRecoveryProvider.Stats()
+			response.AIGatewayReservationRecovery = &stats
 		}
 		if platformDatabaseProvider != nil {
 			if err := platformDatabaseProvider.Ping(healthCtx); err != nil {

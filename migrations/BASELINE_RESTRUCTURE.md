@@ -27,6 +27,7 @@ This directory now uses staged baseline migrations instead of the historical
 22. `022_business_ai_stage_tool_contract.sql`
 23. `023_security_kernel_replay_ledger.sql`
 24. `024_ai_audit_retention.sql`
+25. `025_ai_gateway_reservation_recovery.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -430,8 +431,11 @@ planning: `ai_model_groups`, `ai_model_channel_abilities`, `ai_access_tokens`,
 adapter metadata, model mapping, priority, health, quota, and balance columns
 belong in the same stage, as do `ai_invocations` and `ai_usage_ledger`
 references to access tokens, model groups, reserved amount, settled amount, and
-upstream routing status. These structures are platform-managed AI capability
-controls; tenant ERP/industry tables must not duplicate them.
+upstream routing status. Balance reservation rows also carry short-lived
+reconciliation leases so multiple backend replicas can recover unfinished
+reservations without double-processing them. These structures are
+platform-managed AI capability controls; tenant ERP/industry tables must not
+duplicate them.
 
 `008_ai_gateway_model_group_repair.sql` is an idempotent compatibility repair for
 existing databases that already recorded an older `004_ai_capability_baseline.sql`
@@ -439,6 +443,12 @@ before the AI gateway model group/access-token/balance structures were folded
 into that baseline. Fresh databases still get those structures from `004`; the
 repair keeps already-migrated local or development databases aligned without
 editing migration history.
+
+`025_ai_gateway_reservation_recovery.sql` adds the reconciliation lease columns
+and stale-reservation scan index to platform databases that applied `004` or
+`008` before crash recovery was introduced. The worker attaches each reservation
+to its invocation, settles terminal or abandoned invocation usage, refunds
+unattached reservations, and releases channels held by abandoned active calls.
 
 `009_platform_tenant_data_permissions.sql` introduces explicit platform-to-tenant
 read and manage permissions. Platform auditors receive read-only tenant access;

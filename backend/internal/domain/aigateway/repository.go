@@ -991,15 +991,15 @@ func (r *PostgresRepository) finishAccessTokenReservation(ctx context.Context, r
 	defer tx.Rollback(ctx)
 
 	var orgID uuid.UUID
-	var tokenID, modelGroupID pgtype.UUID
+	var tokenID, modelGroupID, invocationID pgtype.UUID
 	var reservedAmount float64
 	var currency string
 	err = tx.QueryRow(ctx, `
-		SELECT organization_id, access_token_id, model_group_id, amount::float8, currency
+		SELECT organization_id, access_token_id, model_group_id, invocation_id, amount::float8, currency
 		FROM ai_gateway_balance_transactions
 		WHERE id = $1 AND transaction_type = 'reserve'
 		FOR UPDATE
-	`, reservationID).Scan(&orgID, &tokenID, &modelGroupID, &reservedAmount, &currency)
+	`, reservationID).Scan(&orgID, &tokenID, &modelGroupID, &invocationID, &reservedAmount, &currency)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: balance reservation not found", ErrNotFound)
@@ -1055,11 +1055,11 @@ func (r *PostgresRepository) finishAccessTokenReservation(ctx context.Context, r
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO ai_gateway_balance_transactions(
-			organization_id, access_token_id, model_group_id, reservation_id,
+			organization_id, access_token_id, model_group_id, invocation_id, reservation_id,
 			transaction_type, amount, currency, reason, metadata
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-	`, orgID, uuidPointer(tokenID), uuidPointer(modelGroupID), reservationID, transactionType,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, orgID, uuidPointer(tokenID), uuidPointer(modelGroupID), uuidPointer(invocationID), reservationID, transactionType,
 		transactionAmount, currency, reason, mustJSON(map[string]any{"reserved_amount": reservedAmount})); err != nil {
 		return fmt.Errorf("record ai gateway balance %s: %w", transactionType, err)
 	}

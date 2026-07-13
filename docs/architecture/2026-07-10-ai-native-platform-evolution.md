@@ -345,6 +345,10 @@ code or schema mutation.
 - OpenAI-compatible streaming uses protocol-native SSE chunks while retaining
   security-kernel authorization, quota reservation, actual-usage settlement,
   channel release, and timeout/disconnect audit semantics.
+- Balance reservations are attached to invocation records. A leased,
+  multi-replica recovery worker refunds pre-invocation orphans and settles or
+  cancels stale attached invocations after backend interruption, preventing
+  permanent balance, token-quota, and provider-channel occupancy leaks.
 - Audit records use structured events, tamper evidence and retention policy.
 - Sensitive context and logs use field classification and redaction.
 

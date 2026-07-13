@@ -490,6 +490,8 @@ CREATE TABLE IF NOT EXISTS ai_gateway_balance_transactions (
     currency TEXT NOT NULL DEFAULT 'CNY',
     reason TEXT NOT NULL DEFAULT '',
     metadata JSONB NOT NULL DEFAULT '{}',
+    reconcile_lease_owner TEXT NOT NULL DEFAULT '',
+    reconcile_lease_expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -497,6 +499,9 @@ CREATE INDEX IF NOT EXISTS idx_ai_gateway_balance_transactions_org
     ON ai_gateway_balance_transactions(organization_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_gateway_balance_transactions_reservation
     ON ai_gateway_balance_transactions(reservation_id);
+CREATE INDEX IF NOT EXISTS idx_ai_gateway_open_reservations_reconcile
+    ON ai_gateway_balance_transactions(created_at, reconcile_lease_expires_at)
+    WHERE transaction_type = 'reserve';
 
 ALTER TABLE model_provider_channels
     ADD COLUMN IF NOT EXISTS adapter_key TEXT NOT NULL DEFAULT '',
