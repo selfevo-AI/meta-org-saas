@@ -443,6 +443,7 @@ func main() {
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,
 		AuditRetentionStatsProvider:          retentionWorker,
+		PlatformDatabaseHealthProvider:       db,
 		SecurityKernelHealthProvider:         securityKernel.(securitykernel.HealthChecker),
 		PublicInvitationRateLimit:            publicInvitationRateLimit,
 		AuthenticatedSensitiveLimit:          sensitiveOperationRateLimit,

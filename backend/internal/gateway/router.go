@@ -89,6 +89,9 @@ type Dependencies struct {
 	SecurityKernelHealthProvider interface {
 		CheckHealth(context.Context) error
 	}
+	PlatformDatabaseHealthProvider interface {
+		Ping(context.Context) error
+	}
 	PublicInvitationRateLimit    func(http.Handler) http.Handler
 	AuthenticatedSensitiveLimit  func(http.Handler) http.Handler
 	AIGatewayCompatibleRateLimit func(http.Handler) http.Handler
@@ -107,6 +110,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			deps.TenantProjectionStatsProvider,
 			deps.AuthenticationRateLimitStatsProvider,
 			deps.AuditRetentionStatsProvider,
+			deps.PlatformDatabaseHealthProvider,
 			deps.SecurityKernelHealthProvider,
 		))
 		if deps.IdentityHandler != nil {
@@ -278,6 +282,7 @@ type healthResponse struct {
 	RequestRateLimits        *authlimit.Stats              `json:"request_rate_limits,omitempty"`
 	AuthenticationRateLimits *authlimit.Stats              `json:"authentication_rate_limits,omitempty"`
 	AuditRetentionWorker     *auditretention.WorkerStats   `json:"audit_retention_worker,omitempty"`
+	PlatformDatabase         *dependencyHealth             `json:"platform_database,omitempty"`
 	SecurityKernel           *dependencyHealth             `json:"security_kernel,omitempty"`
 }
 
@@ -294,12 +299,16 @@ func healthCheck(poolProvider interface {
 	Stats() authlimit.Stats
 }, retentionProvider interface {
 	Stats() auditretention.WorkerStats
+}, platformDatabaseProvider interface {
+	Ping(context.Context) error
 }, securityKernelProvider interface {
 	CheckHealth(context.Context) error
 }) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := healthResponse{Status: "ok"}
 		statusCode := http.StatusOK
+		healthCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
 		if poolProvider != nil {
 			stats := poolProvider.Stats()
 			response.TenantDatabasePools = &stats
@@ -317,10 +326,18 @@ func healthCheck(poolProvider interface {
 			stats := retentionProvider.Stats()
 			response.AuditRetentionWorker = &stats
 		}
+		if platformDatabaseProvider != nil {
+			if err := platformDatabaseProvider.Ping(healthCtx); err != nil {
+				log.Printf("platform database health check failed: %v", err)
+				response.Status = "unavailable"
+				response.PlatformDatabase = &dependencyHealth{Status: "unavailable", Reason: "platform_database_unavailable"}
+				statusCode = http.StatusServiceUnavailable
+			} else {
+				response.PlatformDatabase = &dependencyHealth{Status: "ok"}
+			}
+		}
 		if securityKernelProvider != nil {
-			healthCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 			err := securityKernelProvider.CheckHealth(healthCtx)
-			cancel()
 			if err != nil {
 				log.Printf("security kernel health check failed: %v", err)
 				response.Status = "unavailable"

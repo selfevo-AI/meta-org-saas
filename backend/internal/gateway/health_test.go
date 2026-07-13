@@ -42,6 +42,14 @@ type fakeSecurityKernelHealthProvider struct {
 	err error
 }
 
+type fakePlatformDatabaseHealthProvider struct {
+	err error
+}
+
+func (p fakePlatformDatabaseHealthProvider) Ping(context.Context) error {
+	return p.err
+}
+
 func (p fakeSecurityKernelHealthProvider) CheckHealth(context.Context) error {
 	return p.err
 }
@@ -77,7 +85,7 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	retentionProvider := fakeAuditRetentionStatsProvider{stats: auditretention.WorkerStats{
 		Running: true, RunsTotal: 3, RowsRedactedTotal: 42,
 	}}
-	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider, fakeSecurityKernelHealthProvider{}).ServeHTTP(recorder, request)
+	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider, fakePlatformDatabaseHealthProvider{}, fakeSecurityKernelHealthProvider{}).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -122,12 +130,15 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 	if response.SecurityKernel == nil || response.SecurityKernel.Status != "ok" {
 		t.Fatalf("security kernel health = %#v", response.SecurityKernel)
 	}
+	if response.PlatformDatabase == nil || response.PlatformDatabase.Status != "ok" {
+		t.Fatalf("platform database health = %#v", response.PlatformDatabase)
+	}
 }
 
 func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	healthCheck(nil, nil, nil, nil, fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}).ServeHTTP(recorder, request)
+	healthCheck(nil, nil, nil, nil, nil, fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
@@ -136,6 +147,22 @@ func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	if response.Status != "unavailable" || response.SecurityKernel == nil || response.SecurityKernel.Reason != "security_kernel_unavailable" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestHealthCheckFailsWhenPlatformDatabaseIsUnavailable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthCheck(nil, nil, nil, nil, fakePlatformDatabaseHealthProvider{err: errors.New("connection refused")}, nil).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	var response healthResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Status != "unavailable" || response.PlatformDatabase == nil || response.PlatformDatabase.Reason != "platform_database_unavailable" {
 		t.Fatalf("response = %#v", response)
 	}
 }

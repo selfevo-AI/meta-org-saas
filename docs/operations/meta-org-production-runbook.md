@@ -183,6 +183,12 @@ has created `platform.security_request_nonces`. A database error or missing
 ledger intentionally fails authorization closed so a horizontally scaled
 deployment cannot silently fall back to per-process replay protection.
 
+Backend `/api/v1/health` checks both the platform PostgreSQL pool and the
+security kernel. A database outage returns HTTP 503 with
+`platform_database_unavailable`; the security kernel also returns unavailable
+because replay protection is database-backed. Both services reconnect without
+a process restart after PostgreSQL is reachable again.
+
 Sensitive management writes, public invitation acceptance, and OpenAI-compatible
 AI Gateway calls use the shared PostgreSQL rate-limit buckets. Limits apply to
 both the authenticated actor or presented token and the resolved client IP.
@@ -268,4 +274,6 @@ cd ..
 docker compose config
 ```
 
-Expected result: all commands exit successfully, and Docker Compose renders `meta_org`.
+Expected result: all commands exit successfully, Docker Compose renders the
+`meta_org_saas` platform database topology, and `/api/v1/health` returns HTTP
+200 with `platform_database.status` and `security_kernel.status` set to `ok`.

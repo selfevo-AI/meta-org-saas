@@ -317,8 +317,7 @@ mod tests {
         let first = PostgresNonceStore::connect(&database_url).await.unwrap();
         let second = PostgresNonceStore::connect(&database_url).await.unwrap();
         first
-            .client_for_test()
-            .batch_execute(
+            .batch_execute_for_test(
                 r#"
                 CREATE SCHEMA IF NOT EXISTS platform;
                 CREATE TABLE IF NOT EXISTS platform.security_request_nonces (
@@ -332,6 +331,12 @@ mod tests {
             )
             .await
             .unwrap();
+        assert!(first.is_ready().await.unwrap());
+        let first_backend_pid = first.backend_pid_for_test().await.unwrap();
+        assert!(second
+            .terminate_backend_for_test(first_backend_pid)
+            .await
+            .unwrap());
         assert!(first.is_ready().await.unwrap());
         let nonce = Uuid::new_v4();
         let now = now_unix_seconds() as i64;
