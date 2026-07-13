@@ -1529,7 +1529,8 @@ export default function Home() {
   const selectedOverviewModel = overviewModels.find((model) => model.id === overviewModelID)
   const isPlatformAdminSession = !!platformRole
   const activeSessionScope: SessionScope = isPlatformAdminSession || loginSurface === 'platform' ? 'platform' : 'tenant'
-  const visibleMenuGroups = isPlatformAdminSession ? platformMenuGroups : menuGroups
+  const isPlatformSession = activeSessionScope === 'platform'
+  const visibleMenuGroups = isPlatformSession ? platformMenuGroups : menuGroups
 
   useEffect(() => {
     if (!ready) return
@@ -1539,7 +1540,7 @@ export default function Home() {
       return
     }
 
-    const sessionScope: SessionScope = platformRole ? 'platform' : 'tenant'
+    const sessionScope = activeSessionScope
     if (!route || route.scope !== sessionScope) {
       const target = workspacePath(sessionScope, currentOrganizationID, 'overview')
       if (target !== '/' && target !== pathname) router.replace(target)
@@ -1566,7 +1567,7 @@ export default function Home() {
       }
     }
     return deferStateUpdate(() => setWorkspaceView(route.view))
-  }, [currentOrganizationID, organizations, pathname, platformRole, ready, router, token])
+  }, [activeSessionScope, currentOrganizationID, organizations, pathname, ready, router, token])
 
   useEffect(() => {
     let cancelled = false
@@ -1675,7 +1676,7 @@ export default function Home() {
       })
     }
     let cancelled = false
-    const loadModels = isPlatformAdminSession ? listPlatformModels : listModels
+    const loadModels = isPlatformSession ? listPlatformModels : listModels
     loadModels(token)
       .then((items) => {
         if (cancelled) return
@@ -1690,7 +1691,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdminSession, token])
+  }, [isPlatformSession, token])
 
   useEffect(() => {
     return deferStateUpdate(() => {
@@ -1718,7 +1719,7 @@ export default function Home() {
       if (cancelled) return
       setOverviewControlLoading(true)
       setOverviewControlError('')
-      const loadSkills = isPlatformAdminSession ? listPlatformAssistantSkills : listAssistantSkills
+      const loadSkills = isPlatformSession ? listPlatformAssistantSkills : listAssistantSkills
       loadSkills(token, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType)
         .then((items) => {
           if (cancelled) return
@@ -1740,7 +1741,7 @@ export default function Home() {
       cancelled = true
       cancelDeferred()
     }
-  }, [isPlatformAdminSession, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType, t, token])
+  }, [isPlatformSession, selectedOverviewFunction.moduleKey, selectedOverviewFunction.targetType, t, token])
 
   useEffect(() => {
     if (!menuReady || typeof window === 'undefined') return
@@ -1753,7 +1754,7 @@ export default function Home() {
   }, [menuReady, themeMode])
 
   useEffect(() => {
-    if (!token || isPlatformAdminSession) {
+    if (!token || isPlatformSession) {
       return deferStateUpdate(() => setWorkspaceLayoutWidths(defaultWorkspaceLayoutWidths))
     }
     let cancelled = false
@@ -1769,13 +1770,13 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdminSession, token])
+  }, [isPlatformSession, token])
 
   useEffect(() => {
     if (!token || onboardingRequired) return
     let cancelled = false
-    const loadOverviewData = isPlatformAdminSession ? getPlatformMetaOrgOverview : getMetaOrgOverview
-    const loadInboxData = isPlatformAdminSession ? getPlatformMetaOrgInbox : getMetaOrgInbox
+    const loadOverviewData = isPlatformSession ? getPlatformMetaOrgOverview : getMetaOrgOverview
+    const loadInboxData = isPlatformSession ? getPlatformMetaOrgInbox : getMetaOrgInbox
 
     Promise.all([loadOverviewData(token), loadInboxData(token)])
       .then(([overviewData, inboxData]) => {
@@ -1791,7 +1792,7 @@ export default function Home() {
     return () => {
       cancelled = true
     }
-  }, [isPlatformAdminSession, onboardingRequired, t, token])
+  }, [isPlatformSession, onboardingRequired, t, token])
 
   const effectiveWorkspaceView: WorkspaceView = workspaceView
   const activeDomain = effectiveWorkspaceView === 'overview' ? 'MetaOrg' : effectiveWorkspaceView.replace('domain:', '')
@@ -1808,7 +1809,7 @@ export default function Home() {
         : activeDomain
 
   useEffect(() => {
-    if (!token || effectiveWorkspaceView === 'overview' || isPlatformAdminSession) {
+    if (!token || effectiveWorkspaceView === 'overview' || isPlatformSession) {
       return deferStateUpdate(() => {
         setBusinessTreeLoading(false)
         setBusinessTreeError(null)
@@ -1849,7 +1850,7 @@ export default function Home() {
     businessTreeCacheKey,
     currentOrganizationID,
     effectiveWorkspaceView,
-    isPlatformAdminSession,
+    isPlatformSession,
     t,
     token,
   ])
@@ -1880,8 +1881,8 @@ export default function Home() {
     setOverviewLoading(true)
     setError(null)
     try {
-      const loadOverviewData = isPlatformAdminSession ? getPlatformMetaOrgOverview : getMetaOrgOverview
-      const loadInboxData = isPlatformAdminSession ? getPlatformMetaOrgInbox : getMetaOrgInbox
+      const loadOverviewData = isPlatformSession ? getPlatformMetaOrgOverview : getMetaOrgOverview
+      const loadInboxData = isPlatformSession ? getPlatformMetaOrgInbox : getMetaOrgInbox
       const [overviewData, inboxData] = await Promise.all([loadOverviewData(activeToken), loadInboxData(activeToken)])
       setOverview(overviewData)
       setInbox(inboxData)
@@ -2075,7 +2076,7 @@ export default function Home() {
 
   function handleDomainDrop(event: DragEvent<HTMLElement>, groupID: string) {
     event.preventDefault()
-    if (isPlatformAdminSession) return
+    if (isPlatformSession) return
     const domain = event.dataTransfer.getData('text/plain') || draggedDomain
     if (!domain || !tenantOnlyDomains.includes(domain)) return
     setMenuGroups((current) =>
@@ -2090,13 +2091,13 @@ export default function Home() {
   }
 
   function resetMenuLayout() {
-    if (isPlatformAdminSession) return
+    if (isPlatformSession) return
     setMenuGroups(normalizeMenuGroups())
     setExpandedGroups(defaultExpandedGroups())
   }
 
   function persistWorkspaceLayout(widths: WorkspaceLayoutWidths) {
-    if (isPlatformAdminSession) return
+    if (isPlatformSession) return
     if (!token) return
     saveUserPreference(token, workspaceLayoutPreferenceKey, widths).catch(() => undefined)
   }
@@ -2194,7 +2195,7 @@ export default function Home() {
     setOverviewControlError('')
     setOverviewControlNotice('')
     setOverviewControlLoading(true)
-    const loadSkills = isPlatformAdminSession ? listPlatformAssistantSkills : listAssistantSkills
+    const loadSkills = isPlatformSession ? listPlatformAssistantSkills : listAssistantSkills
     loadSkills(token)
       .then((items) => {
         setSkillLibrary(items)
@@ -2216,7 +2217,7 @@ export default function Home() {
     setOverviewControlError('')
     setOverviewControlNotice('')
     try {
-      const createSkill = isPlatformAdminSession ? createPlatformAssistantSkill : createAssistantSkill
+      const createSkill = isPlatformSession ? createPlatformAssistantSkill : createAssistantSkill
       const imported = await createSkill(token, {
         module_key: selectedOverviewFunction.moduleKey,
         target_type: selectedOverviewFunction.targetType,
@@ -2340,11 +2341,11 @@ export default function Home() {
     setError(null)
     try {
       if (decision === 'approve') {
-        const approve = isPlatformAdminSession ? approvePlatformToolApproval : approveToolApproval
+        const approve = isPlatformSession ? approvePlatformToolApproval : approveToolApproval
         await approve(token, id)
         setNotice(t('agent.approvalApproved'))
       } else {
-        const reject = isPlatformAdminSession ? rejectPlatformToolApproval : rejectToolApproval
+        const reject = isPlatformSession ? rejectPlatformToolApproval : rejectToolApproval
         await reject(token, id)
         setNotice(t('agent.approvalRejected'))
       }
@@ -2359,7 +2360,7 @@ export default function Home() {
   const activeGroup = visibleMenuGroups.find((group) => group.domains.includes(activeDomain))
   const isOverview = effectiveWorkspaceView === 'overview'
   const showBusinessChrome = false
-  const shellUsesOverviewLayout = isOverview || isPlatformAdminSession || !showBusinessChrome
+  const shellUsesOverviewLayout = isOverview || isPlatformSession || !showBusinessChrome
   const activeOperationCount =
     isOverview
       ? apiOperations.filter((operation) => operation.domain === 'MetaOrg').length
@@ -2795,7 +2796,7 @@ export default function Home() {
                     }}
                     onOpenAssistant={openAssistantWithoutIntent}
                     onReviewApproval={(id, decision) => void handleToolApproval(id, decision)}
-                    apiScope={isPlatformAdminSession ? 'platform' : 'tenant'}
+                    apiScope={activeSessionScope}
                   />
                 ) : (
                   <div className="flex min-h-[420px] items-center justify-center rounded-lg border border-slate-200 bg-white">
@@ -2828,7 +2829,7 @@ export default function Home() {
 					<ERPBusinessModuleWorkspace token={token} module="project" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:DeveloperTools' ? (
 					<div className="space-y-5">
-						<DeveloperToolsWorkspace token={token} apiScope={isPlatformAdminSession ? 'platform' : 'tenant'} />
+						<DeveloperToolsWorkspace token={token} apiScope={activeSessionScope} />
 						<ERPCodeWorkspace token={token} module="platform" />
 					</div>
 				) : effectiveWorkspaceView === 'domain:SystemAdmin' || activeDomain.startsWith('PlatformAdmin:') ? (
@@ -2860,11 +2861,11 @@ export default function Home() {
                 <AgentOnlyWorkspace domain={effectiveWorkspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
               )}
               <div className="xl:hidden">
-                {!isPlatformAdminSession && <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />}
+                {!isPlatformSession && <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />}
               </div>
             </div>
           </section>
-          {!isPlatformAdminSession && (
+          {!isPlatformSession && (
             <>
               <WorkspaceLayoutResizer pane="status" label={t('layout.resizeStatus')} onResizeStart={handleLayoutResizeStart} className="workspace-status-resizer xl:flex" />
               <aside className="workspace-status-pane hidden min-w-0 border-l border-slate-800 bg-[#121317] xl:block">
@@ -2968,7 +2969,7 @@ export default function Home() {
                   initialIntent={assistantIntent}
                   initialIntentKey={assistantIntentKey}
                   autoRunInitialIntent={Boolean(assistantIntent)}
-                  apiScope={isPlatformAdminSession ? 'platform' : 'tenant'}
+                  apiScope={activeSessionScope}
                 />
               </aside>
             </div>

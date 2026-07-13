@@ -30,6 +30,19 @@ test('login surfaces remain usable without horizontal overflow', async ({ page }
 })
 
 test('platform administrator session is explicitly scoped', async ({ page }) => {
+  const tenantOnlyRequests: string[] = []
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname
+    if (
+      path === '/api/v1/models'
+      || path === '/api/v1/meta-org/overview'
+      || path === '/api/v1/meta-org/inbox'
+      || path === '/api/v1/assistant/skills'
+      || path.startsWith('/api/v1/preferences/')
+    ) {
+      tenantOnlyRequests.push(path)
+    }
+  })
   await page.goto('/')
   await page.getByTestId('login-surface-platform').click()
   await page.getByTestId('auth-email').fill(platformEmail)
@@ -51,6 +64,8 @@ test('platform administrator session is explicitly scoped', async ({ page }) => 
   await page.goForward()
   await expect(page).toHaveURL(/\/platform\/models$/)
   await expect(page.getByTestId('system-admin-workspace')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('body')).not.toContainText('organization_required')
+  expect(tenantOnlyRequests).toEqual([])
   await expectNoHorizontalOverflow(page)
 })
 
