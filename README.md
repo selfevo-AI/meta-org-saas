@@ -171,7 +171,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | `000_saas_platform_management_baseline.sql` | SaaS 管理平台、平台账号、权限治理、订阅、模块、租户和平台主从数据基础。 |
 | `001_erp_code_baseline.sql` | ERP/行业业务基线，包含组织、项目、工作流、财务、成本，以及以 ERP code-table 为主模型的供应链和行业解决方案表。 |
 | `002_erp_platform_integration_baseline.sql` | ERP 与平台管理的运行期投影、模块集成和平台主数据同步。 |
-| `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、业务五阶段 AI 审计、上下文、skill、AI 用量，以及跨阶段外键重建。 |
+| `004_ai_capability_baseline.sql` | 模型、provider/channel、agent、工具运行时、AI 助手、带权威上下文指纹的业务五阶段 AI 审计、上下文、skill、AI 用量，以及跨阶段外键重建。 |
 | `005_industry_solution_consolidation.sql` | 行业方案存储和历史方案数据归并。 |
 | `006_saas_manufacturing_module_seed.sql` | 制造模块及 ERPNext 风格行业方案种子。 |
 | `007_saas_runtime_organization_target_repair.sql` | SaaS 运行组织和租户数据库目标修复。 |

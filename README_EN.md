@@ -171,7 +171,7 @@ The backend applies SQL files from the root `migrations/` directory at startup i
 | `000_saas_platform_management_baseline.sql` | SaaS management platform, platform accounts, permission governance, subscriptions, modules, tenants, and platform master/detail foundation. |
 | `001_erp_code_baseline.sql` | ERP and industry business baseline, including organization, project, workflow, finance, costing, and supply-chain solution tables. |
 | `002_erp_platform_integration_baseline.sql` | Runtime projection, module integration, and platform master-data synchronization between ERP and platform management. |
-| `004_ai_capability_baseline.sql` | Models, providers/channels, agents, tool runtime, AI Assistant, five-stage business AI audits, context, skills, AI usage, and cross-stage foreign-key rebuilds. |
+| `004_ai_capability_baseline.sql` | Models, providers/channels, agents, tool runtime, AI Assistant, five-stage business AI audits with authoritative context fingerprints, context, skills, AI usage, and cross-stage foreign-key rebuilds. |
 | `005_industry_solution_consolidation.sql` | Industry-solution storage and historical solution-data consolidation. |
 | `006_saas_manufacturing_module_seed.sql` | Manufacturing module and ERPNext-style industry-solution seeds. |
 | `007_saas_runtime_organization_target_repair.sql` | SaaS runtime organization and tenant-database target repair. |

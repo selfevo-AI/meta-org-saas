@@ -22,7 +22,7 @@ func TestAnalyzeSupportsEveryBusinessStage(t *testing.T) {
 			orgID, projectID := uuid.New(), uuid.New()
 			run, err := svc.Analyze(context.Background(), AnalyzeInput{
 				OrganizationID: orgID, ProjectID: projectID, Stage: stage,
-				Context: map[string]any{"project": map[string]any{"status": "active"}},
+				Context: map[string]any{"project": map[string]any{"status": "active"}}, ContextHash: "context-v1",
 			})
 			if err != nil {
 				t.Fatalf("Analyze() error = %v", err)
@@ -38,6 +38,9 @@ func TestAnalyzeSupportsEveryBusinessStage(t *testing.T) {
 			}
 			if invoker.input.Metadata["business_stage"] != stage {
 				t.Fatalf("business_stage metadata = %v", invoker.input.Metadata["business_stage"])
+			}
+			if run.ContextHash != "context-v1" || invoker.input.Metadata["authoritative_context_hash"] != "context-v1" {
+				t.Fatalf("authoritative context hash = run:%q metadata:%v", run.ContextHash, invoker.input.Metadata["authoritative_context_hash"])
 			}
 		})
 	}
@@ -82,14 +85,14 @@ func TestSubmitProposalForcesApprovalAndAddsProjectContext(t *testing.T) {
 	projectID, orgID, runID := uuid.New(), uuid.New(), uuid.New()
 	repo := &fakeRunRepository{run: Run{
 		ID: runID, OrganizationID: orgID, ProjectID: projectID, Stage: StagePlan, Status: StatusCompleted,
-		ProposalStatus: ProposalNotSubmitted,
-		Analysis:       &Analysis{Proposal: Proposal{Action: "Estimate project cost", ToolName: "project.estimate_cost", Arguments: map[string]any{"project_id": uuid.New().String()}}},
+		ProposalStatus: ProposalNotSubmitted, ContextHash: "context-v1",
+		Analysis: &Analysis{Proposal: Proposal{Action: "Estimate project cost", ToolName: "project.estimate_cost", Arguments: map[string]any{"project_id": uuid.New().String()}}},
 	}}
 	executor := &fakeProposalExecutor{}
 	svc := NewService(repo, nil, Config{})
 	svc.SetProposalExecutor(executor)
 	run, err := svc.SubmitProposal(context.Background(), SubmitProposalInput{
-		OrganizationID: orgID, ProjectID: projectID, RunID: runID, ActorID: uuid.New(), ActorType: "human",
+		OrganizationID: orgID, ProjectID: projectID, RunID: runID, ActorID: uuid.New(), ActorType: "human", ContextHash: "context-v1",
 	})
 	if err != nil {
 		t.Fatalf("SubmitProposal() error = %v", err)
@@ -102,6 +105,51 @@ func TestSubmitProposalForcesApprovalAndAddsProjectContext(t *testing.T) {
 	}
 	if run.ProposalStatus != ProposalApprovalRequired || run.ToolExecutionID == nil {
 		t.Fatalf("run = %#v, want linked approval-required execution", run)
+	}
+}
+
+func TestSubmitProposalRejectsLegacyRunWithoutContextHash(t *testing.T) {
+	projectID, orgID, runID := uuid.New(), uuid.New(), uuid.New()
+	repo := &fakeRunRepository{run: Run{
+		ID: runID, OrganizationID: orgID, ProjectID: projectID, Stage: StagePlan, Status: StatusCompleted,
+		ProposalStatus: ProposalNotSubmitted,
+		Analysis:       &Analysis{Proposal: Proposal{Action: "Estimate project cost", ToolName: "project.estimate_cost", Arguments: map[string]any{}}},
+	}}
+	executor := &fakeProposalExecutor{}
+	svc := NewService(repo, nil, Config{})
+	svc.SetProposalExecutor(executor)
+
+	_, err := svc.SubmitProposal(context.Background(), SubmitProposalInput{
+		OrganizationID: orgID, ProjectID: projectID, RunID: runID, ActorID: uuid.New(), ActorType: "human", ContextHash: "context-v2",
+	})
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "predates authoritative context verification") {
+		t.Fatalf("SubmitProposal() error = %v, want legacy-context conflict", err)
+	}
+	if executor.input.ToolName != "" {
+		t.Fatalf("legacy proposal reached execution: %#v", executor.input)
+	}
+}
+
+func TestSubmitProposalRejectsStaleAuthoritativeContext(t *testing.T) {
+	projectID, orgID, runID := uuid.New(), uuid.New(), uuid.New()
+	repo := &fakeRunRepository{run: Run{
+		ID: runID, OrganizationID: orgID, ProjectID: projectID, Stage: StagePlan, Status: StatusCompleted,
+		ProposalStatus: ProposalNotSubmitted, ContextHash: "context-v1",
+		Analysis: &Analysis{Proposal: Proposal{Action: "Estimate project cost", ToolName: "project.estimate_cost", Arguments: map[string]any{}}},
+	}}
+	executor := &fakeProposalExecutor{}
+	svc := NewService(repo, nil, Config{})
+	svc.SetProposalExecutor(executor)
+
+	_, err := svc.SubmitProposal(context.Background(), SubmitProposalInput{
+		OrganizationID: orgID, ProjectID: projectID, RunID: runID, ActorID: uuid.New(), ActorType: "human",
+		ContextHash: "context-v2",
+	})
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "project context changed") {
+		t.Fatalf("SubmitProposal() error = %v, want stale-context conflict", err)
+	}
+	if executor.input.ToolName != "" || repo.run.ProposalStatus != ProposalNotSubmitted {
+		t.Fatalf("stale proposal reached execution = input:%#v run:%#v", executor.input, repo.run)
 	}
 }
 
@@ -169,7 +217,7 @@ type fakeRunRepository struct {
 }
 
 func (f *fakeRunRepository) CreateRun(_ context.Context, input AnalyzeInput) (*Run, error) {
-	f.run = Run{ID: uuid.New(), OrganizationID: input.OrganizationID, ProjectID: input.ProjectID, Stage: input.Stage, Status: StatusRunning, ProposalStatus: ProposalNotSubmitted}
+	f.run = Run{ID: uuid.New(), OrganizationID: input.OrganizationID, ProjectID: input.ProjectID, Stage: input.Stage, Status: StatusRunning, ProposalStatus: ProposalNotSubmitted, ContextHash: input.ContextHash}
 	return &f.run, nil
 }
 

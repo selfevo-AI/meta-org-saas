@@ -222,6 +222,14 @@ use the same model policy, security-kernel authorization, balance reservation,
 actual-usage settlement, channel accounting, and invocation audit as synchronous
 calls.
 
+Business AI proposals are freshness-bound to the authoritative project overview
+captured during analysis. HTTP 409 with a project-context-changed message means
+members, workflows, deliverables, costs, evaluations, lifecycle state, or core
+project/requirement data changed before submission. Re-run the selected business
+stage analysis; do not bypass the check or reuse the old tool arguments.
+Analyses created before migration `026` have no trusted fingerprint and also
+return HTTP 409; re-run them rather than backfilling or copying a hash.
+
 Meta Resource sync intentionally reads existing source tables without owning them. If sync fails after a schema change, check these source assumptions first:
 
 - `ai_agents` uses `is_active`, `service_class`, `risk_level`, `capabilities`, and `metadata`; the governance fields come from migration `012`.

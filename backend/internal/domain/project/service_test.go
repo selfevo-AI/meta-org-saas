@@ -6,6 +6,30 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestAuthoritativeProjectContextHashIsStableAndChangeSensitive(t *testing.T) {
+	projectID := uuid.New()
+	overview := &ProjectOverview{Project: &Project{ID: projectID, Name: "Delivery", Status: "active"}, Lifecycle: ProjectLifecycle{Stage: "do"}}
+	first, err := authoritativeProjectContextHash(overview)
+	if err != nil {
+		t.Fatalf("authoritativeProjectContextHash() error = %v", err)
+	}
+	second, err := authoritativeProjectContextHash(overview)
+	if err != nil {
+		t.Fatalf("authoritativeProjectContextHash() error = %v", err)
+	}
+	if first == "" || first != second {
+		t.Fatalf("stable hashes = %q/%q", first, second)
+	}
+	overview.Project.Status = "paused"
+	changed, err := authoritativeProjectContextHash(overview)
+	if err != nil {
+		t.Fatalf("authoritativeProjectContextHash() error = %v", err)
+	}
+	if changed == first {
+		t.Fatalf("hash did not change after authoritative status update: %q", changed)
+	}
+}
+
 func TestPrepareAIUsageCostEntryInputRequiresSourceID(t *testing.T) {
 	input := CreateCostEntryInput{Amount: 1.25}
 	if err := prepareAIUsageCostEntryInput(&input); err == nil {

@@ -28,6 +28,7 @@ This directory now uses staged baseline migrations instead of the historical
 23. `023_security_kernel_replay_ledger.sql`
 24. `024_ai_audit_retention.sql`
 25. `025_ai_gateway_reservation_recovery.sql`
+26. `026_business_ai_context_freshness.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -471,6 +472,16 @@ fingerprint index used to suppress duplicate unacknowledged findings. The agent
 may write signals and pending context proposals, but it must not apply database changes,
 activate context rules, bypass tool approvals, or execute repository code
 changes.
+
+Five-stage Business AI runs in `004` persist an
+`authoritative_context_hash` derived only from the project overview assembled by
+the project service. `026_business_ai_context_freshness.sql` repairs databases
+that applied `004` or `016` before this field existed. Proposal submission must
+recompute the overview hash before creating a tool execution or approval; a
+mismatch is a conflict that requires a new analysis. User focus text and request
+metadata are retained in `input_context` but do not influence this authority
+check. Pre-`026` runs have an empty hash and fail closed at proposal submission;
+operators must not backfill hashes from unverified historical payloads.
 
 ## AI Audit Retention
 

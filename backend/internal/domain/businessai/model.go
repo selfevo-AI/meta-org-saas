@@ -80,6 +80,7 @@ type Run struct {
 	InvocationID        *uuid.UUID     `json:"invocation_id,omitempty"`
 	ResolvedModel       string         `json:"resolved_model"`
 	InputContext        map[string]any `json:"input_context"`
+	ContextHash         string         `json:"authoritative_context_hash"`
 	Analysis            *Analysis      `json:"analysis,omitempty"`
 	CostAmount          float64        `json:"cost_amount"`
 	Currency            string         `json:"currency"`
@@ -108,6 +109,7 @@ type AnalyzeInput struct {
 	Model           string
 	Focus           string
 	Context         map[string]any
+	ContextHash     string
 }
 
 type SubmitProposalInput struct {
@@ -116,6 +118,7 @@ type SubmitProposalInput struct {
 	RunID          uuid.UUID
 	ActorID        uuid.UUID
 	ActorType      string
+	ContextHash    string
 }
 
 type ProposalExecutionRequest struct {

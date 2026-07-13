@@ -54,12 +54,40 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
     await workbench.getByTestId('business-ai-analyze').click()
     const response = await responsePromise
     expect(response.status()).toBe(201)
-    const run = await response.json() as { stage: string; status: string; invocation_id: string; analysis: { summary: string } }
+    const run = await response.json() as { id: string; project_id: string; stage: string; status: string; invocation_id: string; analysis: { summary: string } }
     expect(run.stage).toBe(stage)
     expect(run.status).toBe('completed')
     await expect(workbench.getByText(run.analysis.summary)).toBeVisible({ timeout: 30_000 })
     await expect(workbench.getByText(new RegExp(run.invocation_id))).toBeVisible()
     await expect(workbench.getByText(allowedTool)).toBeVisible()
+    if (stage === 'plan') {
+      const requestHeaders = response.request().headers()
+      const apiRoot = `${new URL(response.url()).origin}/api/v1`
+      const headers = {
+        Authorization: requestHeaders.authorization,
+        'X-Organization-ID': requestHeaders['x-organization-id'],
+      }
+      const projectResponse = await page.request.get(`${apiRoot}/projects/${run.project_id}`, { headers })
+      expect(projectResponse.status()).toBe(200)
+      const project = await projectResponse.json() as { description: string }
+      const changedDescription = `${project.description || ''} [business-ai-stale-context-check]`
+      const updateResponse = await page.request.patch(`${apiRoot}/projects/${run.project_id}`, {
+        headers,
+        data: { description: changedDescription },
+      })
+      expect(updateResponse.status()).toBe(200)
+      const staleProposalResponse = await page.request.post(`${apiRoot}/projects/${run.project_id}/ai-analyses/${run.id}/submit-proposal`, {
+        headers,
+        data: {},
+      })
+      expect(staleProposalResponse.status()).toBe(409)
+      expect(await staleProposalResponse.text()).toContain('project context changed')
+      const restoreResponse = await page.request.patch(`${apiRoot}/projects/${run.project_id}`, {
+        headers,
+        data: { description: project.description || '' },
+      })
+      expect(restoreResponse.status()).toBe(200)
+    }
   }
   const proposalResponse = page.waitForResponse((candidate) => (
     candidate.request().method() === 'POST' && candidate.url().endsWith('/submit-proposal')

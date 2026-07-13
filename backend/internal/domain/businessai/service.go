@@ -107,7 +107,7 @@ func (s *Service) Analyze(ctx context.Context, input AnalyzeInput) (*Run, error)
 			AgentID:        agentID,
 			SourceSurface:  "business_stage_ai",
 		},
-		Metadata: map[string]any{"business_stage": input.Stage, "run_id": run.ID.String()},
+		Metadata: map[string]any{"business_stage": input.Stage, "run_id": run.ID.String(), "authoritative_context_hash": input.ContextHash},
 	})
 	if err != nil {
 		_ = s.repo.FailRun(ctx, run.ID, err.Error())
@@ -139,6 +139,12 @@ func (s *Service) SubmitProposal(ctx context.Context, input SubmitProposalInput)
 	}
 	if run.Status != StatusCompleted || run.Analysis == nil {
 		return nil, fmt.Errorf("%w: AI analysis must be completed before submitting its proposal", ErrConflict)
+	}
+	if run.ContextHash == "" {
+		return nil, fmt.Errorf("%w: AI analysis predates authoritative context verification; run a new analysis before submitting this proposal", ErrConflict)
+	}
+	if run.ContextHash != strings.TrimSpace(input.ContextHash) {
+		return nil, fmt.Errorf("%w: authoritative project context changed; run a new AI analysis before submitting this proposal", ErrConflict)
 	}
 	toolName := strings.TrimSpace(run.Analysis.Proposal.ToolName)
 	if toolName == "" {

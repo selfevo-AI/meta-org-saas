@@ -349,6 +349,10 @@ code or schema mutation.
   multi-replica recovery worker refunds pre-invocation orphans and settles or
   cancels stale attached invocations after backend interruption, preventing
   permanent balance, token-quota, and provider-channel occupancy leaks.
+- Five-stage Business AI hashes the authoritative project overview at analysis
+  time and recomputes it before proposal submission. Changed project facts fail
+  closed before tool execution or approval creation, forcing a fresh analysis
+  instead of applying an otherwise valid proposal to stale business state.
 - Audit records use structured events, tamper evidence and retention policy.
 - Sensitive context and logs use field classification and redaction.
 

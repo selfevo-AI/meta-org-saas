@@ -2,6 +2,8 @@ package project
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -875,6 +877,10 @@ func (s *Service) AnalyzeProjectStage(ctx context.Context, projectID uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
+	contextHash, err := authoritativeProjectContextHash(overview)
+	if err != nil {
+		return nil, err
+	}
 	verifiedContext := map[string]any{"project_overview": overview}
 	if input.Context != nil {
 		verifiedContext["request_context"] = input.Context
@@ -890,6 +896,7 @@ func (s *Service) AnalyzeProjectStage(ctx context.Context, projectID uuid.UUID, 
 		Model:           input.Model,
 		Focus:           input.Focus,
 		Context:         verifiedContext,
+		ContextHash:     contextHash,
 	})
 	return run, mapBusinessAIError(err)
 }
@@ -930,11 +937,28 @@ func (s *Service) SubmitProjectAIProposal(ctx context.Context, projectID, runID 
 		proj.OrganizationID, proj.DepartmentID, nil, proj.RequiredLevel, proj.RiskLevel, nil); err != nil {
 		return nil, err
 	}
+	overview, err := s.GetProjectOverview(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	contextHash, err := authoritativeProjectContextHash(overview)
+	if err != nil {
+		return nil, err
+	}
 	run, err := s.businessAI.SubmitProposal(ctx, businessai.SubmitProposalInput{
 		OrganizationID: *proj.OrganizationID, ProjectID: projectID, RunID: runID,
-		ActorID: actorID, ActorType: actorType,
+		ActorID: actorID, ActorType: actorType, ContextHash: contextHash,
 	})
 	return run, mapBusinessAIError(err)
+}
+
+func authoritativeProjectContextHash(overview *ProjectOverview) (string, error) {
+	data, err := json.Marshal(overview)
+	if err != nil {
+		return "", fmt.Errorf("marshal authoritative project context: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 func mapBusinessAIError(err error) error {
