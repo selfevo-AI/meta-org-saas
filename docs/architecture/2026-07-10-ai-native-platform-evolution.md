@@ -109,6 +109,11 @@ same source where practical.
 MCP, A2A, and future agent protocols are adapters over the internal command and
 tool contracts. They must not become the core domain model.
 
+The first HTTP contract stage standardizes internal `/api/v1` failures as
+`error`, stable `code`, and `request_id`, with matching response headers and
+structured frontend errors. OpenAI-compatible `/v1` remains an independent
+adapter contract. Generated OpenAPI schemas should build on this envelope.
+
 ## Database Evolution
 
 ### Control Plane and Tenant Plane

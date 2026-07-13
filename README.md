@@ -224,6 +224,8 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 
 其余业务接口通过 JWT Bearer Token 保护。
 
+`/api/v1` 错误响应统一保留兼容字段 `error`，并返回稳定的 `code` 和 `request_id`；相同请求 ID 同时写入 `X-Request-ID`，错误码写入 `X-Error-Code`。客户端应按 `code` 分支处理，使用 `request_id` 关联服务日志，不要解析自由文本错误。OpenAI 兼容 `/v1` 接口继续遵循其独立协议。
+
 | 域 | 主要接口 |
 |---|---|
 | Dashboard | `GET /dashboard/overview` |

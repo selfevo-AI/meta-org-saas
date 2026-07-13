@@ -24,7 +24,8 @@ func NewRouter(corsOrigins []string) *chi.Mux {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   corsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "PATCH"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Organization-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Organization-ID", "X-Request-ID"},
+		ExposedHeaders:   []string{"X-Request-ID", "X-Error-Code", "Retry-After"},
 		AllowCredentials: true,
 	}))
 	return r

@@ -1,4 +1,5 @@
 import { getCurrentOrganizationId, normalizeOrganizationId } from './auth'
+import { apiErrorFromResponse, createRequestId } from './api-error'
 import type { SessionScope } from './auth'
 import type { ApiOperation } from './operations'
 
@@ -15,6 +16,8 @@ interface RequestOptions {
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
   const headers: Record<string, string> = {}
+  const requestId = createRequestId()
+  if (requestId) headers['X-Request-ID'] = requestId
   const requestScope = options.scope ?? (isPlatformPath(path) ? 'platform' : 'tenant')
 
   if (options.token) {
@@ -42,8 +45,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-    throw new Error(error.error || `HTTP ${response.status}`)
+    throw await apiErrorFromResponse(response)
   }
 
   if (response.status === 204) {

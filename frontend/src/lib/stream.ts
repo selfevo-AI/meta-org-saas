@@ -1,4 +1,5 @@
 import { getCurrentOrganizationId, normalizeOrganizationId } from './auth'
+import { APIError, apiErrorFromResponse, createRequestId } from './api-error'
 import type { SessionScope } from './auth'
 
 export interface StreamEvent<T = unknown> {
@@ -57,6 +58,8 @@ export async function streamSSEPost<T>(
 
 function streamHeaders(token: string, options: StreamRequestOptions, includeJSON = false): Record<string, string> {
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+  const requestId = createRequestId()
+  if (requestId) headers['X-Request-ID'] = requestId
   if (includeJSON) headers['Content-Type'] = 'application/json'
   const scope = options.scope ?? 'tenant'
   const organizationId = normalizeOrganizationId(
@@ -69,8 +72,11 @@ function streamHeaders(token: string, options: StreamRequestOptions, includeJSON
 }
 
 async function readSSE<T>(response: Response, onEvent: (event: StreamEvent<T>) => void) {
-  if (!response.ok || !response.body) {
-    throw new Error(`HTTP ${response.status}`)
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response)
+  }
+  if (!response.body) {
+    throw new APIError('response body unavailable', response.status, 'response_body_unavailable', response.headers.get('X-Request-ID') || '')
   }
 
   const reader = response.body.getReader()

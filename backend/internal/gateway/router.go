@@ -105,6 +105,13 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		deps.AIGatewayHandler.RegisterCompatibleRoutes(r, optionalMiddleware(deps.AIGatewayCompatibleRateLimit)...)
 	}
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Use(middleware.APIErrorContract)
+		r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
+			writeRouteError(w, http.StatusNotFound, "route not found")
+		})
+		r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
+			writeRouteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		})
 		r.Get("/health", healthCheck(
 			deps.TenantPoolStatsProvider,
 			deps.TenantProjectionStatsProvider,
@@ -144,6 +151,14 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			})
 		})
 	})
+}
+
+func writeRouteError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		log.Printf("route error response failed: %v", err)
+	}
 }
 
 func optionalMiddleware(value func(http.Handler) http.Handler) []func(http.Handler) http.Handler {

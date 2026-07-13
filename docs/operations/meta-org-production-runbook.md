@@ -189,6 +189,12 @@ security kernel. A database outage returns HTTP 503 with
 because replay protection is database-backed. Both services reconnect without
 a process restart after PostgreSQL is reachable again.
 
+For failed `/api/v1` requests, record the `code` and `request_id` response
+fields or the matching `X-Error-Code` and `X-Request-ID` headers. Search backend
+logs by request ID for internal 5xx details. Public 5xx responses intentionally
+hide database, provider, and infrastructure error text. OpenAI-compatible `/v1`
+responses are outside this internal API envelope.
+
 Sensitive management writes, public invitation acceptance, and OpenAI-compatible
 AI Gateway calls use the shared PostgreSQL rate-limit buckets. Limits apply to
 both the authenticated actor or presented token and the resolved client IP.

@@ -25,6 +25,7 @@ import {
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { API_BASE, apiRequest, getUserFieldPreference, saveUserFieldPreference } from '@/lib/api'
+import { apiErrorFromResponse, createRequestId } from '@/lib/api-error'
 import { getCurrentOrganizationId, normalizeOrganizationId } from '@/lib/auth'
 import { useI18n } from '@/lib/i18n'
 
@@ -808,6 +809,8 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
       }
+      const requestId = createRequestId()
+      if (requestId) headers['X-Request-ID'] = requestId
       const organizationId = normalizeOrganizationId(getCurrentOrganizationId('tenant'))
       if (organizationId) {
         headers['X-Organization-ID'] = organizationId
@@ -816,8 +819,7 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
         headers,
       })
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
-        throw new Error(error.error || `HTTP ${response.status}`)
+        throw await apiErrorFromResponse(response)
       }
       const blob = await response.blob()
       const url = URL.createObjectURL(blob)
