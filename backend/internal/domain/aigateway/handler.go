@@ -144,6 +144,39 @@ type compatibleChatUsage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+type compatibleChatCompletionChunk struct {
+	ID      string                `json:"id"`
+	Object  string                `json:"object"`
+	Created int64                 `json:"created"`
+	Model   string                `json:"model"`
+	Choices []compatibleChatChunk `json:"choices"`
+	Usage   *compatibleChatUsage  `json:"usage,omitempty"`
+}
+
+type compatibleChatChunk struct {
+	Index        int                 `json:"index"`
+	Delta        compatibleChatDelta `json:"delta"`
+	FinishReason *string             `json:"finish_reason"`
+}
+
+type compatibleChatDelta struct {
+	Role      string                   `json:"role,omitempty"`
+	Content   string                   `json:"content,omitempty"`
+	ToolCalls []compatibleChatToolCall `json:"tool_calls,omitempty"`
+}
+
+type compatibleChatToolCall struct {
+	Index    int                    `json:"index"`
+	ID       string                 `json:"id"`
+	Type     string                 `json:"type"`
+	Function compatibleChatFunction `json:"function"`
+}
+
+type compatibleChatFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
 func (h *Handler) compatibleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	token, ok := bearerToken(w, r)
 	if !ok {
@@ -157,7 +190,7 @@ func (h *Handler) compatibleChatCompletions(w http.ResponseWriter, r *http.Reque
 	for _, tool := range input.Tools {
 		tools = append(tools, ToolDefinition{Name: tool.Name, Description: tool.Description, Schema: tool.Schema})
 	}
-	result, err := h.service.InvokeWithAccessToken(r.Context(), token, InvokeInput{
+	invokeInput := InvokeInput{
 		ProviderType: ProviderOpenAI,
 		Model:        input.Model,
 		Messages:     input.Messages,
@@ -165,7 +198,12 @@ func (h *Handler) compatibleChatCompletions(w http.ResponseWriter, r *http.Reque
 		MaxTokens:    input.MaxTokens,
 		Tools:        tools,
 		Attribution:  Attribution{SourceSurface: "openai_compatible_api"},
-	})
+	}
+	if input.Stream {
+		h.compatibleChatCompletionsStream(w, r, token, invokeInput)
+		return
+	}
+	result, err := h.service.InvokeWithAccessToken(r.Context(), token, invokeInput)
 	if err != nil {
 		writeJSON(w, statusFromError(err), map[string]any{"error": map[string]string{"message": err.Error(), "type": "ai_gateway_error"}})
 		return
@@ -190,6 +228,87 @@ func (h *Handler) compatibleChatCompletions(w http.ResponseWriter, r *http.Reque
 			TotalTokens:      result.Usage.InputTokens + result.Usage.OutputTokens,
 		},
 	})
+}
+
+func (h *Handler) compatibleChatCompletionsStream(w http.ResponseWriter, r *http.Request, token string, input InvokeInput) {
+	if err := httpstream.Prepare(w); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": "streaming setup failed", "type": "ai_gateway_error"}})
+		return
+	}
+	result, err := h.service.StreamWithAccessToken(r.Context(), token, input)
+	if err != nil {
+		writeJSON(w, statusFromError(err), map[string]any{"error": map[string]string{"message": err.Error(), "type": "ai_gateway_error"}})
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]string{"message": "streaming unsupported", "type": "ai_gateway_error"}})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	responseID := "chatcmpl-" + result.InvocationID.String()
+	model := firstNonEmpty(result.Model, input.Model)
+	created := time.Now().Unix()
+	roleSent := false
+	finished := false
+	streamFailed := false
+	for event := range result.Events {
+		if event.Error != "" {
+			writeCompatibleSSEData(w, map[string]any{"error": map[string]string{"message": event.Error, "type": "ai_gateway_error"}})
+			flusher.Flush()
+			streamFailed = true
+			continue
+		}
+		delta := compatibleChatDelta{Content: event.Delta}
+		if !roleSent {
+			delta.Role = "assistant"
+			roleSent = true
+		}
+		if event.ToolCall != nil {
+			arguments, _ := json.Marshal(event.ToolCall.Arguments)
+			delta.ToolCalls = []compatibleChatToolCall{{
+				Index: 0,
+				ID:    event.ToolCall.normalizedID(0),
+				Type:  "function",
+				Function: compatibleChatFunction{
+					Name:      event.ToolCall.Name,
+					Arguments: string(arguments),
+				},
+			}}
+		}
+		var finishReason *string
+		if event.Done {
+			value := "stop"
+			finishReason = &value
+			finished = true
+		}
+		var usage *compatibleChatUsage
+		if event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
+			usage = &compatibleChatUsage{
+				PromptTokens:     event.Usage.InputTokens,
+				CompletionTokens: event.Usage.OutputTokens,
+				TotalTokens:      event.Usage.InputTokens + event.Usage.OutputTokens,
+			}
+		}
+		writeCompatibleSSEData(w, compatibleChatCompletionChunk{
+			ID: responseID, Object: "chat.completion.chunk", Created: created, Model: model,
+			Choices: []compatibleChatChunk{{Index: 0, Delta: delta, FinishReason: finishReason}}, Usage: usage,
+		})
+		flusher.Flush()
+	}
+	if !finished && !streamFailed {
+		value := "stop"
+		writeCompatibleSSEData(w, compatibleChatCompletionChunk{
+			ID: responseID, Object: "chat.completion.chunk", Created: created, Model: model,
+			Choices: []compatibleChatChunk{{Index: 0, Delta: compatibleChatDelta{}, FinishReason: &value}},
+		})
+		flusher.Flush()
+	}
+	_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	flusher.Flush()
 }
 
 func (h *Handler) compatibleListModels(w http.ResponseWriter, r *http.Request) {
@@ -751,5 +870,15 @@ func writeSSE(w http.ResponseWriter, event string, payload any) {
 	}
 	if _, err := w.Write([]byte("data: " + string(data) + "\n\n")); err != nil {
 		log.Printf("aigateway stream write error: %v", err)
+	}
+}
+
+func writeCompatibleSSEData(w http.ResponseWriter, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		data = []byte(`{"error":{"message":"encode stream event failed","type":"ai_gateway_error"}}`)
+	}
+	if _, err := w.Write([]byte("data: " + string(data) + "\n\n")); err != nil {
+		log.Printf("aigateway compatible stream write error: %v", err)
 	}
 }

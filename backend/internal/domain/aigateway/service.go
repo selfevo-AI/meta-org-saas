@@ -205,6 +205,7 @@ type InvokeOutput struct {
 
 type StreamResult struct {
 	InvocationID uuid.UUID
+	Model        string
 	Events       <-chan StreamEvent
 }
 
@@ -699,21 +700,9 @@ func (s *Service) ListModelsWithAccessToken(ctx context.Context, token string, l
 }
 
 func (s *Service) InvokeWithAccessToken(ctx context.Context, token string, input InvokeInput) (*InvokeOutput, error) {
-	accessToken, err := s.AuthenticateAccessToken(ctx, token)
+	accessToken, input, err := s.prepareAccessTokenInvocation(ctx, token, input)
 	if err != nil {
 		return nil, err
-	}
-	if !accessTokenAllowsModel(accessToken, input.Model) {
-		return nil, fmt.Errorf("%w: model %q is not allowed for this ai access token", ErrForbidden, input.Model)
-	}
-	orgID := accessToken.OrganizationID
-	input.Attribution.OrganizationID = &orgID
-	input.ProviderType = firstNonEmpty(input.ProviderType, ProviderOpenAI)
-	input.AccessTokenID = &accessToken.ID
-	input.ModelGroupID = accessToken.ModelGroupID
-	input.Attribution.SourceSurface = firstNonEmpty(input.Attribution.SourceSurface, "organization_api")
-	if !accessToken.AllowChannelOverride {
-		input.PreferredChannelID = nil
 	}
 	return s.invokeSync(ctx, input, &accessToken)
 }
@@ -729,6 +718,13 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 	if err != nil {
 		return nil, err
 	}
+	releaseChannel := target.ChannelID != nil
+	releaseAmount := 0.0
+	defer func() {
+		if releaseChannel {
+			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, releaseAmount)
+		}
+	}()
 	var reservation *BalanceReservation
 	if accessToken != nil {
 		estimatedUsage := estimateInvocationUsage(input, target)
@@ -786,14 +782,6 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
-	releaseChannel := target.ChannelID != nil
-	releaseAmount := 0.0
-	defer func() {
-		if releaseChannel {
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, releaseAmount)
-		}
-	}()
-
 	resp, err := s.invokeAdapter(ctx, adapter, ProviderRequest{
 		Model:       target.Model,
 		Messages:    input.Messages,
@@ -814,6 +802,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 
 	breakdown := CalculateCostBreakdown(resp.Usage, target.Price, target.RateMultiplier, normalizedServiceTier(input.ServiceTier))
 	cost := breakdown.ActualCost
+	releaseAmount = cost
 	currency := currencyOrDefault(target.Currency)
 	if err := s.repo.CreateUsageLedger(ctx, CreateUsageLedgerInput{
 		InvocationID:        invocation.ID,
@@ -851,7 +840,6 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 			return nil, err
 		}
 	}
-	releaseAmount = cost
 	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, releaseAmount)
 	releaseChannel = false
 	s.recordCostLedger(ctx, invocation.ID, target, input.Attribution, resp.Usage, breakdown, currency, ModeSync, StatusCompleted, "")
@@ -889,6 +877,18 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 }
 
 func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult, error) {
+	return s.stream(ctx, input, nil)
+}
+
+func (s *Service) StreamWithAccessToken(ctx context.Context, token string, input InvokeInput) (*StreamResult, error) {
+	accessToken, input, err := s.prepareAccessTokenInvocation(ctx, token, input)
+	if err != nil {
+		return nil, err
+	}
+	return s.stream(ctx, input, &accessToken)
+}
+
+func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *AccessTokenContext) (*StreamResult, error) {
 	if err := validateInvokeInput(input); err != nil {
 		return nil, err
 	}
@@ -899,8 +899,40 @@ func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult,
 	if err != nil {
 		return nil, err
 	}
+	releaseChannel := target.ChannelID != nil
+	defer func() {
+		if releaseChannel {
+			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, 0)
+		}
+	}()
+	var reservation *BalanceReservation
+	if accessToken != nil {
+		estimatedUsage := estimateInvocationUsage(input, target)
+		estimatedBreakdown := CalculateCostBreakdown(estimatedUsage, target.Price, target.RateMultiplier, normalizedServiceTier(input.ServiceTier))
+		reserved, err := s.repo.ReserveAccessTokenBalance(ctx, ReserveBalanceInput{
+			AccessTokenID:   accessToken.ID,
+			OrganizationID:  accessToken.OrganizationID,
+			ModelGroupID:    accessToken.ModelGroupID,
+			EstimatedAmount: estimatedBreakdown.ActualCost,
+			Currency:        currencyOrDefault(target.Currency),
+			Reason:          "ai_stream_reserve",
+		})
+		if err != nil {
+			return nil, err
+		}
+		reservation = &reserved
+	}
+	if err := s.authorizeInvocationWithKernel(ctx, input, target); err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
+		return nil, err
+	}
 	adapter, err := s.adapterFor(target)
 	if err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		return nil, err
 	}
 	started := time.Now()
@@ -909,6 +941,8 @@ func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult,
 		ProviderID:        target.ProviderID,
 		ModelID:           target.ModelID,
 		ChannelID:         target.ChannelID,
+		AccessTokenID:     input.AccessTokenID,
+		ModelGroupID:      input.ModelGroupID,
 		Mode:              ModeStream,
 		Status:            StatusStreaming,
 		Attribution:       input.Attribution,
@@ -917,9 +951,13 @@ func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult,
 		ModelMappingChain: target.ModelMappingChain,
 		ServiceTier:       normalizedServiceTier(input.ServiceTier),
 		ReasoningEffort:   strings.TrimSpace(input.ReasoningEffort),
+		ReservedAmount:    reservedAmount(reservation),
 		Metadata:          input.Metadata,
 	})
 	if err != nil {
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
@@ -934,11 +972,16 @@ func (s *Service) Stream(ctx context.Context, input InvokeInput) (*StreamResult,
 	if err != nil {
 		streamCancel()
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
+		releaseChannel = false
+		if reservation != nil {
+			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+		}
 		s.recordInvocationSpan(ctx, trace, observability.SpanAIStream, invocation.ID, target, input.Attribution, StatusFailed, err.Error(), int(time.Since(started).Milliseconds()))
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
-	return &StreamResult{InvocationID: invocation.ID, Events: s.recordingStream(streamCtx, streamCancel, invocation.ID, target, input.Attribution, normalizedServiceTier(input.ServiceTier), strings.TrimSpace(input.ReasoningEffort), started, events, trace)}, nil
+	releaseChannel = false
+	return &StreamResult{InvocationID: invocation.ID, Model: target.Model, Events: s.recordingStream(streamCtx, streamCancel, invocation.ID, target, input, normalizedServiceTier(input.ServiceTier), strings.TrimSpace(input.ReasoningEffort), started, events, trace, reservation, accessToken)}, nil
 }
 
 func (s *Service) CreateProvider(ctx context.Context, input CreateProviderInput) (*ModelProvider, error) {
@@ -1254,8 +1297,8 @@ func effectiveTimeout(deploymentLimit time.Duration, providerTimeoutMS int) time
 	return deploymentLimit
 }
 
-func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc, invocationID uuid.UUID, target ResolvedModel, attribution Attribution, serviceTier string, reasoningEffort string, started time.Time, events <-chan StreamEvent, trace *observability.Trace) <-chan StreamEvent {
-	out := make(chan StreamEvent)
+func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc, invocationID uuid.UUID, target ResolvedModel, input InvokeInput, serviceTier string, reasoningEffort string, started time.Time, events <-chan StreamEvent, trace *observability.Trace, reservation *BalanceReservation, accessToken *AccessTokenContext) <-chan StreamEvent {
+	out := make(chan StreamEvent, 1)
 	go func() {
 		defer cancel()
 		defer close(out)
@@ -1264,7 +1307,11 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 		for {
 			select {
 			case <-ctx.Done():
-				s.recordCancelledStream(ctx.Err(), invocationID, target, attribution, started, trace)
+				s.recordCancelledStream(ctx.Err(), invocationID, target, input, serviceTier, reasoningEffort, usage, started, trace, reservation, accessToken)
+				select {
+				case out <- StreamEvent{Type: "error", Error: ctx.Err().Error(), Done: true}:
+				default:
+				}
 				return
 			case event, ok := <-events:
 				if !ok {
@@ -1278,7 +1325,11 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 				}
 				select {
 				case <-ctx.Done():
-					s.recordCancelledStream(ctx.Err(), invocationID, target, attribution, started, trace)
+					s.recordCancelledStream(ctx.Err(), invocationID, target, input, serviceTier, reasoningEffort, usage, started, trace, reservation, accessToken)
+					select {
+					case out <- StreamEvent{Type: "error", Error: ctx.Err().Error(), Done: true}:
+					default:
+					}
 					return
 				case out <- event:
 				}
@@ -1290,6 +1341,8 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 		currency := currencyOrDefault(target.Currency)
 		_ = s.repo.CreateUsageLedger(context.Background(), CreateUsageLedgerInput{
 			InvocationID:        invocationID,
+			AccessTokenID:       input.AccessTokenID,
+			ModelGroupID:        input.ModelGroupID,
 			ChannelID:           target.ChannelID,
 			ModelPriceVersionID: target.PriceVersionID,
 			LedgerType:          "usage",
@@ -1303,17 +1356,21 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 			RequestedModel:      target.RequestedModel,
 			UpstreamModel:       target.UpstreamModel,
 			Reason:              failed,
+			Metadata:            accessTokenLedgerMetadata(input),
 		})
 		durationMS := int(time.Since(started).Milliseconds())
+		if err := s.settleStreamBalance(reservation, accessToken, cost, currency, firstNonEmpty(failed, "ai_stream_settle")); err != nil {
+			failed = err.Error()
+		}
 		if failed != "" {
 			_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: "provider_error", Message: failed, DurationMS: durationMS})
 			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, cost)
-			s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, attribution, StatusFailed, failed, durationMS)
+			s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusFailed, failed, durationMS)
 			s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
 			return
 		}
 		_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, cost)
-		s.recordCostLedger(context.Background(), invocationID, target, attribution, usage, breakdown, currency, ModeStream, StatusCompleted, "")
+		s.recordCostLedger(context.Background(), invocationID, target, input.Attribution, usage, breakdown, currency, ModeStream, StatusCompleted, "")
 		_ = s.repo.CompleteInvocation(context.Background(), invocationID, CompleteInvocationInput{
 			Usage:         usage,
 			CostAmount:    cost,
@@ -1321,14 +1378,14 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 			Currency:      currency,
 			DurationMS:    durationMS,
 		})
-		s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, attribution, StatusCompleted, "", durationMS)
+		s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusCompleted, "", durationMS)
 		s.recordAIMetrics(context.Background(), invocationID, usage, cost, currency, map[string]any{"mode": ModeStream, "provider_type": target.ProviderType, "model": target.Model})
 		s.completeObservationTrace(context.Background(), trace, observability.TraceComplete)
 	}()
 	return out
 }
 
-func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, target ResolvedModel, attribution Attribution, started time.Time, trace *observability.Trace) {
+func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, target ResolvedModel, input InvokeInput, serviceTier string, reasoningEffort string, usage TokenUsage, started time.Time, trace *observability.Trace, reservation *BalanceReservation, accessToken *AccessTokenContext) {
 	errorType := "cancelled"
 	metricName := "ai_stream_disconnect"
 	if errors.Is(cause, context.DeadlineExceeded) {
@@ -1336,11 +1393,52 @@ func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, tar
 		metricName = "ai_stream_timeout"
 	}
 	durationMS := int(time.Since(started).Milliseconds())
+	breakdown := CalculateCostBreakdown(usage, target.Price, target.RateMultiplier, serviceTier)
+	cost := breakdown.ActualCost
+	currency := currencyOrDefault(target.Currency)
+	_ = s.repo.CreateUsageLedger(context.Background(), CreateUsageLedgerInput{
+		InvocationID:        invocationID,
+		AccessTokenID:       input.AccessTokenID,
+		ModelGroupID:        input.ModelGroupID,
+		ChannelID:           target.ChannelID,
+		ModelPriceVersionID: target.PriceVersionID,
+		LedgerType:          "usage",
+		Amount:              cost,
+		ActualAmount:        cost,
+		Currency:            currency,
+		Usage:               usage,
+		CostBreakdown:       breakdown,
+		ServiceTier:         serviceTier,
+		ReasoningEffort:     reasoningEffort,
+		RequestedModel:      target.RequestedModel,
+		UpstreamModel:       target.UpstreamModel,
+		Reason:              cause.Error(),
+		Metadata:            accessTokenLedgerMetadata(input),
+	})
+	if err := s.settleStreamBalance(reservation, accessToken, cost, currency, cause.Error()); err != nil {
+		cause = err
+	}
 	_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: errorType, Message: cause.Error(), DurationMS: durationMS, Cancelled: true})
-	_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, 0)
-	s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, attribution, StatusCancelled, cause.Error(), durationMS)
+	_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, cost)
+	if cost > 0 {
+		s.recordCostLedger(context.Background(), invocationID, target, input.Attribution, usage, breakdown, currency, ModeStream, StatusCancelled, cause.Error())
+	}
+	s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusCancelled, cause.Error(), durationMS)
 	s.recordMetric(context.Background(), observability.MetricReliability, metricName, &invocationID, "ai_invocation", 1, map[string]any{"provider_type": target.ProviderType, "model": target.Model})
 	s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
+}
+
+func (s *Service) settleStreamBalance(reservation *BalanceReservation, accessToken *AccessTokenContext, cost float64, currency string, reason string) error {
+	if reservation == nil || accessToken == nil {
+		return nil
+	}
+	return s.repo.SettleAccessTokenBalance(context.Background(), SettleBalanceInput{
+		ReservationID: reservation.ID,
+		AccessTokenID: accessToken.ID,
+		ActualAmount:  cost,
+		Currency:      currency,
+		Reason:        reason,
+	})
 }
 
 func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, target ResolvedModel, started time.Time, cause error) {
@@ -1427,6 +1525,26 @@ func (s *Service) catalogRepo() CatalogRepository {
 		panic("aigateway: catalog repository is not configured")
 	}
 	return s.catalog
+}
+
+func (s *Service) prepareAccessTokenInvocation(ctx context.Context, token string, input InvokeInput) (AccessTokenContext, InvokeInput, error) {
+	accessToken, err := s.AuthenticateAccessToken(ctx, token)
+	if err != nil {
+		return AccessTokenContext{}, input, err
+	}
+	if !accessTokenAllowsModel(accessToken, input.Model) {
+		return AccessTokenContext{}, input, fmt.Errorf("%w: model %q is not allowed for this ai access token", ErrForbidden, input.Model)
+	}
+	orgID := accessToken.OrganizationID
+	input.Attribution.OrganizationID = &orgID
+	input.ProviderType = firstNonEmpty(input.ProviderType, ProviderOpenAI)
+	input.AccessTokenID = &accessToken.ID
+	input.ModelGroupID = accessToken.ModelGroupID
+	input.Attribution.SourceSurface = firstNonEmpty(input.Attribution.SourceSurface, "organization_api")
+	if !accessToken.AllowChannelOverride {
+		input.PreferredChannelID = nil
+	}
+	return accessToken, input, nil
 }
 
 func accessTokenAllowsModel(token AccessTokenContext, model string) bool {

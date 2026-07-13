@@ -215,7 +215,7 @@ Public routes:
 
 All other business routes require a JWT Bearer Token.
 
-Errors under `/api/v1` retain the compatible `error` field and add stable `code` and `request_id` fields. The same request ID is returned in `X-Request-ID`, and `X-Error-Code` carries the stable code. Clients should branch on `code`, correlate logs with `request_id`, and never parse free-form error text. OpenAI-compatible `/v1` routes keep their separate protocol contract.
+Errors under `/api/v1` retain the compatible `error` field and add stable `code` and `request_id` fields. The same request ID is returned in `X-Request-ID`, and `X-Error-Code` carries the stable code. Clients should branch on `code`, correlate logs with `request_id`, and never parse free-form error text. OpenAI-compatible `/v1` routes keep their separate protocol contract; `POST /v1/chat/completions` supports standard SSE chunks and the `[DONE]` terminator for `stream: true`, with access-token authorization, balance reservation, actual-usage settlement, and invocation auditing.
 
 | Domain | Main Routes |
 |---|---|

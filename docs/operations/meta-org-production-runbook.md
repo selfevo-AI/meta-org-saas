@@ -211,7 +211,11 @@ Every OpenAI-compatible endpoint authenticates the presented AI access token,
 including `/v1/models` and endpoints that currently return 501. `/v1/models`
 returns only active models allowed by the token's exact/pattern allowlist and,
 when assigned, its model-group channel abilities. A non-empty arbitrary Bearer
-value is not sufficient authentication.
+value is not sufficient authentication. `POST /v1/chat/completions` honors
+`stream: true` with OpenAI-compatible SSE chunks and `[DONE]`; streaming calls
+use the same model policy, security-kernel authorization, balance reservation,
+actual-usage settlement, channel accounting, and invocation audit as synchronous
+calls.
 
 Meta Resource sync intentionally reads existing source tables without owning them. If sync fails after a schema change, check these source assumptions first:
 
@@ -254,7 +258,8 @@ Check:
 - Timeouts allow long-running streaming responses.
 - Invocation logs distinguish provider errors from cancelled streams.
 
-For proxy deployments, disable response buffering for `/api/v1/ai-gateway/stream`.
+For proxy deployments, disable response buffering for both
+`/api/v1/ai-gateway/stream` and `/v1/chat/completions` when `stream: true` is used.
 The backend clears its per-response write deadline only for AI Gateway and
 Assistant SSE handlers; other routes retain the server-wide 15-second write
 timeout. The effective Gateway timeout is the smaller positive value of the

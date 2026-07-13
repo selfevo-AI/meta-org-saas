@@ -35,6 +35,10 @@ type fakeGatewayRepo struct {
 	catalogProviders []ModelProvider
 	catalogModels    []Model
 	abilities        []ModelChannelAbility
+	reserveErr       error
+	releaseCount     int
+	lastReleaseCost  float64
+	ledgerErr        error
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -168,6 +172,133 @@ func TestServiceStreamUsesProviderTimeoutBelowDeploymentLimit(t *testing.T) {
 	}
 	if repo.lastFailure.ErrorType != "timeout" || !repo.lastFailure.Cancelled {
 		t.Fatalf("stream failure = %#v", repo.lastFailure)
+	}
+}
+
+func TestServiceStreamWithAccessTokenReservesAndSettlesBalance(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	channelID := uuid.New()
+	repo.target.ChannelID = &channelID
+	orgID := uuid.New()
+	tokenID := uuid.New()
+	repo.accessToken = AccessTokenContext{ID: tokenID, OrganizationID: orgID, AllowedModels: []string{"gpt-test"}, Status: "active"}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.01, Currency: "CNY"}
+	adapter := fakeAdapter{streamEvents: []StreamEvent{
+		{Type: "delta", Delta: "hello"},
+		{Type: "done", Usage: TokenUsage{InputTokens: 10, OutputTokens: 5}, Done: true},
+	}}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: adapter})
+
+	result, err := svc.StreamWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}}, MaxTokens: 16,
+	})
+	if err != nil {
+		t.Fatalf("StreamWithAccessToken() error = %v", err)
+	}
+	for range result.Events {
+	}
+	if !repo.reserved || !repo.settled || repo.refunded {
+		t.Fatalf("stream balance state = reserved:%t settled:%t refunded:%t", repo.reserved, repo.settled, repo.refunded)
+	}
+	if repo.lastLedger.AccessTokenID == nil || *repo.lastLedger.AccessTokenID != tokenID {
+		t.Fatalf("ledger access token = %v, want %s", repo.lastLedger.AccessTokenID, tokenID)
+	}
+	if repo.lastSettle.ActualAmount <= 0 || repo.lastSettle.ActualAmount != repo.lastLedger.Amount {
+		t.Fatalf("stream settlement = %.8f, ledger = %.8f", repo.lastSettle.ActualAmount, repo.lastLedger.Amount)
+	}
+	if repo.releaseCount != 1 || repo.lastReleaseCost != repo.lastLedger.Amount {
+		t.Fatalf("channel release count/cost = %d/%.8f", repo.releaseCount, repo.lastReleaseCost)
+	}
+}
+
+func TestServiceStreamSettlesPartialUsageOnTimeout(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{ID: uuid.New(), OrganizationID: uuid.New(), Status: "active"}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.01, Currency: "CNY"}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: partialTimeoutAdapter{}}, WithInvocationTimeouts(time.Second, 20*time.Millisecond))
+
+	result, err := svc.StreamWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("StreamWithAccessToken() error = %v", err)
+	}
+	var sawTimeout bool
+	for event := range result.Events {
+		if event.Error != "" {
+			sawTimeout = true
+		}
+	}
+	if !sawTimeout {
+		t.Fatal("stream did not expose its timeout terminal event")
+	}
+	if !repo.settled || repo.refunded || repo.lastSettle.ActualAmount <= 0 {
+		t.Fatalf("partial stream balance state = settled:%t refunded:%t amount:%.8f", repo.settled, repo.refunded, repo.lastSettle.ActualAmount)
+	}
+	if repo.lastFailure.ErrorType != "timeout" || !repo.lastFailure.Cancelled {
+		t.Fatalf("stream failure = %#v", repo.lastFailure)
+	}
+}
+
+func TestServiceStreamRequiresSecurityKernelAuthorizationAndReleasesResources(t *testing.T) {
+	channelID := uuid.New()
+	repo := newFakeGatewayRepo()
+	repo.target.ChannelID = &channelID
+	repo.accessToken = AccessTokenContext{ID: uuid.New(), OrganizationID: uuid.New(), Status: "active"}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.01, Currency: "CNY"}
+	kernel := &fakeSecurityKernel{decision: securitykernel.Decision{Allowed: false, Reason: "license_denied"}, err: securitykernel.ErrDenied}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{}}, WithSecurityKernel(kernel))
+
+	_, err := svc.StreamWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("StreamWithAccessToken() error = %v, want ErrForbidden", err)
+	}
+	if !repo.refunded || repo.releaseCount != 1 {
+		t.Fatalf("denied stream cleanup = refunded:%t releases:%d", repo.refunded, repo.releaseCount)
+	}
+	if repo.recorded {
+		t.Fatal("denied stream created an invocation")
+	}
+}
+
+func TestServiceInvokeReleasesChannelWhenBalanceReservationFails(t *testing.T) {
+	channelID := uuid.New()
+	repo := newFakeGatewayRepo()
+	repo.target.ChannelID = &channelID
+	repo.accessToken = AccessTokenContext{ID: uuid.New(), OrganizationID: uuid.New(), Status: "active"}
+	repo.reserveErr = ErrForbidden
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{}})
+
+	_, err := svc.InvokeWithAccessToken(context.Background(), "ak-test", InvokeInput{
+		Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("InvokeWithAccessToken() error = %v, want ErrForbidden", err)
+	}
+	if repo.releaseCount != 1 {
+		t.Fatalf("release count = %d, want 1", repo.releaseCount)
+	}
+}
+
+func TestServiceInvokeChargesChannelWhenLedgerPersistenceFails(t *testing.T) {
+	channelID := uuid.New()
+	repo := newFakeGatewayRepo()
+	repo.target.ChannelID = &channelID
+	repo.ledgerErr = errors.New("ledger unavailable")
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{resp: ProviderResponse{
+		Content: "ok", Usage: TokenUsage{InputTokens: 10, OutputTokens: 5},
+	}}})
+
+	_, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI, Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, repo.ledgerErr) {
+		t.Fatalf("Invoke() error = %v, want ledger error", err)
+	}
+	if repo.releaseCount != 1 || repo.lastReleaseCost <= 0 {
+		t.Fatalf("channel release count/cost = %d/%.8f", repo.releaseCount, repo.lastReleaseCost)
 	}
 }
 
@@ -536,10 +667,14 @@ func (f *fakeGatewayRepo) FailInvocation(_ context.Context, _ uuid.UUID, input F
 func (f *fakeGatewayRepo) CreateUsageLedger(_ context.Context, input CreateUsageLedgerInput) error {
 	f.ledgerCount++
 	f.lastLedger = input
-	return nil
+	return f.ledgerErr
 }
 
-func (f *fakeGatewayRepo) ReleaseChannel(context.Context, *uuid.UUID, float64) error {
+func (f *fakeGatewayRepo) ReleaseChannel(_ context.Context, id *uuid.UUID, amount float64) error {
+	if id != nil {
+		f.releaseCount++
+		f.lastReleaseCost = amount
+	}
 	return nil
 }
 
@@ -553,6 +688,9 @@ func (f *fakeGatewayRepo) AuthenticateAccessToken(context.Context, string) (Acce
 func (f *fakeGatewayRepo) ReserveAccessTokenBalance(_ context.Context, input ReserveBalanceInput) (BalanceReservation, error) {
 	f.reserved = true
 	f.lastReserve = input
+	if f.reserveErr != nil {
+		return BalanceReservation{}, f.reserveErr
+	}
 	if f.reservation.ID == uuid.Nil {
 		f.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: input.EstimatedAmount, Currency: input.Currency}
 	}
@@ -737,11 +875,14 @@ func (f *fakeGatewayRepo) AdjustGatewayBalance(_ context.Context, input AdjustGa
 }
 
 type fakeAdapter struct {
-	resp ProviderResponse
-	err  error
+	resp         ProviderResponse
+	streamEvents []StreamEvent
+	err          error
 }
 
 type timeoutAdapter struct{}
+
+type partialTimeoutAdapter struct{}
 
 func (timeoutAdapter) Invoke(ctx context.Context, _ ProviderRequest) (*ProviderResponse, error) {
 	<-ctx.Done()
@@ -757,6 +898,21 @@ func (timeoutAdapter) Stream(ctx context.Context, _ ProviderRequest) (<-chan Str
 	return events, nil
 }
 
+func (partialTimeoutAdapter) Invoke(ctx context.Context, _ ProviderRequest) (*ProviderResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (partialTimeoutAdapter) Stream(ctx context.Context, _ ProviderRequest) (<-chan StreamEvent, error) {
+	events := make(chan StreamEvent)
+	go func() {
+		defer close(events)
+		events <- StreamEvent{Type: "usage", Usage: TokenUsage{InputTokens: 8, OutputTokens: 3}}
+		<-ctx.Done()
+	}()
+	return events, nil
+}
+
 func (a fakeAdapter) Invoke(context.Context, ProviderRequest) (*ProviderResponse, error) {
 	if a.err != nil {
 		return nil, a.err
@@ -764,9 +920,14 @@ func (a fakeAdapter) Invoke(context.Context, ProviderRequest) (*ProviderResponse
 	return &a.resp, nil
 }
 
-func (a fakeAdapter) Stream(context.Context, ProviderRequest) (<-chan StreamEvent, error) {
+func (a fakeAdapter) Stream(_ context.Context, _ ProviderRequest) (<-chan StreamEvent, error) {
 	ch := make(chan StreamEvent)
-	close(ch)
+	go func() {
+		defer close(ch)
+		for _, event := range a.streamEvents {
+			ch <- event
+		}
+	}()
 	return ch, a.err
 }
 

@@ -51,6 +51,59 @@ func TestCompatibleChatCompletionsUsesOrganizationAccessToken(t *testing.T) {
 	}
 }
 
+func TestCompatibleChatCompletionsStreamsOpenAIChunksAndSettlesBalance(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.accessToken = AccessTokenContext{
+		ID:             uuid.New(),
+		OrganizationID: uuid.New(),
+		AllowedModels:  []string{"gpt-test"},
+		Status:         "active",
+	}
+	repo.reservation = BalanceReservation{ID: uuid.New(), ReservedAmount: 0.001, Currency: "CNY"}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: fakeAdapter{streamEvents: []StreamEvent{
+		{Type: "delta", Delta: "hel"},
+		{Type: "delta", Delta: "lo"},
+		{Type: "done", Usage: TokenUsage{InputTokens: 4, OutputTokens: 2}, Done: true},
+	}}})
+	router := chi.NewRouter()
+	NewHandler(svc).RegisterCompatibleRoutes(router)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"model":"gpt-test",
+		"messages":[{"role":"user","content":"hi"}],
+		"max_tokens":16,
+		"stream":true
+	}`))
+	req.Header.Set("Authorization", "Bearer ak-org")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if contentType := rec.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("content type = %q, want text/event-stream", contentType)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`"object":"chat.completion.chunk"`,
+		`"role":"assistant"`,
+		`"content":"hel"`,
+		`"content":"lo"`,
+		`"finish_reason":"stop"`,
+		`"prompt_tokens":4`,
+		"data: [DONE]",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body = %s, want %s", body, want)
+		}
+	}
+	if !repo.reserved || !repo.settled || repo.refunded {
+		t.Fatalf("stream balance state = reserved:%t settled:%t refunded:%t", repo.reserved, repo.settled, repo.refunded)
+	}
+}
+
 func TestCompatibleChatCompletionsRequiresBearerToken(t *testing.T) {
 	router := chi.NewRouter()
 	NewHandler(NewService(newFakeGatewayRepo(), nil)).RegisterCompatibleRoutes(router)

@@ -342,6 +342,9 @@ code or schema mutation.
 - OpenAI-compatible discovery and unsupported-operation responses authenticate
   the same access-token lifecycle used for invocation and filter model discovery
   by token policy plus model-group channel abilities.
+- OpenAI-compatible streaming uses protocol-native SSE chunks while retaining
+  security-kernel authorization, quota reservation, actual-usage settlement,
+  channel release, and timeout/disconnect audit semantics.
 - Audit records use structured events, tamper evidence and retention policy.
 - Sensitive context and logs use field classification and redaction.
 
