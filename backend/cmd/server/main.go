@@ -310,7 +310,7 @@ func main() {
 	aiSvc := aigateway.NewService(aiRepo, nil, aigateway.WithObservability(obsSvc), aigateway.WithCostRecorder(costSvc), aigateway.WithSecurityKernel(securityKernel), aigateway.WithInvocationTimeouts(
 		time.Duration(cfg.AIGatewayInvokeTimeoutSeconds)*time.Second,
 		time.Duration(cfg.AIGatewayStreamTimeoutSeconds)*time.Second,
-	))
+	), aigateway.WithProviderRetryPolicy(cfg.AIGatewayMaxRetries, 100*time.Millisecond))
 	aiHandler := aigateway.NewHandler(aiSvc)
 	businessAIRepo := businessai.NewRepository(db)
 	businessAISvc := businessai.NewService(businessAIRepo, aiSvc, businessai.Config{

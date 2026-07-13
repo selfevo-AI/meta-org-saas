@@ -21,6 +21,7 @@ func TestLoadAuthenticationProtectionConfig(t *testing.T) {
 	t.Setenv("AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS", "45")
 	t.Setenv("AI_GATEWAY_INVOKE_TIMEOUT_SECONDS", "75")
 	t.Setenv("AI_GATEWAY_STREAM_TIMEOUT_SECONDS", "900")
+	t.Setenv("AI_GATEWAY_MAX_RETRIES", "4")
 	t.Setenv("AI_GATEWAY_RESERVATION_RECOVERY_ENABLED", "true")
 	t.Setenv("AI_GATEWAY_RESERVATION_STALE_SECONDS", "2400")
 	t.Setenv("AI_GATEWAY_RESERVATION_POLL_SECONDS", "120")
@@ -46,6 +47,9 @@ func TestLoadAuthenticationProtectionConfig(t *testing.T) {
 	}
 	if cfg.AIGatewayInvokeTimeoutSeconds != 75 || cfg.AIGatewayStreamTimeoutSeconds != 900 {
 		t.Fatalf("AI gateway timeouts = %d/%d", cfg.AIGatewayInvokeTimeoutSeconds, cfg.AIGatewayStreamTimeoutSeconds)
+	}
+	if cfg.AIGatewayMaxRetries != 4 {
+		t.Fatalf("AI gateway max retries = %d", cfg.AIGatewayMaxRetries)
 	}
 	if !cfg.AIGatewayRecoveryEnabled || cfg.AIGatewayReservationStaleSeconds != 2400 || cfg.AIGatewayReservationPollSeconds != 120 || cfg.AIGatewayReservationLeaseSeconds != 45 || cfg.AIGatewayReservationBatchSize != 75 {
 		t.Fatalf("AI gateway reservation recovery config = enabled:%t stale/poll/lease/batch:%d/%d/%d/%d", cfg.AIGatewayRecoveryEnabled, cfg.AIGatewayReservationStaleSeconds, cfg.AIGatewayReservationPollSeconds, cfg.AIGatewayReservationLeaseSeconds, cfg.AIGatewayReservationBatchSize)

@@ -349,6 +349,11 @@ code or schema mutation.
   multi-replica recovery worker refunds pre-invocation orphans and settles or
   cancels stale attached invocations after backend interruption, preventing
   permanent balance, token-quota, and provider-channel occupancy leaks.
+- Provider retry policy is operational rather than catalog-only: provider
+  `retry_count` is capped by deployment policy, shares one total timeout across
+  attempts, and retries only explicit throttle or gateway-unavailable responses.
+  Ambiguous transport failures remain terminal to avoid duplicate inference and
+  billing.
 - Five-stage Business AI hashes the authoritative project overview at analysis
   time and recomputes it before proposal submission. Changed project facts fail
   closed before tool execution or approval creation, forcing a fresh analysis

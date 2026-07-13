@@ -3,12 +3,65 @@ package aigateway
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
 )
+
+func TestResolveInvocationTargetLoadsProviderRetryPolicy(t *testing.T) {
+	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {
+		t.Skip("set RUN_AI_GATEWAY_DB_TEST=1 to run AI Gateway database verification")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := os.Getenv("AI_GATEWAY_TEST_DATABASE_URL")
+	if url == "" {
+		url = "postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable"
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	box, err := secretbox.New(strings.Repeat("r", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := box.Encrypt("sk-retry-integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerID, modelID := uuid.New(), uuid.New()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO model_providers(id, name, provider_type, encrypted_api_key, status, timeout_ms, retry_count)
+		VALUES ($1, $2, 'openai', $3, 'active', 45000, 4)
+	`, providerID, "retry-integration-"+providerID.String(), encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO models(id, provider_id, model_key, status)
+		VALUES ($1, $2, $3, 'active')
+	`, modelID, providerID, "retry-integration-"+modelID.String()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM models WHERE id = $1`, modelID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM model_providers WHERE id = $1`, providerID)
+	}()
+
+	repo := NewRepository(pool, box)
+	target, err := repo.ResolveInvocationTarget(ctx, InvokeInput{ProviderID: &providerID, ModelID: &modelID})
+	if err != nil {
+		t.Fatalf("ResolveInvocationTarget() error = %v", err)
+	}
+	if target.TimeoutMS != 45000 || target.RetryCount != 4 || target.APIKey != "sk-retry-integration" {
+		t.Fatalf("resolved provider policy = timeout:%d retries:%d key:%q", target.TimeoutMS, target.RetryCount, target.APIKey)
+	}
+}
 
 func TestCreateUsageLedgerPersistsNumericAmounts(t *testing.T) {
 	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {

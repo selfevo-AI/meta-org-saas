@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 )
@@ -123,6 +124,90 @@ func TestServiceInvokeEnforcesConfiguredProviderTimeout(t *testing.T) {
 	}
 }
 
+func TestServiceInvokeRetriesTransientHTTPProviderResponses(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.APIKey = "sk-test"
+	repo.target.RetryCount = 2
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts < 3 {
+			http.Error(w, `{"error":"temporarily unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"req-retry","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":2,"completion_tokens":1}}`))
+	}))
+	defer server.Close()
+	repo.target.BaseURL = server.URL
+	svc := NewService(repo, nil, WithProviderRetryPolicy(3, time.Millisecond))
+
+	result, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI, Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if attempts != 3 || result.Content != "ok" {
+		t.Fatalf("attempts/result = %d/%#v", attempts, result)
+	}
+}
+
+func TestServiceInvokeDoesNotRetryNonTransientProviderErrors(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.RetryCount = 5
+	adapter := &countingRetryAdapter{statusCode: http.StatusBadRequest, failures: 5}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: adapter}, WithProviderRetryPolicy(3, time.Millisecond))
+
+	_, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI, Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("Invoke() error = nil")
+	}
+	if adapter.invokeAttempts != 1 {
+		t.Fatalf("invoke attempts = %d, want 1", adapter.invokeAttempts)
+	}
+}
+
+func TestServiceInvokeCapsProviderRetriesAtDeploymentLimit(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.RetryCount = 10
+	adapter := &countingRetryAdapter{statusCode: http.StatusServiceUnavailable, failures: 10}
+	metrics := &fakeRetryObservability{}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: adapter}, WithProviderRetryPolicy(1, time.Millisecond), WithObservability(metrics))
+
+	_, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI, Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("Invoke() error = nil")
+	}
+	if adapter.invokeAttempts != 2 {
+		t.Fatalf("invoke attempts = %d, want initial attempt plus one retry", adapter.invokeAttempts)
+	}
+	if !metrics.hasMetric("ai_provider_retry") || !metrics.hasMetric("ai_provider_retry_exhausted") {
+		t.Fatalf("retry metrics = %#v", metrics.metricNames)
+	}
+}
+
+func TestServiceInvokeRetryBackoffHonorsTotalTimeout(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.RetryCount = 3
+	adapter := &countingRetryAdapter{statusCode: http.StatusServiceUnavailable, failures: 3}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: adapter}, WithInvocationTimeouts(10*time.Millisecond, time.Second), WithProviderRetryPolicy(3, 50*time.Millisecond))
+
+	_, err := svc.Invoke(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI, Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Invoke() error = %v, want deadline exceeded", err)
+	}
+	if adapter.invokeAttempts != 1 {
+		t.Fatalf("invoke attempts = %d, want timeout during first retry backoff", adapter.invokeAttempts)
+	}
+}
+
 func TestServiceInvokeUsesProviderTimeoutBelowDeploymentLimit(t *testing.T) {
 	repo := newFakeGatewayRepo()
 	repo.target.TimeoutMS = 15
@@ -177,6 +262,25 @@ func TestServiceStreamUsesProviderTimeoutBelowDeploymentLimit(t *testing.T) {
 	}
 	if repo.lastFailure.ErrorType != "timeout" || !repo.lastFailure.Cancelled {
 		t.Fatalf("stream failure = %#v", repo.lastFailure)
+	}
+}
+
+func TestServiceStreamRetriesTransientSetupFailure(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	repo.target.RetryCount = 2
+	adapter := &countingRetryAdapter{statusCode: http.StatusBadGateway, failures: 1}
+	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: adapter}, WithProviderRetryPolicy(3, time.Millisecond))
+
+	result, err := svc.Stream(context.Background(), InvokeInput{
+		ProviderType: ProviderOpenAI, Model: "gpt-test", Messages: []Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v", err)
+	}
+	for range result.Events {
+	}
+	if adapter.streamAttempts != 2 || !repo.completed {
+		t.Fatalf("stream attempts/completed = %d/%t", adapter.streamAttempts, repo.completed)
 	}
 }
 
@@ -347,6 +451,17 @@ func TestEffectiveTimeoutUsesDeploymentLimitAsCeiling(t *testing.T) {
 				t.Fatalf("effectiveTimeout() = %s, want %s", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProviderRetryValidationRejectsOutOfRangeValues(t *testing.T) {
+	if err := validateProviderInput(CreateProviderInput{Name: "test", ProviderType: ProviderOpenAI, APIKey: "sk-test", RetryCount: 101}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("validateProviderInput() error = %v, want ErrValidation", err)
+	}
+	invalid := -1
+	svc := NewService(newFakeGatewayRepo(), nil)
+	if _, err := svc.UpdateProvider(context.Background(), uuid.New(), UpdateProviderInput{RetryCount: &invalid}); !errors.Is(err, ErrValidation) {
+		t.Fatalf("UpdateProvider() error = %v, want ErrValidation", err)
 	}
 }
 
@@ -916,6 +1031,61 @@ type fakeAdapter struct {
 type timeoutAdapter struct{}
 
 type partialTimeoutAdapter struct{}
+
+type countingRetryAdapter struct {
+	statusCode     int
+	failures       int
+	invokeAttempts int
+	streamAttempts int
+}
+
+type fakeRetryObservability struct {
+	metricNames []string
+}
+
+func (f *fakeRetryObservability) StartTrace(context.Context, *uuid.UUID, map[string]any) (*observability.Trace, error) {
+	return nil, nil
+}
+
+func (f *fakeRetryObservability) RecordSpan(context.Context, observability.RecordSpanInput) (*observability.Span, error) {
+	return nil, nil
+}
+
+func (f *fakeRetryObservability) RecordMetric(_ context.Context, input observability.RecordMetricInput) (*observability.Metric, error) {
+	f.metricNames = append(f.metricNames, input.MetricName)
+	return nil, nil
+}
+
+func (f *fakeRetryObservability) CompleteTrace(context.Context, uuid.UUID, string) error {
+	return nil
+}
+
+func (f *fakeRetryObservability) hasMetric(name string) bool {
+	for _, item := range f.metricNames {
+		if item == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *countingRetryAdapter) Invoke(context.Context, ProviderRequest) (*ProviderResponse, error) {
+	a.invokeAttempts++
+	if a.invokeAttempts <= a.failures {
+		return nil, &ProviderError{Provider: ProviderOpenAI, StatusCode: a.statusCode, Body: "retry test"}
+	}
+	return &ProviderResponse{Content: "ok", Usage: TokenUsage{InputTokens: 1, OutputTokens: 1}}, nil
+}
+
+func (a *countingRetryAdapter) Stream(context.Context, ProviderRequest) (<-chan StreamEvent, error) {
+	a.streamAttempts++
+	if a.streamAttempts <= a.failures {
+		return nil, &ProviderError{Provider: ProviderOpenAI, StatusCode: a.statusCode, Body: "retry test"}
+	}
+	events := make(chan StreamEvent)
+	close(events)
+	return events, nil
+}
 
 func (timeoutAdapter) Invoke(ctx context.Context, _ ProviderRequest) (*ProviderResponse, error) {
 	<-ctx.Done()

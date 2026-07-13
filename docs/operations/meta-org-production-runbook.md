@@ -35,6 +35,7 @@ Backend:
 | `AI_GATEWAY_RATE_LIMIT_BLOCK_SECONDS` | no | Block duration after an AI Gateway token or IP bucket exceeds its budget. Defaults to `60`. |
 | `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | no | Deployment ceiling for non-streaming provider calls. Defaults to `60`; provider `timeout_ms` may impose a lower limit. |
 | `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | no | Deployment ceiling for AI Gateway and Assistant SSE duration. Defaults to `600`; Gateway provider `timeout_ms` may impose a lower limit. |
+| `AI_GATEWAY_MAX_RETRIES` | no | Deployment ceiling for provider retries. Defaults to `3`; effective retries are also limited by provider `retry_count`. |
 | `AI_GATEWAY_RESERVATION_RECOVERY_ENABLED` | no | Enables unfinished balance-reservation recovery. Defaults to `true`. |
 | `AI_GATEWAY_RESERVATION_STALE_SECONDS` | no | Age before a reservation is recoverable. Defaults to `1800` and must exceed the stream timeout. |
 | `AI_GATEWAY_RESERVATION_POLL_SECONDS` | no | Recovery scan interval. Defaults to `300`. |
@@ -288,6 +289,17 @@ that never reached invocation creation, settles attached terminal invocations,
 and cancels abandoned `started` or `streaming` invocations while releasing their
 provider channel. Keep `AI_GATEWAY_RESERVATION_STALE_SECONDS` above every allowed
 stream lifetime; startup rejects an unsafe lower value.
+
+Provider `retry_count` applies to synchronous calls, stream establishment, and
+provider/channel connectivity tests. All attempts share the original operation
+timeout. Automatic retry is deliberately limited to explicit HTTP 429, 502, 503,
+and 504 responses. Authentication, validation, quota, ordinary 4xx, HTTP 500,
+context cancellation, and ambiguous network failures are not retried because
+the upstream may already have accepted and billed the request. Increase retry
+limits only after checking provider billing and idempotency behavior.
+Observability records `ai_provider_retry` for each scheduled retry and
+`ai_provider_retry_exhausted` when a configured retry budget ends without
+success; metadata contains only HTTP status and attempt counts.
 
 ## Finance Export Retry
 

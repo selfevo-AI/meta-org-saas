@@ -93,6 +93,8 @@ type Service struct {
 	securityKernel securitykernel.Client
 	invokeTimeout  time.Duration
 	streamTimeout  time.Duration
+	maxRetries     int
+	retryBaseDelay time.Duration
 }
 
 type ServiceOption func(*Service)
@@ -130,18 +132,31 @@ func WithInvocationTimeouts(invokeTimeout, streamTimeout time.Duration) ServiceO
 	}
 }
 
+func WithProviderRetryPolicy(maxRetries int, baseDelay time.Duration) ServiceOption {
+	return func(s *Service) {
+		if maxRetries >= 0 {
+			s.maxRetries = maxRetries
+		}
+		if baseDelay > 0 {
+			s.retryBaseDelay = baseDelay
+		}
+	}
+}
+
 func NewService(repo InvocationRepository, adapters AdapterRegistry, opts ...ServiceOption) *Service {
 	catalog, _ := repo.(CatalogRepository)
 	if adapters == nil {
 		adapters = AdapterRegistry{}
 	}
 	s := &Service{
-		repo:          repo,
-		catalog:       catalog,
-		adapters:      adapters,
-		client:        &http.Client{},
-		invokeTimeout: 60 * time.Second,
-		streamTimeout: 10 * time.Minute,
+		repo:           repo,
+		catalog:        catalog,
+		adapters:       adapters,
+		client:         &http.Client{},
+		invokeTimeout:  60 * time.Second,
+		streamTimeout:  10 * time.Minute,
+		maxRetries:     3,
+		retryBaseDelay: 100 * time.Millisecond,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -166,6 +181,7 @@ type ResolvedModel struct {
 	Currency            string
 	MaxOutputTokens     int
 	TimeoutMS           int
+	RetryCount          int
 	ProviderRequestHint string
 	RateMultiplier      float64
 }
@@ -480,6 +496,7 @@ type ProviderSecret struct {
 	APIKey       string
 	Status       string
 	TimeoutMS    int
+	RetryCount   int
 }
 
 type RotateProviderKeyInput struct {
@@ -597,6 +614,7 @@ type ChannelSecret struct {
 	APIKey       string
 	Status       string
 	TimeoutMS    int
+	RetryCount   int
 }
 
 type RotateChannelKeyInput struct {
@@ -797,7 +815,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		Temperature: input.Temperature,
 		MaxTokens:   maxTokens(input.MaxTokens, target.MaxOutputTokens),
 		Tools:       input.Tools,
-	}, target.TimeoutMS)
+	}, target.TimeoutMS, target.RetryCount)
 	if err != nil {
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
 		if reservation != nil {
@@ -979,13 +997,13 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 		}
 	}
 	streamCtx, streamCancel := context.WithTimeout(ctx, effectiveTimeout(s.streamTimeout, target.TimeoutMS))
-	events, err := adapter.Stream(streamCtx, ProviderRequest{
+	events, err := s.streamAdapter(streamCtx, adapter, ProviderRequest{
 		Model:       target.Model,
 		Messages:    input.Messages,
 		Temperature: input.Temperature,
 		MaxTokens:   maxTokens(input.MaxTokens, target.MaxOutputTokens),
 		Tools:       input.Tools,
-	})
+	}, target.RetryCount)
 	if err != nil {
 		streamCancel()
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
@@ -1027,6 +1045,9 @@ func (s *Service) ListTenantProviders(ctx context.Context, limit int) ([]TenantM
 }
 
 func (s *Service) UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error) {
+	if input.RetryCount != nil && (*input.RetryCount < 0 || *input.RetryCount > 100) {
+		return nil, fmt.Errorf("%w: retry_count must be between 0 and 100", ErrValidation)
+	}
 	return s.catalogRepo().UpdateProvider(ctx, id, input)
 }
 
@@ -1049,6 +1070,7 @@ func (s *Service) TestProvider(ctx context.Context, id uuid.UUID, input TestProv
 		APIKey:       provider.APIKey,
 		Model:        input.Model,
 		TimeoutMS:    provider.TimeoutMS,
+		RetryCount:   provider.RetryCount,
 	}
 	if target.Model == "" {
 		target.Model = defaultTestModel(provider.ProviderType)
@@ -1061,7 +1083,7 @@ func (s *Service) TestProvider(ctx context.Context, id uuid.UUID, input TestProv
 		Model:     target.Model,
 		Messages:  []Message{{Role: "user", Content: "ping"}},
 		MaxTokens: 8,
-	}, target.TimeoutMS)
+	}, target.TimeoutMS, target.RetryCount)
 	if err != nil {
 		_ = s.catalogRepo().UpdateProviderTestResult(ctx, id, "failed", err.Error())
 		return err
@@ -1155,6 +1177,7 @@ func (s *Service) TestChannel(ctx context.Context, id uuid.UUID, input TestChann
 		APIKey:       channel.APIKey,
 		Model:        input.Model,
 		TimeoutMS:    channel.TimeoutMS,
+		RetryCount:   channel.RetryCount,
 	}
 	if target.Model == "" {
 		target.Model = defaultTestModel(channel.ProviderType)
@@ -1163,7 +1186,7 @@ func (s *Service) TestChannel(ctx context.Context, id uuid.UUID, input TestChann
 	if err != nil {
 		return err
 	}
-	_, err = s.invokeAdapter(ctx, adapter, ProviderRequest{Model: target.Model, Messages: []Message{{Role: "user", Content: "ping"}}, MaxTokens: 8}, target.TimeoutMS)
+	_, err = s.invokeAdapter(ctx, adapter, ProviderRequest{Model: target.Model, Messages: []Message{{Role: "user", Content: "ping"}}, MaxTokens: 8}, target.TimeoutMS, target.RetryCount)
 	if err != nil {
 		_ = s.catalogRepo().UpdateChannelTestResult(ctx, id, "failed", err.Error())
 		return err
@@ -1297,10 +1320,74 @@ func (s *Service) AdapterCatalog() []AdapterDescriptor {
 	}
 }
 
-func (s *Service) invokeAdapter(ctx context.Context, adapter ProviderAdapter, request ProviderRequest, providerTimeoutMS int) (*ProviderResponse, error) {
+func (s *Service) invokeAdapter(ctx context.Context, adapter ProviderAdapter, request ProviderRequest, providerTimeoutMS int, providerRetryCount int) (*ProviderResponse, error) {
 	providerCtx, cancel := context.WithTimeout(ctx, effectiveTimeout(s.invokeTimeout, providerTimeoutMS))
 	defer cancel()
-	return adapter.Invoke(providerCtx, request)
+	var response *ProviderResponse
+	err := s.retryProviderCall(providerCtx, providerRetryCount, func() error {
+		var err error
+		response, err = adapter.Invoke(providerCtx, request)
+		return err
+	})
+	return response, err
+}
+
+func (s *Service) streamAdapter(ctx context.Context, adapter ProviderAdapter, request ProviderRequest, providerRetryCount int) (<-chan StreamEvent, error) {
+	var events <-chan StreamEvent
+	err := s.retryProviderCall(ctx, providerRetryCount, func() error {
+		var err error
+		events, err = adapter.Stream(ctx, request)
+		return err
+	})
+	return events, err
+}
+
+func (s *Service) retryProviderCall(ctx context.Context, providerRetryCount int, call func() error) error {
+	retries := effectiveRetryCount(providerRetryCount, s.maxRetries)
+	for attempt := 0; ; attempt++ {
+		err := call()
+		if err == nil {
+			return err
+		}
+		statusCode, retryable := retryableProviderStatus(err)
+		if !retryable || attempt >= retries {
+			if retryable && retries > 0 {
+				s.recordMetric(ctx, observability.MetricReliability, "ai_provider_retry_exhausted", nil, "ai_provider_call", 1, map[string]any{
+					"status_code": statusCode, "attempts": attempt + 1,
+				})
+			}
+			return err
+		}
+		s.recordMetric(ctx, observability.MetricReliability, "ai_provider_retry", nil, "ai_provider_call", 1, map[string]any{
+			"status_code": statusCode, "retry_attempt": attempt + 1,
+		})
+		delay := s.retryBaseDelay * time.Duration(1<<min(attempt, 4))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+}
+
+func effectiveRetryCount(providerRetryCount int, deploymentLimit int) int {
+	if providerRetryCount <= 0 || deploymentLimit <= 0 {
+		return 0
+	}
+	return min(providerRetryCount, deploymentLimit)
+}
+
+func retryableProviderStatus(err error) (int, bool) {
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) {
+		return 0, false
+	}
+	switch providerErr.StatusCode {
+	case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return providerErr.StatusCode, true
+	default:
+		return providerErr.StatusCode, false
+	}
 }
 
 func effectiveTimeout(deploymentLimit time.Duration, providerTimeoutMS int) time.Duration {
@@ -1654,6 +1741,9 @@ func generateAccessToken() (string, error) {
 func validateProviderInput(input CreateProviderInput) error {
 	if input.Name == "" || input.ProviderType == "" || input.APIKey == "" {
 		return fmt.Errorf("%w: name, provider_type, and api_key are required", ErrValidation)
+	}
+	if input.RetryCount < 0 || input.RetryCount > 100 {
+		return fmt.Errorf("%w: retry_count must be between 0 and 100", ErrValidation)
 	}
 	switch input.ProviderType {
 	case ProviderOpenAI, ProviderAnthropic, ProviderGemini:

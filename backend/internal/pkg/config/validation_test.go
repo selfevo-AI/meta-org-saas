@@ -66,6 +66,7 @@ func TestValidateRejectsInvalidRuntimeBounds(t *testing.T) {
 	cfg.MonitoringAgentDailyTime = "25:00"
 	cfg.AIGatewayStreamTimeoutSeconds = 0
 	cfg.AIGatewayReservationStaleSeconds = 0
+	cfg.AIGatewayMaxRetries = 11
 
 	err := cfg.Validate()
 	if err == nil {
@@ -74,7 +75,7 @@ func TestValidateRejectsInvalidRuntimeBounds(t *testing.T) {
 	for _, expected := range []string{
 		"TENANT_DATABASE_POOL_MIN_CONNECTIONS", "TENANT_PROVISIONING_RETRY_MAX_SECONDS",
 		"AUTH_RATE_LIMIT_FAILURE_THRESHOLD", "MONITORING_AGENT_DAILY_TIME",
-		"AI_GATEWAY_STREAM_TIMEOUT_SECONDS", "AI_GATEWAY_RESERVATION_STALE_SECONDS",
+		"AI_GATEWAY_STREAM_TIMEOUT_SECONDS", "AI_GATEWAY_RESERVATION_STALE_SECONDS", "AI_GATEWAY_MAX_RETRIES",
 	} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Fatalf("Validate() error = %v, missing %q", err, expected)
