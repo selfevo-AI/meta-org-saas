@@ -39,12 +39,25 @@ type InvocationRepository interface {
 	CompleteInvocation(ctx context.Context, id uuid.UUID, input CompleteInvocationInput) error
 	FailInvocation(ctx context.Context, id uuid.UUID, input FailInvocationInput) error
 	CreateUsageLedger(ctx context.Context, input CreateUsageLedgerInput) error
-	ReleaseChannel(ctx context.Context, id *uuid.UUID, amount float64) error
+	ReleaseChannel(ctx context.Context, id *uuid.UUID, input ReleaseChannelInput) error
 	AuthenticateAccessToken(ctx context.Context, token string) (AccessTokenContext, error)
 	ReserveAccessTokenBalance(ctx context.Context, input ReserveBalanceInput) (BalanceReservation, error)
 	AttachBalanceReservation(ctx context.Context, reservationID uuid.UUID, invocationID uuid.UUID) error
 	SettleAccessTokenBalance(ctx context.Context, input SettleBalanceInput) error
 	RefundAccessTokenBalance(ctx context.Context, reservationID uuid.UUID, reason string) error
+}
+
+const (
+	ChannelOutcomeNeutral = "neutral"
+	ChannelOutcomeSuccess = "success"
+	ChannelOutcomeFailure = "failure"
+)
+
+type ReleaseChannelInput struct {
+	Amount     float64
+	Outcome    string
+	Error      string
+	ResponseMS int
 }
 
 type CatalogRepository interface {
@@ -738,10 +751,10 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		return nil, err
 	}
 	releaseChannel := target.ChannelID != nil
-	releaseAmount := 0.0
+	releaseInput := ReleaseChannelInput{Outcome: ChannelOutcomeNeutral}
 	defer func() {
 		if releaseChannel {
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, releaseAmount)
+			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, releaseInput)
 		}
 	}()
 	var reservation *BalanceReservation
@@ -817,7 +830,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		Tools:       input.Tools,
 	}, target.TimeoutMS, target.RetryCount)
 	if err != nil {
-		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
+		s.recordFailedInvocation(ctx, invocation.ID, target, started, err, channelOutcomeForError(ctx, err))
 		if reservation != nil {
 			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
 		}
@@ -829,7 +842,11 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 
 	breakdown := CalculateCostBreakdown(resp.Usage, target.Price, target.RateMultiplier, normalizedServiceTier(input.ServiceTier))
 	cost := breakdown.ActualCost
-	releaseAmount = cost
+	releaseInput = ReleaseChannelInput{
+		Amount:     cost,
+		Outcome:    ChannelOutcomeSuccess,
+		ResponseMS: int(time.Since(started).Milliseconds()),
+	}
 	currency := currencyOrDefault(target.Currency)
 	if err := s.repo.CreateUsageLedger(ctx, CreateUsageLedgerInput{
 		InvocationID:        invocation.ID,
@@ -867,7 +884,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 			return nil, err
 		}
 	}
-	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, releaseAmount)
+	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, releaseInput)
 	releaseChannel = false
 	s.recordCostLedger(ctx, invocation.ID, target, input.Attribution, resp.Usage, breakdown, currency, ModeSync, StatusCompleted, "")
 	completedAt := time.Now()
@@ -929,7 +946,7 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 	releaseChannel := target.ChannelID != nil
 	defer func() {
 		if releaseChannel {
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, 0)
+			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{Outcome: ChannelOutcomeNeutral})
 		}
 	}()
 	var reservation *BalanceReservation
@@ -1006,7 +1023,7 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 	}, target.RetryCount)
 	if err != nil {
 		streamCancel()
-		s.recordFailedInvocation(ctx, invocation.ID, target, started, err)
+		s.recordFailedInvocation(ctx, invocation.ID, target, started, err, channelOutcomeForError(ctx, err))
 		releaseChannel = false
 		if reservation != nil {
 			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
@@ -1390,6 +1407,33 @@ func retryableProviderStatus(err error) (int, bool) {
 	}
 }
 
+func channelOutcomeForError(ctx context.Context, err error) string {
+	if err == nil {
+		return ChannelOutcomeSuccess
+	}
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return ChannelOutcomeNeutral
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ChannelOutcomeFailure
+	}
+	var providerErr *ProviderError
+	if errors.As(err, &providerErr) {
+		switch {
+		case providerErr.StatusCode == http.StatusUnauthorized,
+			providerErr.StatusCode == http.StatusForbidden,
+			providerErr.StatusCode == http.StatusNotFound,
+			providerErr.StatusCode == http.StatusRequestTimeout,
+			providerErr.StatusCode == http.StatusTooManyRequests,
+			providerErr.StatusCode >= http.StatusInternalServerError:
+			return ChannelOutcomeFailure
+		default:
+			return ChannelOutcomeNeutral
+		}
+	}
+	return ChannelOutcomeFailure
+}
+
 func effectiveTimeout(deploymentLimit time.Duration, providerTimeoutMS int) time.Duration {
 	providerLimit := time.Duration(providerTimeoutMS) * time.Millisecond
 	if providerLimit <= 0 {
@@ -1468,12 +1512,16 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 		}
 		if failed != "" {
 			_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: "provider_error", Message: failed, DurationMS: durationMS})
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, cost)
+			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
+				Amount: cost, Outcome: ChannelOutcomeFailure, Error: failed, ResponseMS: durationMS,
+			})
 			s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusFailed, failed, durationMS)
 			s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
 			return
 		}
-		_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, cost)
+		_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
+			Amount: cost, Outcome: ChannelOutcomeSuccess, ResponseMS: durationMS,
+		})
 		s.recordCostLedger(context.Background(), invocationID, target, input.Attribution, usage, breakdown, currency, ModeStream, StatusCompleted, "")
 		_ = s.repo.CompleteInvocation(context.Background(), invocationID, CompleteInvocationInput{
 			Usage:         usage,
@@ -1523,7 +1571,13 @@ func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, tar
 		cause = err
 	}
 	_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: errorType, Message: cause.Error(), DurationMS: durationMS, Cancelled: true})
-	_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, cost)
+	outcome := ChannelOutcomeNeutral
+	if errors.Is(cause, context.DeadlineExceeded) {
+		outcome = ChannelOutcomeFailure
+	}
+	_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
+		Amount: cost, Outcome: outcome, Error: cause.Error(), ResponseMS: durationMS,
+	})
 	if cost > 0 {
 		s.recordCostLedger(context.Background(), invocationID, target, input.Attribution, usage, breakdown, currency, ModeStream, StatusCancelled, cause.Error())
 	}
@@ -1545,7 +1599,7 @@ func (s *Service) settleStreamBalance(reservation *BalanceReservation, accessTok
 	})
 }
 
-func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, target ResolvedModel, started time.Time, cause error) {
+func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, target ResolvedModel, started time.Time, cause error, outcome string) {
 	_ = s.repo.CreateUsageLedger(ctx, CreateUsageLedgerInput{
 		InvocationID:        id,
 		ChannelID:           target.ChannelID,
@@ -1555,7 +1609,9 @@ func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, targ
 		Currency:            currencyOrDefault(target.Currency),
 		Reason:              cause.Error(),
 	})
-	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, 0)
+	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, ReleaseChannelInput{
+		Outcome: outcome, Error: cause.Error(), ResponseMS: int(time.Since(started).Milliseconds()),
+	})
 	_ = s.repo.FailInvocation(ctx, id, FailInvocationInput{ErrorType: "provider_error", Message: cause.Error(), DurationMS: int(time.Since(started).Milliseconds())})
 }
 

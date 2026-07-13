@@ -298,7 +298,10 @@ func main() {
 	})
 	monitoringScheduler.Start(appCtx)
 
-	aiRepo := aigateway.NewRepository(db, modelSecretBox)
+	aiRepo := aigateway.NewRepository(db, modelSecretBox, aigateway.WithChannelCircuitPolicy(
+		cfg.AIGatewayChannelFailureThreshold,
+		time.Duration(cfg.AIGatewayChannelCooldownSeconds)*time.Second,
+	))
 	reservationRecoveryWorker := aigateway.NewReservationRecoveryWorker(aiRepo, aigateway.ReservationRecoveryWorkerConfig{
 		Enabled:       cfg.AIGatewayRecoveryEnabled,
 		StaleAfter:    time.Duration(cfg.AIGatewayReservationStaleSeconds) * time.Second,

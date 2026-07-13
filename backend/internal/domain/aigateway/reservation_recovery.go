@@ -302,7 +302,7 @@ func (r *PostgresRepository) RecoverStaleBalanceReservation(ctx context.Context,
 		`, *reservation.InvocationID, StatusCancelled).Scan(&releasedChannel)
 		if err == nil {
 			if id := uuidPointer(releasedChannel); id != nil {
-				if err := r.ReleaseChannel(ctx, id, cost); err != nil {
+				if err := r.ReleaseChannel(ctx, id, ReleaseChannelInput{Amount: cost, Outcome: ChannelOutcomeNeutral}); err != nil {
 					return "", err
 				}
 			}

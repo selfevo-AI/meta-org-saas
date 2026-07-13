@@ -2605,6 +2605,12 @@ export interface ProviderChannel {
   model_mapping: Record<string, string>
   health_status: string
   last_error?: string
+  last_response_ms: number
+  success_count: number
+  failure_count: number
+  consecutive_failure_count: number
+  circuit_open_until?: string
+  auto_disabled_at?: string
   last_tested_at?: string
   last_used_at?: string
   metadata: Record<string, unknown>

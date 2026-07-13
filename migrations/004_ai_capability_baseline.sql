@@ -517,7 +517,13 @@ ALTER TABLE model_provider_channels
     ADD COLUMN IF NOT EXISTS last_response_ms INT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS success_count BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS failure_count BIGINT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS consecutive_failure_count INT NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS circuit_open_until TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS auto_disabled_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_model_provider_channels_circuit_routing
+    ON model_provider_channels(provider_id, status, circuit_open_until, priority)
+    WHERE status = 'active';
 
 ALTER TABLE ai_invocations
     ADD COLUMN IF NOT EXISTS access_token_id UUID REFERENCES ai_access_tokens(id) ON DELETE SET NULL,

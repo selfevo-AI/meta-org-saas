@@ -2,8 +2,10 @@ package aigateway
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,158 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
 )
+
+func TestProviderChannelCircuitBreakerAndAtomicReservation(t *testing.T) {
+	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {
+		t.Skip("set RUN_AI_GATEWAY_DB_TEST=1 to run AI Gateway database verification")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := os.Getenv("AI_GATEWAY_TEST_DATABASE_URL")
+	if url == "" {
+		url = "postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable"
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	box, err := secretbox.New(strings.Repeat("c", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := box.Encrypt("sk-circuit-integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerID, modelID, channelID := uuid.New(), uuid.New(), uuid.New()
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM model_provider_channels WHERE id = $1`, channelID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM models WHERE id = $1`, modelID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM model_providers WHERE id = $1`, providerID)
+	}()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO model_providers(id, name, provider_type, encrypted_api_key, status)
+		VALUES ($1, $2, 'openai', $3, 'active')
+	`, providerID, "circuit-integration-"+providerID.String(), encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO models(id, provider_id, model_key, status)
+		VALUES ($1, $2, $3, 'active')
+	`, modelID, providerID, "circuit-integration-"+modelID.String()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO model_provider_channels(id, provider_id, name, encrypted_api_key, status, concurrency_limit, supported_model_patterns)
+		VALUES ($1, $2, 'circuit', $3, 'active', 1, '["*"]')
+	`, channelID, providerID, encrypted); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewRepository(pool, box, WithChannelCircuitPolicy(2, time.Minute))
+	invoke := InvokeInput{ProviderID: &providerID, ModelID: &modelID}
+	for failure := 0; failure < 2; failure++ {
+		target, err := repo.ResolveInvocationTarget(ctx, invoke)
+		if err != nil {
+			t.Fatalf("ResolveInvocationTarget() failure %d error = %v", failure+1, err)
+		}
+		if target.ChannelID == nil || *target.ChannelID != channelID {
+			t.Fatalf("resolved channel = %v, want %s", target.ChannelID, channelID)
+		}
+		if err := repo.ReleaseChannel(ctx, target.ChannelID, ReleaseChannelInput{Outcome: ChannelOutcomeFailure, Error: "upstream unavailable", ResponseMS: 50}); err != nil {
+			t.Fatalf("ReleaseChannel() failure %d error = %v", failure+1, err)
+		}
+	}
+
+	var consecutive int
+	var health string
+	var circuitOpen bool
+	if err := pool.QueryRow(ctx, `
+		SELECT consecutive_failure_count, health_status, circuit_open_until > NOW()
+		FROM model_provider_channels WHERE id = $1
+	`, channelID).Scan(&consecutive, &health, &circuitOpen); err != nil {
+		t.Fatal(err)
+	}
+	if consecutive != 2 || health != "circuit_open" || !circuitOpen {
+		t.Fatalf("open circuit state = consecutive:%d health:%q open:%t", consecutive, health, circuitOpen)
+	}
+	if _, err := repo.ResolveInvocationTarget(ctx, invoke); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("ResolveInvocationTarget() during open circuit error = %v, want ErrUnavailable", err)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE model_provider_channels SET circuit_open_until = NOW() - INTERVAL '1 second' WHERE id = $1`, channelID); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := repo.ResolveInvocationTarget(ctx, invoke)
+	if err != nil {
+		t.Fatalf("ResolveInvocationTarget() recovery probe error = %v", err)
+	}
+	if _, err := repo.ResolveInvocationTarget(ctx, invoke); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("second recovery probe error = %v, want ErrUnavailable", err)
+	}
+	if err := repo.ReleaseChannel(ctx, probe.ChannelID, ReleaseChannelInput{Outcome: ChannelOutcomeSuccess, ResponseMS: 25}); err != nil {
+		t.Fatalf("ReleaseChannel() successful probe error = %v", err)
+	}
+	var successCount, failureCount int64
+	var circuitUntil *time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT success_count, failure_count, consecutive_failure_count, health_status, circuit_open_until
+		FROM model_provider_channels WHERE id = $1
+	`, channelID).Scan(&successCount, &failureCount, &consecutive, &health, &circuitUntil); err != nil {
+		t.Fatal(err)
+	}
+	if successCount != 1 || failureCount != 2 || consecutive != 0 || health != "healthy" || circuitUntil != nil {
+		t.Fatalf("closed circuit state = success:%d failure:%d consecutive:%d health:%q until:%v", successCount, failureCount, consecutive, health, circuitUntil)
+	}
+	channels, err := repo.ListChannels(ctx, &providerID, 10)
+	if err != nil {
+		t.Fatalf("ListChannels() error = %v", err)
+	}
+	if len(channels) != 1 || channels[0].SuccessCount != 1 || channels[0].FailureCount != 2 || channels[0].ConsecutiveFailureCount != 0 || channels[0].CircuitOpenUntil != nil {
+		t.Fatalf("listed channel circuit state = %#v", channels)
+	}
+
+	const contenders = 8
+	start := make(chan struct{})
+	hold := make(chan struct{})
+	results := make(chan error, contenders)
+	var wg sync.WaitGroup
+	for i := 0; i < contenders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			target, err := repo.ResolveInvocationTarget(context.Background(), invoke)
+			results <- err
+			if err == nil {
+				<-hold
+				_ = repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{Outcome: ChannelOutcomeNeutral})
+			}
+		}()
+	}
+	close(start)
+	successes := 0
+	for i := 0; i < contenders; i++ {
+		if err := <-results; err == nil {
+			successes++
+		} else if !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("concurrent reservation error = %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent successful reservations = %d, want 1", successes)
+	}
+	var inflight int
+	if err := pool.QueryRow(ctx, `SELECT inflight_requests FROM model_provider_channels WHERE id = $1`, channelID).Scan(&inflight); err != nil {
+		t.Fatal(err)
+	}
+	if inflight != 1 {
+		t.Fatalf("inflight_requests = %d, want 1", inflight)
+	}
+	close(hold)
+	wg.Wait()
+}
 
 func TestResolveInvocationTargetLoadsProviderRetryPolicy(t *testing.T) {
 	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {

@@ -57,6 +57,8 @@ type Config struct {
 	AIGatewayInvokeTimeoutSeconds     int
 	AIGatewayStreamTimeoutSeconds     int
 	AIGatewayMaxRetries               int
+	AIGatewayChannelFailureThreshold  int
+	AIGatewayChannelCooldownSeconds   int
 	AIGatewayRecoveryEnabled          bool
 	AIGatewayReservationStaleSeconds  int
 	AIGatewayReservationPollSeconds   int
@@ -142,6 +144,8 @@ func Load() *Config {
 		AIGatewayInvokeTimeoutSeconds:     getEnvInt("AI_GATEWAY_INVOKE_TIMEOUT_SECONDS", 60),
 		AIGatewayStreamTimeoutSeconds:     getEnvInt("AI_GATEWAY_STREAM_TIMEOUT_SECONDS", 600),
 		AIGatewayMaxRetries:               getEnvInt("AI_GATEWAY_MAX_RETRIES", 3),
+		AIGatewayChannelFailureThreshold:  getEnvInt("AI_GATEWAY_CHANNEL_FAILURE_THRESHOLD", 3),
+		AIGatewayChannelCooldownSeconds:   getEnvInt("AI_GATEWAY_CHANNEL_COOLDOWN_SECONDS", 60),
 		AIGatewayRecoveryEnabled:          getEnvBool("AI_GATEWAY_RESERVATION_RECOVERY_ENABLED", true),
 		AIGatewayReservationStaleSeconds:  getEnvInt("AI_GATEWAY_RESERVATION_STALE_SECONDS", 1800),
 		AIGatewayReservationPollSeconds:   getEnvInt("AI_GATEWAY_RESERVATION_POLL_SECONDS", 300),

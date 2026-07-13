@@ -132,6 +132,17 @@ func TestFreshBaselineMigrationsAgainstPostgres(t *testing.T) {
 	if retentionColumns != 6 {
 		t.Fatalf("audit retention marker columns = %d, want 6", retentionColumns)
 	}
+	var channelCircuitColumns int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'model_provider_channels'
+		  AND column_name IN ('consecutive_failure_count', 'circuit_open_until')
+	`).Scan(&channelCircuitColumns); err != nil {
+		t.Fatalf("check provider channel circuit columns: %v", err)
+	}
+	if channelCircuitColumns != 2 {
+		t.Fatalf("provider channel circuit columns = %d, want 2", channelCircuitColumns)
+	}
 	var proposalColumns int
 	if err := targetPool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM information_schema.columns

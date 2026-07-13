@@ -451,6 +451,15 @@ and stale-reservation scan index to platform databases that applied `004` or
 to its invocation, settles terminal or abandoned invocation usage, refunds
 unattached reservations, and releases channels held by abandoned active calls.
 
+Provider-channel runtime health also belongs to `004`. Each invocation reserves
+capacity with one conditional update that rechecks active status, quota,
+concurrency, and circuit availability. Consecutive provider failures open a
+cooldown circuit; only one expired-circuit probe may reserve capacity, and a
+successful probe closes the circuit. Client disconnects and internal accounting
+failures release capacity without penalizing provider health. Migration
+`027_ai_provider_channel_circuit_breaker.sql` repairs platform databases that
+applied `004` before the circuit state and routing index were added.
+
 `009_platform_tenant_data_permissions.sql` introduces explicit platform-to-tenant
 read and manage permissions. Platform auditors receive read-only tenant access;
 owner, admin, and operator roles receive read and manage access. Tenant middleware

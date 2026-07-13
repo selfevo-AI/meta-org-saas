@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,12 +23,33 @@ type secretBox interface {
 }
 
 type PostgresRepository struct {
-	db  *pgxpool.Pool
-	box secretBox
+	db                      *pgxpool.Pool
+	box                     secretBox
+	channelFailureThreshold int
+	channelCircuitCooldown  time.Duration
 }
 
-func NewRepository(db *pgxpool.Pool, box secretBox) *PostgresRepository {
-	return &PostgresRepository{db: db, box: box}
+type RepositoryOption func(*PostgresRepository)
+
+func WithChannelCircuitPolicy(failureThreshold int, cooldown time.Duration) RepositoryOption {
+	return func(r *PostgresRepository) {
+		if failureThreshold > 0 {
+			r.channelFailureThreshold = failureThreshold
+		}
+		if cooldown > 0 {
+			r.channelCircuitCooldown = cooldown
+		}
+	}
+}
+
+func NewRepository(db *pgxpool.Pool, box secretBox, opts ...RepositoryOption) *PostgresRepository {
+	r := &PostgresRepository{
+		db: db, box: box, channelFailureThreshold: 3, channelCircuitCooldown: time.Minute,
+	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *PostgresRepository) CreateProvider(ctx context.Context, input CreateProviderInput) (*ModelProvider, error) {
@@ -734,7 +756,8 @@ func (r *PostgresRepository) CreateChannel(ctx context.Context, input CreateChan
 		RETURNING id, provider_id, name, base_url, masked_api_key, owner_type, user_id, agent_id,
 			status, priority, concurrency_limit, inflight_requests, load_factor, rate_multiplier::float8,
 			quota_amount::float8, quota_used::float8, quota_currency, supported_model_patterns, model_mapping,
-			health_status, last_error, last_tested_at, last_used_at, metadata, created_at, updated_at
+			health_status, last_error, last_response_ms, success_count, failure_count, consecutive_failure_count,
+			circuit_open_until, auto_disabled_at, last_tested_at, last_used_at, metadata, created_at, updated_at
 	`, input.ProviderID, input.Name, input.BaseURL, encrypted, maskSecret(input.APIKey), input.OwnerType, input.UserID, input.AgentID,
 		input.Status, input.Priority, input.ConcurrencyLimit, input.LoadFactor, nullableFloat64(input.RateMultiplier), input.QuotaAmount, input.QuotaCurrency,
 		patternsJSON, mappingJSON, metaJSON), channel)
@@ -749,7 +772,8 @@ func (r *PostgresRepository) ListChannels(ctx context.Context, providerID *uuid.
 		SELECT id, provider_id, name, base_url, masked_api_key, owner_type, user_id, agent_id,
 			status, priority, concurrency_limit, inflight_requests, load_factor, rate_multiplier::float8,
 			quota_amount::float8, quota_used::float8, quota_currency, supported_model_patterns, model_mapping,
-			health_status, last_error, last_tested_at, last_used_at, metadata, created_at, updated_at
+			health_status, last_error, last_response_ms, success_count, failure_count, consecutive_failure_count,
+			circuit_open_until, auto_disabled_at, last_tested_at, last_used_at, metadata, created_at, updated_at
 		FROM model_provider_channels
 		WHERE ($1::uuid IS NULL OR provider_id = $1)
 		ORDER BY priority ASC, created_at DESC
@@ -790,7 +814,8 @@ func (r *PostgresRepository) UpdateChannel(ctx context.Context, id uuid.UUID, in
 		RETURNING id, provider_id, name, base_url, masked_api_key, owner_type, user_id, agent_id,
 			status, priority, concurrency_limit, inflight_requests, load_factor, rate_multiplier::float8,
 			quota_amount::float8, quota_used::float8, quota_currency, supported_model_patterns, model_mapping,
-			health_status, last_error, last_tested_at, last_used_at, metadata, created_at, updated_at
+			health_status, last_error, last_response_ms, success_count, failure_count, consecutive_failure_count,
+			circuit_open_until, auto_disabled_at, last_tested_at, last_used_at, metadata, created_at, updated_at
 	`, id, input.Name, input.BaseURL, input.OwnerType, input.UserID, input.AgentID, input.Status, input.Priority, input.ConcurrencyLimit,
 		input.LoadFactor, input.RateMultiplier, input.QuotaAmount, input.QuotaCurrency, nullableJSON(patternsJSON, input.SupportedModelPatterns != nil),
 		nullableJSON(mappingJSON, input.ModelMapping != nil), nullableJSON(metaJSON, input.Metadata != nil)), channel)
@@ -813,7 +838,8 @@ func (r *PostgresRepository) RotateChannelKey(ctx context.Context, id uuid.UUID,
 		RETURNING id, provider_id, name, base_url, masked_api_key, owner_type, user_id, agent_id,
 			status, priority, concurrency_limit, inflight_requests, load_factor, rate_multiplier::float8,
 			quota_amount::float8, quota_used::float8, quota_currency, supported_model_patterns, model_mapping,
-			health_status, last_error, last_tested_at, last_used_at, metadata, created_at, updated_at
+			health_status, last_error, last_response_ms, success_count, failure_count, consecutive_failure_count,
+			circuit_open_until, auto_disabled_at, last_tested_at, last_used_at, metadata, created_at, updated_at
 	`, id, encrypted, maskSecret(apiKey)), channel)
 	if err != nil {
 		return nil, fmt.Errorf("rotate provider channel key: %w", err)
@@ -842,28 +868,99 @@ func (r *PostgresRepository) GetChannelSecret(ctx context.Context, id uuid.UUID)
 }
 
 func (r *PostgresRepository) UpdateChannelTestResult(ctx context.Context, id uuid.UUID, status string, message string) error {
+	failureThreshold := r.channelFailureThreshold
+	if failureThreshold <= 0 {
+		failureThreshold = 3
+	}
+	cooldownSeconds := int(r.channelCircuitCooldown / time.Second)
+	if cooldownSeconds <= 0 {
+		cooldownSeconds = 60
+	}
+	succeeded := strings.EqualFold(strings.TrimSpace(status), "ok")
 	if _, err := r.db.Exec(ctx, `
 		UPDATE model_provider_channels
-		SET health_status = $2, last_error = $3, last_tested_at = NOW(), updated_at = NOW()
+		SET health_status = CASE
+				WHEN $2 THEN 'healthy'
+				WHEN consecutive_failure_count + 1 >= $4 THEN 'circuit_open'
+				ELSE 'degraded'
+			END,
+			last_error = CASE WHEN $2 THEN '' ELSE $3 END,
+			success_count = success_count + CASE WHEN $2 THEN 1 ELSE 0 END,
+			failure_count = failure_count + CASE WHEN $2 THEN 0 ELSE 1 END,
+			consecutive_failure_count = CASE WHEN $2 THEN 0 ELSE consecutive_failure_count + 1 END,
+			circuit_open_until = CASE
+				WHEN $2 THEN NULL
+				WHEN consecutive_failure_count + 1 >= $4 THEN NOW() + make_interval(secs => $5)
+				ELSE circuit_open_until
+			END,
+			auto_disabled_at = CASE
+				WHEN $2 THEN NULL
+				WHEN consecutive_failure_count + 1 >= $4 THEN NOW()
+				ELSE auto_disabled_at
+			END,
+			last_tested_at = NOW(),
+			updated_at = NOW()
 		WHERE id = $1
-	`, id, status, message); err != nil {
+	`, id, succeeded, strings.TrimSpace(message), failureThreshold, cooldownSeconds); err != nil {
 		return fmt.Errorf("update channel test result: %w", err)
 	}
 	return nil
 }
 
-func (r *PostgresRepository) ReleaseChannel(ctx context.Context, id *uuid.UUID, amount float64) error {
+func (r *PostgresRepository) ReleaseChannel(ctx context.Context, id *uuid.UUID, input ReleaseChannelInput) error {
 	if id == nil {
 		return nil
+	}
+	outcome := input.Outcome
+	if outcome != ChannelOutcomeSuccess && outcome != ChannelOutcomeFailure {
+		outcome = ChannelOutcomeNeutral
+	}
+	failureThreshold := r.channelFailureThreshold
+	if failureThreshold <= 0 {
+		failureThreshold = 3
+	}
+	cooldownSeconds := int(r.channelCircuitCooldown / time.Second)
+	if cooldownSeconds <= 0 {
+		cooldownSeconds = 60
 	}
 	if _, err := r.db.Exec(ctx, `
 		UPDATE model_provider_channels
 		SET inflight_requests = GREATEST(inflight_requests - 1, 0),
 			quota_used = quota_used + GREATEST($2::numeric, 0),
+			success_count = success_count + CASE WHEN $3 = 'success' THEN 1 ELSE 0 END,
+			failure_count = failure_count + CASE WHEN $3 = 'failure' THEN 1 ELSE 0 END,
+			consecutive_failure_count = CASE
+				WHEN $3 = 'success' THEN 0
+				WHEN $3 = 'failure' THEN consecutive_failure_count + 1
+				ELSE consecutive_failure_count
+			END,
+			health_status = CASE
+				WHEN $3 = 'success' THEN 'healthy'
+				WHEN $3 = 'failure' AND consecutive_failure_count + 1 >= $6 THEN 'circuit_open'
+				WHEN $3 = 'failure' THEN 'degraded'
+				WHEN health_status = 'probing' THEN 'circuit_open'
+				ELSE health_status
+			END,
+			last_error = CASE
+				WHEN $3 = 'success' THEN ''
+				WHEN $3 = 'failure' THEN $4
+				ELSE last_error
+			END,
+			last_response_ms = CASE WHEN $5 > 0 THEN $5 ELSE last_response_ms END,
+			circuit_open_until = CASE
+				WHEN $3 = 'success' THEN NULL
+				WHEN $3 = 'failure' AND consecutive_failure_count + 1 >= $6 THEN NOW() + make_interval(secs => $7)
+				ELSE circuit_open_until
+			END,
+			auto_disabled_at = CASE
+				WHEN $3 = 'success' THEN NULL
+				WHEN $3 = 'failure' AND consecutive_failure_count + 1 >= $6 THEN NOW()
+				ELSE auto_disabled_at
+			END,
 			last_used_at = NOW(),
 			updated_at = NOW()
 		WHERE id = $1
-	`, *id, amount); err != nil {
+	`, *id, input.Amount, outcome, strings.TrimSpace(input.Error), input.ResponseMS, failureThreshold, cooldownSeconds); err != nil {
 		return fmt.Errorf("release provider channel: %w", err)
 	}
 	return nil
@@ -1529,18 +1626,25 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 		  AND c.status = 'active'
 		  AND ($3::uuid IS NULL OR c.id = $3)
 		  AND ($4::uuid IS NULL OR a.id IS NOT NULL)
-		  AND (c.quota_amount <= 0 OR c.quota_used < c.quota_amount)
-		  AND (c.concurrency_limit <= 0 OR c.inflight_requests < c.concurrency_limit)
-		ORDER BY ability_priority ASC,
+		ORDER BY CASE WHEN (c.quota_amount <= 0 OR c.quota_used < c.quota_amount)
+				AND (c.concurrency_limit <= 0 OR c.inflight_requests < c.concurrency_limit)
+				AND (c.circuit_open_until IS NULL OR c.circuit_open_until <= NOW()) THEN 0 ELSE 1 END,
+			CASE WHEN c.circuit_open_until IS NULL THEN 0 ELSE 1 END,
+			ability_priority ASC,
 			(c.inflight_requests::float8 / GREATEST(c.load_factor, 1)) ASC,
 			c.last_used_at ASC NULLS FIRST,
 			c.created_at ASC
-		LIMIT 50
+		LIMIT 500
 	`, target.ProviderID, target.BaseURL, input.PreferredChannelID, input.ModelGroupID)
 	if err != nil {
 		return fmt.Errorf("query provider channels: %w", err)
 	}
 	defer rows.Close()
+	hadCompatibleChannel := false
+	cooldownSeconds := int(r.channelCircuitCooldown / time.Second)
+	if cooldownSeconds <= 0 {
+		cooldownSeconds = 60
+	}
 	for rows.Next() {
 		var id uuid.UUID
 		var name, baseURL, encrypted string
@@ -1567,6 +1671,7 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 		if !modelSupported(patterns, target.RequestedModel) {
 			continue
 		}
+		hadCompatibleChannel = true
 		upstreamModel, mapped := resolveMappedModel(mapping, target.RequestedModel)
 		if strings.TrimSpace(abilityUpstreamModel) != "" {
 			upstreamModel = strings.TrimSpace(abilityUpstreamModel)
@@ -1576,11 +1681,27 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 		if err != nil {
 			return fmt.Errorf("decrypt channel api key: %w", err)
 		}
-		if _, err := r.db.Exec(ctx, `
+		var reservedID uuid.UUID
+		if err := r.db.QueryRow(ctx, `
 			UPDATE model_provider_channels
-			SET inflight_requests = inflight_requests + 1, last_used_at = NOW(), updated_at = NOW()
+			SET inflight_requests = inflight_requests + 1,
+				last_used_at = NOW(),
+				health_status = CASE WHEN circuit_open_until IS NOT NULL THEN 'probing' ELSE health_status END,
+				circuit_open_until = CASE
+					WHEN circuit_open_until IS NOT NULL THEN NOW() + make_interval(secs => $2)
+					ELSE NULL
+				END,
+				updated_at = NOW()
 			WHERE id = $1
-		`, id); err != nil {
+			  AND status = 'active'
+			  AND (quota_amount <= 0 OR quota_used < quota_amount)
+			  AND (concurrency_limit <= 0 OR inflight_requests < concurrency_limit)
+			  AND (circuit_open_until IS NULL OR circuit_open_until <= NOW())
+			RETURNING id
+		`, id, cooldownSeconds).Scan(&reservedID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
 			return fmt.Errorf("reserve provider channel: %w", err)
 		}
 		target.ChannelID = &id
@@ -1599,10 +1720,16 @@ func (r *PostgresRepository) applyChannel(ctx context.Context, input InvokeInput
 		return fmt.Errorf("iterate provider channels: %w", err)
 	}
 	if input.PreferredChannelID != nil {
+		if hadCompatibleChannel {
+			return fmt.Errorf("%w: preferred channel has no available capacity", ErrUnavailable)
+		}
 		return fmt.Errorf("%w: preferred channel is not available", ErrNotFound)
 	}
 	if input.ModelGroupID != nil {
 		return fmt.Errorf("%w: no active channel ability matches model group", ErrUnavailable)
+	}
+	if hadCompatibleChannel {
+		return fmt.Errorf("%w: compatible provider channels have no available capacity", ErrUnavailable)
 	}
 	return nil
 }
@@ -1764,11 +1891,13 @@ func scanInvocationRow(row scanner, inv *Invocation) error {
 func scanChannelRow(row scanner, channel *ProviderChannel) error {
 	var patternsJSON, mappingJSON, metaJSON []byte
 	var userID, agentID pgtype.UUID
-	var lastTestedAt, lastUsedAt pgtype.Timestamptz
+	var circuitOpenUntil, autoDisabledAt, lastTestedAt, lastUsedAt pgtype.Timestamptz
 	if err := row.Scan(&channel.ID, &channel.ProviderID, &channel.Name, &channel.BaseURL, &channel.MaskedAPIKey, &channel.OwnerType,
 		&userID, &agentID, &channel.Status, &channel.Priority, &channel.ConcurrencyLimit, &channel.InflightRequests,
 		&channel.LoadFactor, &channel.RateMultiplier, &channel.QuotaAmount, &channel.QuotaUsed, &channel.QuotaCurrency,
-		&patternsJSON, &mappingJSON, &channel.HealthStatus, &channel.LastError, &lastTestedAt, &lastUsedAt,
+		&patternsJSON, &mappingJSON, &channel.HealthStatus, &channel.LastError, &channel.LastResponseMS,
+		&channel.SuccessCount, &channel.FailureCount, &channel.ConsecutiveFailureCount, &circuitOpenUntil, &autoDisabledAt,
+		&lastTestedAt, &lastUsedAt,
 		&metaJSON, &channel.CreatedAt, &channel.UpdatedAt); err != nil {
 		return err
 	}
@@ -1781,6 +1910,14 @@ func scanChannelRow(row scanner, channel *ProviderChannel) error {
 	if lastUsedAt.Valid {
 		t := lastUsedAt.Time
 		channel.LastUsedAt = &t
+	}
+	if circuitOpenUntil.Valid {
+		t := circuitOpenUntil.Time
+		channel.CircuitOpenUntil = &t
+	}
+	if autoDisabledAt.Valid {
+		t := autoDisabledAt.Time
+		channel.AutoDisabledAt = &t
 	}
 	if err := json.Unmarshal(patternsJSON, &channel.SupportedModelPatterns); err != nil {
 		return fmt.Errorf("unmarshal channel patterns: %w", err)

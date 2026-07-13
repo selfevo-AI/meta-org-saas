@@ -713,14 +713,16 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       )}
 
       {effectiveActiveTab === 'channels' && (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_420px]">
           <Panel title="developer.channelPool">
             <Table
-              headers={['developer.channel', 'developer.provider', 'developer.health', 'developer.load', 'developer.quota', 'developer.rateMultiplier']}
+              headers={['developer.channel', 'developer.provider', 'developer.reliability', 'developer.load', 'developer.quota', 'developer.rateMultiplier']}
               rows={channels.map((channel) => [
                 channel.name,
                 providerLabels[channel.provider_id] || channel.provider_id,
-                t(channel.health_status || channel.status),
+                `${t(channel.health_status || channel.status)} · ${channel.success_count}/${channel.failure_count} (${channel.consecutive_failure_count})${
+                  channel.circuit_open_until ? ` · ${new Date(channel.circuit_open_until).toLocaleString()}` : ''
+                }`,
                 `${channel.inflight_requests}/${channel.concurrency_limit || t('common.none')}`,
                 `${money(channel.quota_used, channel.quota_currency)} / ${channel.quota_amount || t('common.none')}`,
                 String(channel.rate_multiplier),

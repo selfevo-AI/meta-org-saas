@@ -15,33 +15,34 @@ import (
 )
 
 type fakeGatewayRepo struct {
-	target           ResolvedModel
-	recorded         bool
-	completed        bool
-	failed           bool
-	pricingResolved  bool
-	ledgerCount      int
-	lastLedger       CreateUsageLedgerInput
-	lastComplete     CompleteInvocationInput
-	lastFailure      FailInvocationInput
-	accessToken      AccessTokenContext
-	reserved         bool
-	settled          bool
-	refunded         bool
-	reservation      BalanceReservation
-	lastReserve      ReserveBalanceInput
-	lastSettle       SettleBalanceInput
-	lastTokenStore   CreateAccessTokenStoreInput
-	lastAdjustment   AdjustGatewayBalanceInput
-	catalogProviders []ModelProvider
-	catalogModels    []Model
-	abilities        []ModelChannelAbility
-	reserveErr       error
-	releaseCount     int
-	lastReleaseCost  float64
-	ledgerErr        error
-	attached         bool
-	attachErr        error
+	target             ResolvedModel
+	recorded           bool
+	completed          bool
+	failed             bool
+	pricingResolved    bool
+	ledgerCount        int
+	lastLedger         CreateUsageLedgerInput
+	lastComplete       CompleteInvocationInput
+	lastFailure        FailInvocationInput
+	accessToken        AccessTokenContext
+	reserved           bool
+	settled            bool
+	refunded           bool
+	reservation        BalanceReservation
+	lastReserve        ReserveBalanceInput
+	lastSettle         SettleBalanceInput
+	lastTokenStore     CreateAccessTokenStoreInput
+	lastAdjustment     AdjustGatewayBalanceInput
+	catalogProviders   []ModelProvider
+	catalogModels      []Model
+	abilities          []ModelChannelAbility
+	reserveErr         error
+	releaseCount       int
+	lastReleaseCost    float64
+	lastReleaseOutcome string
+	ledgerErr          error
+	attached           bool
+	attachErr          error
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -223,8 +224,37 @@ func TestServiceInvokeUsesProviderTimeoutBelowDeploymentLimit(t *testing.T) {
 	}
 }
 
+func TestChannelOutcomeForError(t *testing.T) {
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tests := []struct {
+		name string
+		ctx  context.Context
+		err  error
+		want string
+	}{
+		{name: "success", ctx: context.Background(), want: ChannelOutcomeSuccess},
+		{name: "client cancellation", ctx: cancelledCtx, err: context.Canceled, want: ChannelOutcomeNeutral},
+		{name: "provider timeout", ctx: context.Background(), err: context.DeadlineExceeded, want: ChannelOutcomeFailure},
+		{name: "bad request", ctx: context.Background(), err: &ProviderError{StatusCode: http.StatusBadRequest}, want: ChannelOutcomeNeutral},
+		{name: "authentication", ctx: context.Background(), err: &ProviderError{StatusCode: http.StatusUnauthorized}, want: ChannelOutcomeFailure},
+		{name: "rate limit", ctx: context.Background(), err: &ProviderError{StatusCode: http.StatusTooManyRequests}, want: ChannelOutcomeFailure},
+		{name: "server error", ctx: context.Background(), err: &ProviderError{StatusCode: http.StatusServiceUnavailable}, want: ChannelOutcomeFailure},
+		{name: "transport error", ctx: context.Background(), err: errors.New("connection refused"), want: ChannelOutcomeFailure},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := channelOutcomeForError(tt.ctx, tt.err); got != tt.want {
+				t.Fatalf("channelOutcomeForError() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestServiceStreamRecordsConfiguredTimeoutAsCancellation(t *testing.T) {
 	repo := newFakeGatewayRepo()
+	channelID := uuid.New()
+	repo.target.ChannelID = &channelID
 	svc := NewService(repo, AdapterRegistry{ProviderOpenAI: timeoutAdapter{}}, WithInvocationTimeouts(time.Second, 15*time.Millisecond))
 
 	result, err := svc.Stream(context.Background(), InvokeInput{
@@ -242,6 +272,9 @@ func TestServiceStreamRecordsConfiguredTimeoutAsCancellation(t *testing.T) {
 	}
 	if repo.lastFailure.ErrorType != "timeout" || !repo.lastFailure.Cancelled {
 		t.Fatalf("stream failure = %#v", repo.lastFailure)
+	}
+	if repo.lastReleaseOutcome != ChannelOutcomeFailure {
+		t.Fatalf("channel outcome = %q, want failure", repo.lastReleaseOutcome)
 	}
 }
 
@@ -318,6 +351,9 @@ func TestServiceStreamWithAccessTokenReservesAndSettlesBalance(t *testing.T) {
 	if repo.releaseCount != 1 || repo.lastReleaseCost != repo.lastLedger.Amount {
 		t.Fatalf("channel release count/cost = %d/%.8f", repo.releaseCount, repo.lastReleaseCost)
 	}
+	if repo.lastReleaseOutcome != ChannelOutcomeSuccess {
+		t.Fatalf("channel outcome = %q, want success", repo.lastReleaseOutcome)
+	}
 }
 
 func TestServiceStreamSettlesPartialUsageOnTimeout(t *testing.T) {
@@ -367,6 +403,9 @@ func TestServiceStreamRequiresSecurityKernelAuthorizationAndReleasesResources(t 
 	if !repo.refunded || repo.releaseCount != 1 {
 		t.Fatalf("denied stream cleanup = refunded:%t releases:%d", repo.refunded, repo.releaseCount)
 	}
+	if repo.lastReleaseOutcome != ChannelOutcomeNeutral {
+		t.Fatalf("denied stream channel outcome = %q, want neutral", repo.lastReleaseOutcome)
+	}
 	if repo.recorded {
 		t.Fatal("denied stream created an invocation")
 	}
@@ -388,6 +427,9 @@ func TestServiceInvokeReleasesChannelWhenBalanceReservationFails(t *testing.T) {
 	}
 	if repo.releaseCount != 1 {
 		t.Fatalf("release count = %d, want 1", repo.releaseCount)
+	}
+	if repo.lastReleaseOutcome != ChannelOutcomeNeutral {
+		t.Fatalf("reservation failure channel outcome = %q, want neutral", repo.lastReleaseOutcome)
 	}
 }
 
@@ -813,10 +855,11 @@ func (f *fakeGatewayRepo) CreateUsageLedger(_ context.Context, input CreateUsage
 	return f.ledgerErr
 }
 
-func (f *fakeGatewayRepo) ReleaseChannel(_ context.Context, id *uuid.UUID, amount float64) error {
+func (f *fakeGatewayRepo) ReleaseChannel(_ context.Context, id *uuid.UUID, input ReleaseChannelInput) error {
 	if id != nil {
 		f.releaseCount++
-		f.lastReleaseCost = amount
+		f.lastReleaseCost = input.Amount
+		f.lastReleaseOutcome = input.Outcome
 	}
 	return nil
 }

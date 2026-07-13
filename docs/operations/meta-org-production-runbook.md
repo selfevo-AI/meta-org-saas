@@ -36,6 +36,8 @@ Backend:
 | `AI_GATEWAY_INVOKE_TIMEOUT_SECONDS` | no | Deployment ceiling for non-streaming provider calls. Defaults to `60`; provider `timeout_ms` may impose a lower limit. |
 | `AI_GATEWAY_STREAM_TIMEOUT_SECONDS` | no | Deployment ceiling for AI Gateway and Assistant SSE duration. Defaults to `600`; Gateway provider `timeout_ms` may impose a lower limit. |
 | `AI_GATEWAY_MAX_RETRIES` | no | Deployment ceiling for provider retries. Defaults to `3`; effective retries are also limited by provider `retry_count`. |
+| `AI_GATEWAY_CHANNEL_FAILURE_THRESHOLD` | no | Consecutive provider-channel failures before opening the circuit. Defaults to `3`. |
+| `AI_GATEWAY_CHANNEL_COOLDOWN_SECONDS` | no | Cooldown before one atomic recovery probe may use an open channel. Defaults to `60`. |
 | `AI_GATEWAY_RESERVATION_RECOVERY_ENABLED` | no | Enables unfinished balance-reservation recovery. Defaults to `true`. |
 | `AI_GATEWAY_RESERVATION_STALE_SECONDS` | no | Age before a reservation is recoverable. Defaults to `1800` and must exceed the stream timeout. |
 | `AI_GATEWAY_RESERVATION_POLL_SECONDS` | no | Recovery scan interval. Defaults to `300`. |
@@ -142,11 +144,12 @@ go build ./cmd/server
 2. Create providers for OpenAI, Anthropic, and Gemini.
 3. Store only real provider keys in the provider form; keys are encrypted at rest and returned as masked values.
 4. Create provider channels for production keys, agent-owned keys, or fallback keys. Configure priority, concurrency, quota, rate multiplier, supported model patterns, and model mapping.
-5. Create or confirm model catalog entries with input, output, cache, image, priority, long-context pricing, and currency.
-6. Create routing rules when a source surface, user, agent, project, or model pattern must prefer a provider/channel.
-7. Run provider and channel connection tests.
-8. Use the AI Assistant to run a streaming call per provider or channel.
-9. Confirm invocation logs, usage analysis, channel cost breakdown, and cost ledger entries update.
+5. Verify channel health counters after test traffic. A `circuit_open` channel is excluded until its cooldown expires; the first successful probe returns it to `healthy`.
+6. Create or confirm model catalog entries with input, output, cache, image, priority, long-context pricing, and currency.
+7. Create routing rules when a source surface, user, agent, project, or model pattern must prefer a provider/channel.
+8. Run provider and channel connection tests.
+9. Use the AI Assistant to run a streaming call per provider or channel.
+10. Confirm invocation logs, usage analysis, channel cost breakdown, and cost ledger entries update.
 
 Provider key rotation:
 
