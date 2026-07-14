@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 )
 
 type ToolDefinition struct {
@@ -148,6 +150,7 @@ func copyMap(input map[string]any) map[string]any {
 func streamProviderEvents(ctx context.Context, body io.ReadCloser, convert func(RawSSEEvent) []StreamEvent) <-chan StreamEvent {
 	out := make(chan StreamEvent)
 	go func() {
+		defer panicguard.Recover("aigateway provider stream")
 		defer close(out)
 		defer body.Close()
 

@@ -33,12 +33,13 @@ type Repository interface {
 	ListInterfaceFiles(ctx context.Context, limit int) ([]InterfaceFile, error)
 	GetInterfaceFile(ctx context.Context, id uuid.UUID) (*InterfaceFile, error)
 	UpdateInterfaceFile(ctx context.Context, id uuid.UUID, input UpdateInterfaceFileInput) (*InterfaceFile, error)
-	CreateExecution(ctx context.Context, input CreateExecutionInput) (*ToolExecution, error)
+	CreateExecution(ctx context.Context, input CreateExecutionInput) (*ToolExecution, bool, error)
 	CompleteExecution(ctx context.Context, id uuid.UUID, input CompleteExecutionInput) (*ToolExecution, error)
 	CreateApproval(ctx context.Context, executionID uuid.UUID, requestedBy *uuid.UUID, reason string) (*ToolApproval, error)
 	ListExecutions(ctx context.Context, limit int) ([]ToolExecution, error)
 	GetExecution(ctx context.Context, id uuid.UUID) (*ToolExecution, error)
 	GetApproval(ctx context.Context, id uuid.UUID) (*ToolApproval, error)
+	GetLatestApprovalByExecution(ctx context.Context, executionID uuid.UUID) (*ToolApproval, error)
 	GetHumanAuthorityTier(ctx context.Context, userID uuid.UUID, organizationID *uuid.UUID) (string, error)
 	UpdateApproval(ctx context.Context, id uuid.UUID, status string, reviewedBy *uuid.UUID, reason string) (*ToolApproval, error)
 }
@@ -331,7 +332,7 @@ func (s *Service) ExecuteTool(ctx context.Context, input ExecuteToolInput) (*Exe
 	case PolicyAuto, PolicyNotify:
 		status = ExecutionRunning
 	}
-	execution, err := s.repo.CreateExecution(ctx, CreateExecutionInput{
+	execution, existed, err := s.repo.CreateExecution(ctx, CreateExecutionInput{
 		ToolID:             tool.ID,
 		InvocationID:       input.InvocationID,
 		ActorID:            input.ActorID,
@@ -350,6 +351,13 @@ func (s *Service) ExecuteTool(ctx context.Context, input ExecuteToolInput) (*Exe
 	})
 	if err != nil {
 		return nil, err
+	}
+	if existed {
+		// Idempotency-key retry: the execution row already exists, so the
+		// side-effecting adapter (and any approval row) was created on the
+		// first call. Return the existing record without re-dispatching to
+		// avoid double execution and duplicate approvals.
+		return s.existingExecutionOutput(ctx, execution)
 	}
 	trace := s.startToolTrace(ctx, tool, execution, input, policy, governanceResult)
 	switch policy {
@@ -381,6 +389,20 @@ func (s *Service) ExecuteTool(ctx context.Context, input ExecuteToolInput) (*Exe
 	default:
 		return s.runAdapter(ctx, tool, execution, input, trace)
 	}
+}
+
+// existingExecutionOutput builds the response for an idempotency-key retry
+// that resolved to an already-created execution, attaching the existing
+// approval when the execution is approval-gated.
+func (s *Service) existingExecutionOutput(ctx context.Context, execution *ToolExecution) (*ExecuteToolOutput, error) {
+	if execution.Policy == PolicyApprove {
+		approval, err := s.repo.GetLatestApprovalByExecution(ctx, execution.ID)
+		if err != nil {
+			return nil, err
+		}
+		return &ExecuteToolOutput{Execution: execution, Approval: approval}, nil
+	}
+	return &ExecuteToolOutput{Execution: execution}, nil
 }
 
 func (s *Service) TestTool(ctx context.Context, id uuid.UUID, input ExecuteToolInput) (*ExecuteToolOutput, error) {

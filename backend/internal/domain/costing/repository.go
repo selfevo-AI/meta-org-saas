@@ -824,8 +824,11 @@ func activeBool(value *bool) bool {
 }
 
 func normalizeLimit(limit int) int {
-	if limit <= 0 || limit > 200 {
+	if limit <= 0 {
 		return 50
+	}
+	if limit > 200 {
+		return 200
 	}
 	return limit
 }

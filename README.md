@@ -374,7 +374,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 |---|---|---|
 | `SERVER_PORT` | `8080` | 后端监听端口。 |
 | `DATABASE_URL` | `postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable` | 兼容旧入口的 PostgreSQL 连接串；未设置 `PLATFORM_DATABASE_URL` 时也作为平台控制库连接串。 |
-| `PLATFORM_DATABASE_URL` | 跟随 `DATABASE_URL` | SaaS 平台控制库连接串，保存平台管理、租户组织、能力包、市场和租户数据库目录。 |
+| `PLATFORM_DATABASE_URL` | 跟随 `DATABASE_URL` | SaaS 平台控制库连接串，保存平台管理、租户组织、能力包、市场和租户数据库目录。平台连接池默认 `MaxConns=20`/`MinConns=2`/生命周期 30 分钟，可用标准 pgx URL 参数（`pool_max_conns` 等）覆盖。 |
 | `TENANT_DATABASE_ADMIN_URL` | `DATABASE_URL` 同实例的 `postgres` 库 | 租户物理业务库创建/维护的管理连接串；SaaS onboarding 在 `dedicated_database` 模式下会用它尝试创建租户库。 |
 | `TENANT_DATABASE_NAME_PREFIX` | `meta_org_` | 按租户组织生成物理业务库名的前缀；物理租户库名为 `meta_org_` 加租户组织 UUID 前 4 位小写 hex。 |
 | `TENANT_DATABASE_MODE` | `dedicated_database` | 租户数据库目标模式；`dedicated_database` 为每租户物理库，`shared_schema` 为兼容的单库多 schema。 |
@@ -418,7 +418,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `BUSINESS_AI_MODEL` | 空 | 业务五阶段 AI 默认模型键；必须对应 AI Gateway 中已启用的模型。 |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | 单次业务阶段结构化分析允许的最大输出 token。 |
 | `MIGRATIONS_PATH` | `migrations` | SQL 迁移目录；本地从 `backend/` 运行时通常设为 `../migrations`。 |
-| `META_ORG_ENVIRONMENT` | `development` | 部署环境：`development`、`test` 或 `production`。生产模式会在连接数据库前拒绝默认开发密钥和无效运行参数。 |
+| `META_ORG_ENVIRONMENT` | `development` | 部署环境：`development`、`test` 或 `production`。`production` 模式，以及 `saas` 模式（`test` 除外），会在连接数据库前拒绝仓库内置的默认开发密钥（`JWT_SECRET`/`MODEL_SECRET_KEY`/`SECURITY_KERNEL_SHARED_SECRET`）和无效运行参数——本地 `saas` 栈请使用 `test`。 |
 | `META_ORG_MODE` | `single_org` | 运行模式；可设为 `saas` 启用多租户/SaaS 语义。 |
 | `META_ORG_DISTRIBUTION_MODE` | 跟随 `META_ORG_MODE` | 分发模式：`saas`、`saas_org_private`、`single_org_commercial` 或 `private_deployment`。 |
 | `META_ORG_LICENSE_MODE` | `commercial` | 授权模式：`community`、`commercial`、`enterprise` 或 `private_contract`。 |

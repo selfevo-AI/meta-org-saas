@@ -45,9 +45,11 @@ func (r *PostgresRepository) RunInTx(ctx context.Context, fn func(Repository) er
 	if err != nil {
 		return err
 	}
+	// Deferred so a panic inside fn cannot pin the pooled connection; a
+	// rollback after successful commit is a no-op.
+	defer func() { _ = tx.Rollback(ctx) }()
 	txRepo := &PostgresRepository{db: r.db, tx: tx, querier: tx}
 	if err := fn(txRepo); err != nil {
-		_ = tx.Rollback(ctx)
 		return err
 	}
 	return tx.Commit(ctx)

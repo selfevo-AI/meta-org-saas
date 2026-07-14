@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
@@ -178,6 +179,89 @@ func TestExecuteOperationDispatchesConfiguredCRUDCreate(t *testing.T) {
 	}
 }
 
+func TestExecuteAssistantOperationRunsFinanceTrialBalanceAdapter(t *testing.T) {
+	repo := &fakeRepository{operationByID: map[string]OperationDefinition{
+		"erp.finance.trial_balance.run": {
+			ID: "erp.finance.trial_balance.run", Domain: "ERP", Status: StatusActive,
+			ActionType: ActionFinanceGLTrialBalance, AssistantEligible: true,
+			Metadata: map[string]any{"workspace": map[string]any{"module": "finance"}},
+		},
+	}}
+	financeService := &fakeFinanceTrialBalanceService{balance: &finance.GLTrialBalance{
+		Rows: []finance.GLTrialBalanceRow{{AccountCode: "1001", Debit: 1200}}, TotalDebit: 1200, TotalCredit: 1200, Currency: "CNY",
+	}}
+	service := NewService(repo, WithOperationAdapter(ActionFinanceGLTrialBalance, NewFinanceTrialBalanceAdapter(financeService)))
+
+	result, err := service.ExecuteAssistantOperation(runtimeTenantContext(map[string]bool{"finance": true}), "erp.finance.trial_balance.run", RuntimeExecutionRequest{
+		Query: map[string]string{"period_start": "2026-01-01", "period_end": "2026-06-30", "currency": "CNY"},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAssistantOperation() error = %v", err)
+	}
+	if financeService.input.PeriodStart != "2026-01-01" || financeService.input.PeriodEnd != "2026-06-30" || financeService.input.Currency != "CNY" {
+		t.Fatalf("finance adapter input = %#v", financeService.input)
+	}
+	balance, ok := result.Data.(*finance.GLTrialBalance)
+	if !ok || balance.TotalDebit != 1200 || result.Status != "ok" {
+		t.Fatalf("runtime result = %#v", result)
+	}
+}
+
+func TestExecuteAssistantOperationRejectsIneligibleCatalogOperation(t *testing.T) {
+	repo := &fakeRepository{operationByID: map[string]OperationDefinition{
+		"internal-only": {ID: "internal-only", Domain: "finance", Status: StatusActive, ActionType: ActionFinanceGLTrialBalance},
+	}}
+	service := NewService(repo, WithOperationAdapter(ActionFinanceGLTrialBalance, NewFinanceTrialBalanceAdapter(&fakeFinanceTrialBalanceService{})))
+
+	_, err := service.ExecuteAssistantOperation(runtimeTenantContext(map[string]bool{"finance": true}), "internal-only", RuntimeExecutionRequest{})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ExecuteAssistantOperation() error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestExecuteOperationHumanPathHonorsTenantModuleGate(t *testing.T) {
+	// The human path falls back to the operation Domain (case-insensitive)
+	// when no workspace.module metadata is present; it must keep working for
+	// enabled modules and reject disabled ones.
+	repo := &fakeRepository{operationByID: map[string]OperationDefinition{
+		"finance.trial_balance.run": {
+			ID: "finance.trial_balance.run", Domain: "Finance", Status: StatusActive,
+			ActionType: ActionFinanceGLTrialBalance,
+		},
+	}}
+	financeService := &fakeFinanceTrialBalanceService{balance: &finance.GLTrialBalance{Currency: "CNY"}}
+	service := NewService(repo, WithOperationAdapter(ActionFinanceGLTrialBalance, NewFinanceTrialBalanceAdapter(financeService)))
+
+	if _, err := service.ExecuteOperation(runtimeTenantContext(map[string]bool{"finance": true}), "finance.trial_balance.run", RuntimeExecutionRequest{}); err != nil {
+		t.Fatalf("ExecuteOperation() with enabled module error = %v, want nil", err)
+	}
+	_, err := service.ExecuteOperation(runtimeTenantContext(map[string]bool{"inventory": true}), "finance.trial_balance.run", RuntimeExecutionRequest{})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("ExecuteOperation() with disabled module error = %v, want ErrForbidden", err)
+	}
+}
+
+func TestExecuteAssistantOperationPropagatesFinanceAdapterError(t *testing.T) {
+	repo := &fakeRepository{operationByID: map[string]OperationDefinition{
+		"erp.finance.trial_balance.run": {
+			ID: "erp.finance.trial_balance.run", Domain: "ERP", Status: StatusActive,
+			ActionType: ActionFinanceGLTrialBalance, AssistantEligible: true,
+			Metadata: map[string]any{"workspace": map[string]any{"module": "finance"}},
+		},
+	}}
+	wantErr := errors.New("trial balance unavailable")
+	financeService := &fakeFinanceTrialBalanceService{err: wantErr}
+	service := NewService(repo, WithOperationAdapter(ActionFinanceGLTrialBalance, NewFinanceTrialBalanceAdapter(financeService)))
+
+	result, err := service.ExecuteAssistantOperation(runtimeTenantContext(map[string]bool{"finance": true}), "erp.finance.trial_balance.run", RuntimeExecutionRequest{})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ExecuteAssistantOperation() error = %v, want %v", err, wantErr)
+	}
+	if result != nil {
+		t.Fatalf("ExecuteAssistantOperation() result = %#v, want nil on adapter error", result)
+	}
+}
+
 func TestCreateRecordAcceptsTopLevelTitleForRequiredTitleField(t *testing.T) {
 	repo := &fakeRepository{
 		entityByKey: map[string]EntityDefinition{
@@ -247,6 +331,17 @@ type fakeRepository struct {
 	createdEntityKey  string
 	createdRecord     *RuntimeRecord
 	listRecordsResult []RuntimeRecord
+}
+
+type fakeFinanceTrialBalanceService struct {
+	input   finance.GLTrialBalanceInput
+	balance *finance.GLTrialBalance
+	err     error
+}
+
+func (f *fakeFinanceTrialBalanceService) GetGLTrialBalance(_ context.Context, input finance.GLTrialBalanceInput) (*finance.GLTrialBalance, error) {
+	f.input = input
+	return f.balance, f.err
 }
 
 func (f *fakeRepository) ListOperations(context.Context) ([]OperationDefinition, error) {

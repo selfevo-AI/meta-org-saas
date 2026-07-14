@@ -6,6 +6,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 )
 
 type retentionRepository interface {
@@ -64,7 +66,7 @@ func (w *Worker) Start(ctx context.Context) {
 	w.setRunning(true)
 	go func() {
 		defer w.setRunning(false)
-		if _, err := w.RunOnce(ctx); err != nil {
+		if _, err := w.runOnceGuarded(ctx); err != nil {
 			log.Printf("audit retention run failed: %v", err)
 		}
 		ticker := time.NewTicker(w.config.PollInterval)
@@ -74,12 +76,19 @@ func (w *Worker) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := w.RunOnce(ctx); err != nil {
+				if _, err := w.runOnceGuarded(ctx); err != nil {
 					log.Printf("audit retention run failed: %v", err)
 				}
 			}
 		}
 	}()
+}
+
+// runOnceGuarded keeps a panic in one retention cycle from killing the worker
+// goroutine (and with it the whole process).
+func (w *Worker) runOnceGuarded(ctx context.Context) (counts RedactionCounts, err error) {
+	defer panicguard.RecoverAs("audit retention worker", &err)
+	return w.RunOnce(ctx)
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (RedactionCounts, error) {

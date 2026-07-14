@@ -66,6 +66,9 @@ type poolEntry struct {
 	pool     managedPool
 	lastUsed time.Time
 	leases   int64
+	// ready is closed once creation finished; pool/err are only valid after.
+	ready chan struct{}
+	err   error
 }
 
 type tenantPoolCache struct {
@@ -152,8 +155,23 @@ func (c *tenantPoolCache) Acquire(ctx context.Context, tenantURL string) (DB, fu
 		entry.leases++
 		entry.lastUsed = c.now()
 		c.stats.CacheHitsTotal++
+		release := c.releaseFunc(entry)
 		c.mu.Unlock()
-		return entry.pool, c.releaseFunc(entry), nil
+		// The lease taken above keeps the entry safe from eviction while we
+		// wait for a concurrent creator to finish.
+		if entry.ready != nil {
+			select {
+			case <-entry.ready:
+			case <-ctx.Done():
+				release()
+				return nil, nil, ctx.Err()
+			}
+		}
+		if entry.err != nil {
+			release()
+			return nil, nil, entry.err
+		}
+		return entry.pool, release, nil
 	}
 
 	c.stats.CacheMissesTotal++
@@ -167,20 +185,42 @@ func (c *tenantPoolCache) Acquire(ctx context.Context, tenantURL string) (DB, fu
 		delete(c.pools, key)
 		c.stats.PoolsEvictedTotal++
 		c.stats.CapacityEvictionsTotal++
-		entry.pool.Close()
+		if entry.pool != nil {
+			entry.pool.Close()
+		}
 	}
 
-	pool, err := c.factory(ctx, tenantURL, c.config)
-	if err != nil {
-		c.stats.PoolCreationErrorsTotal++
-		c.mu.Unlock()
-		return nil, nil, fmt.Errorf("connect tenant database: %w", err)
-	}
-	entry := &poolEntry{pool: pool, lastUsed: c.now(), leases: 1}
+	entry := &poolEntry{lastUsed: c.now(), leases: 1, ready: make(chan struct{})}
 	c.pools[tenantURL] = entry
-	c.stats.PoolsCreatedTotal++
+	release := c.releaseFunc(entry)
 	c.mu.Unlock()
-	return pool, c.releaseFunc(entry), nil
+
+	// Establish the connection outside the cache mutex: a slow or unreachable
+	// tenant database must not block every other tenant's Acquire.
+	pool, err := c.factory(ctx, tenantURL, c.config)
+
+	c.mu.Lock()
+	if err == nil && c.closed {
+		pool.Close()
+		pool = nil
+		err = ErrPoolRouterClosed
+	}
+	if err != nil {
+		entry.err = fmt.Errorf("connect tenant database: %w", err)
+		c.stats.PoolCreationErrorsTotal++
+		if c.pools[tenantURL] == entry {
+			delete(c.pools, tenantURL)
+		}
+		close(entry.ready)
+		c.mu.Unlock()
+		release()
+		return nil, nil, entry.err
+	}
+	entry.pool = pool
+	c.stats.PoolsCreatedTotal++
+	close(entry.ready)
+	c.mu.Unlock()
+	return pool, release, nil
 }
 
 func (c *tenantPoolCache) capacityEvictionCandidateLocked() (string, *poolEntry) {
@@ -279,7 +319,9 @@ func (c *tenantPoolCache) Close() {
 	pools := make([]managedPool, 0, len(c.pools))
 	for key, entry := range c.pools {
 		delete(c.pools, key)
-		pools = append(pools, entry.pool)
+		if entry.pool != nil {
+			pools = append(pools, entry.pool)
+		}
 	}
 	c.mu.Unlock()
 

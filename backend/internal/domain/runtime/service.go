@@ -20,11 +20,37 @@ type Repository interface {
 }
 
 type Service struct {
-	repo Repository
+	repo     Repository
+	adapters map[string]OperationAdapter
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+type OperationAdapter interface {
+	Execute(context.Context, OperationDefinition, RuntimeExecutionRequest) (*RuntimeExecutionResult, error)
+}
+
+type OperationAdapterFunc func(context.Context, OperationDefinition, RuntimeExecutionRequest) (*RuntimeExecutionResult, error)
+
+func (f OperationAdapterFunc) Execute(ctx context.Context, operation OperationDefinition, input RuntimeExecutionRequest) (*RuntimeExecutionResult, error) {
+	return f(ctx, operation, input)
+}
+
+type ServiceOption func(*Service)
+
+func WithOperationAdapter(key string, adapter OperationAdapter) ServiceOption {
+	return func(s *Service) {
+		key = strings.TrimSpace(key)
+		if key != "" && adapter != nil {
+			s.adapters[key] = adapter
+		}
+	}
+}
+
+func NewService(repo Repository, opts ...ServiceOption) *Service {
+	s := &Service{repo: repo, adapters: map[string]OperationAdapter{}}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func ValidateEntityDefinition(def EntityDefinition) error {
@@ -135,12 +161,26 @@ func (s *Service) DeleteRecord(ctx context.Context, entityKey string, recordKey 
 }
 
 func (s *Service) ExecuteOperation(ctx context.Context, operationID string, input RuntimeExecutionRequest) (*RuntimeExecutionResult, error) {
+	return s.executeOperation(ctx, operationID, input, false)
+}
+
+func (s *Service) ExecuteAssistantOperation(ctx context.Context, operationID string, input RuntimeExecutionRequest) (*RuntimeExecutionResult, error) {
+	return s.executeOperation(ctx, operationID, input, true)
+}
+
+func (s *Service) executeOperation(ctx context.Context, operationID string, input RuntimeExecutionRequest, assistantOnly bool) (*RuntimeExecutionResult, error) {
 	operation, err := s.repo.GetOperation(ctx, operationID)
 	if err != nil {
 		return nil, err
 	}
 	if operation.Status != "" && operation.Status != StatusActive {
 		return nil, ErrNotFound
+	}
+	if assistantOnly && !operation.AssistantEligible {
+		return nil, fmt.Errorf("%w: runtime operation is not assistant eligible", ErrForbidden)
+	}
+	if !tenantAllowsRuntimeModule(ctx, operationModuleKey(*operation)) {
+		return nil, ErrForbidden
 	}
 	switch operation.ActionType {
 	case ActionCRUDList:
@@ -173,8 +213,21 @@ func (s *Service) ExecuteOperation(ctx context.Context, operationID string, inpu
 		}
 		return &RuntimeExecutionResult{Status: "deleted"}, nil
 	default:
-		return nil, fmt.Errorf("%w: unsupported action_type %q", ErrValidation, operation.ActionType)
+		adapter := s.adapters[firstNonEmpty(operation.AdapterKey, operation.ActionType)]
+		if adapter == nil {
+			return nil, fmt.Errorf("%w: unsupported action_type %q", ErrValidation, operation.ActionType)
+		}
+		return adapter.Execute(ctx, *operation, input)
 	}
+}
+
+func operationModuleKey(operation OperationDefinition) string {
+	if workspace, ok := operation.Metadata["workspace"].(map[string]any); ok {
+		if module, ok := workspace["module"].(string); ok && strings.TrimSpace(module) != "" {
+			return module
+		}
+	}
+	return operation.Domain
 }
 
 func (s *Service) activeEntity(ctx context.Context, entityKey string) (*EntityDefinition, error) {

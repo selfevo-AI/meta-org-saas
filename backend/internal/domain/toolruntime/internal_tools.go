@@ -46,7 +46,7 @@ type IndustrySolutionChangeVerifier interface {
 }
 
 type RuntimeOperationService interface {
-	ExecuteOperation(context.Context, string, domainruntime.RuntimeExecutionRequest) (*domainruntime.RuntimeExecutionResult, error)
+	ExecuteAssistantOperation(context.Context, string, domainruntime.RuntimeExecutionRequest) (*domainruntime.RuntimeExecutionResult, error)
 }
 
 type ContextProposalService interface {
@@ -470,7 +470,7 @@ func runtimeOperationExecuteTool(runtimeSvc RuntimeOperationService) ToolAdapter
 		if operationID == "" {
 			return ToolResult{}, fmt.Errorf("%w: operation_id is required", ErrValidation)
 		}
-		result, err := runtimeSvc.ExecuteOperation(ctx, operationID, domainruntime.RuntimeExecutionRequest{
+		result, err := runtimeSvc.ExecuteAssistantOperation(ctx, operationID, domainruntime.RuntimeExecutionRequest{
 			Path:  stringMapArg(input.Arguments, "path"),
 			Query: stringMapArg(input.Arguments, "query"),
 			Body:  mapArg(input.Arguments, "body"),

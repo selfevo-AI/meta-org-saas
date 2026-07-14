@@ -64,6 +64,88 @@ func TestEffectivePolicyForExecutionKeepsRuntimeReadsNotify(t *testing.T) {
 	}
 }
 
+func TestExecuteToolIdempotencyKeyRunsAdapterOnce(t *testing.T) {
+	orgID := uuid.New()
+	toolID := uuid.New()
+	actorID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{OrganizationID: &orgID})
+	repo := &fakeApprovalRepository{
+		tool: ToolDefinition{
+			ID:            toolID,
+			Name:          "project.summarize",
+			DefaultPolicy: PolicyAuto,
+			RiskLevel:     "medium",
+			RequiredLevel: "L1",
+			IsActive:      true,
+		},
+	}
+	adapterCalls := 0
+	svc := NewService(repo, nil, map[string]ToolAdapter{
+		"project.summarize": func(_ context.Context, _ ExecuteToolInput) (ToolResult, error) {
+			adapterCalls++
+			return ToolResult{Summary: "summarized", Data: map[string]any{"ok": true}}, nil
+		},
+	})
+
+	input := ExecuteToolInput{
+		ToolName:       "project.summarize",
+		ActorID:        actorID,
+		ActorType:      "internal_human",
+		IdempotencyKey: "retry-key-1",
+	}
+	first, err := svc.ExecuteTool(ctx, input)
+	if err != nil {
+		t.Fatalf("first ExecuteTool returned error: %v", err)
+	}
+	second, err := svc.ExecuteTool(ctx, input)
+	if err != nil {
+		t.Fatalf("second ExecuteTool returned error: %v", err)
+	}
+	if adapterCalls != 1 {
+		t.Fatalf("adapter invocations = %d, want 1 (idempotency-key retry must not re-run side effects)", adapterCalls)
+	}
+	if first.Execution.ID != second.Execution.ID {
+		t.Fatalf("execution id changed across retry: %s vs %s", first.Execution.ID, second.Execution.ID)
+	}
+}
+
+func TestExecuteToolIdempotencyKeyDoesNotDuplicateApproval(t *testing.T) {
+	orgID := uuid.New()
+	actorID := uuid.New()
+	ctx := context.WithValue(context.Background(), middleware.TenantContextKey, &middleware.TenantContext{OrganizationID: &orgID})
+	repo := &fakeApprovalRepository{
+		tool: ToolDefinition{
+			ID:            uuid.New(),
+			Name:          "erp.action.execute",
+			DefaultPolicy: PolicyApprove,
+			RiskLevel:     "high",
+			RequiredLevel: "L2",
+			IsActive:      true,
+		},
+	}
+	svc := NewService(repo, nil, nil)
+
+	input := ExecuteToolInput{
+		ToolName:       "erp.action.execute",
+		ActorID:        actorID,
+		ActorType:      "internal_human",
+		IdempotencyKey: "approve-retry-1",
+	}
+	if _, err := svc.ExecuteTool(ctx, input); err != nil {
+		t.Fatalf("first ExecuteTool returned error: %v", err)
+	}
+	second, err := svc.ExecuteTool(ctx, input)
+	if err != nil {
+		t.Fatalf("second ExecuteTool returned error: %v", err)
+	}
+	if repo.createApprovalCalls != 1 {
+		t.Fatalf("approval creations = %d, want 1 (idempotency-key retry must not create a second approval)", repo.createApprovalCalls)
+	}
+	if second.Approval == nil {
+		t.Fatal("idempotent approval retry returned no approval")
+	}
+}
+
 func TestExecuteToolUsesCurrentTenantOrganization(t *testing.T) {
 	orgID := uuid.New()
 	toolID := uuid.New()
@@ -438,6 +520,9 @@ type fakeApprovalRepository struct {
 	tier                 string
 	interfaceFiles       []InterfaceFile
 	createExecutionInput CreateExecutionInput
+	createExecutionCalls int
+	createApprovalCalls  int
+	executionExists      bool
 }
 
 func (f *fakeApprovalRepository) CreateTool(context.Context, CreateToolInput) (*ToolDefinition, error) {
@@ -509,8 +594,14 @@ func (f *fakeApprovalRepository) UpdateInterfaceFile(_ context.Context, id uuid.
 	return file, nil
 }
 
-func (f *fakeApprovalRepository) CreateExecution(_ context.Context, input CreateExecutionInput) (*ToolExecution, error) {
+func (f *fakeApprovalRepository) CreateExecution(_ context.Context, input CreateExecutionInput) (*ToolExecution, bool, error) {
 	f.createExecutionInput = input
+	f.createExecutionCalls++
+	// Simulate the ON CONFLICT DO NOTHING idempotency path: once a row exists
+	// for the idempotency key, subsequent calls return the existing row.
+	if f.executionExists && input.IdempotencyKey != "" {
+		return &f.execution, true, nil
+	}
 	if f.execution.ID == uuid.Nil {
 		f.execution = ToolExecution{
 			ID:                 uuid.New(),
@@ -533,7 +624,10 @@ func (f *fakeApprovalRepository) CreateExecution(_ context.Context, input Create
 			CreatedAt:          time.Now(),
 		}
 	}
-	return &f.execution, nil
+	if input.IdempotencyKey != "" {
+		f.executionExists = true
+	}
+	return &f.execution, false, nil
 }
 
 func (f *fakeApprovalRepository) CompleteExecution(_ context.Context, _ uuid.UUID, input CompleteExecutionInput) (*ToolExecution, error) {
@@ -547,6 +641,11 @@ func (f *fakeApprovalRepository) CompleteExecution(_ context.Context, _ uuid.UUI
 }
 
 func (f *fakeApprovalRepository) CreateApproval(context.Context, uuid.UUID, *uuid.UUID, string) (*ToolApproval, error) {
+	f.createApprovalCalls++
+	return &f.approval, nil
+}
+
+func (f *fakeApprovalRepository) GetLatestApprovalByExecution(context.Context, uuid.UUID) (*ToolApproval, error) {
 	return &f.approval, nil
 }
 

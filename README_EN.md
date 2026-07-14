@@ -357,7 +357,7 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 |---|---|---|
 | `SERVER_PORT` | `8080` | Backend listen port. |
 | `DATABASE_URL` | `postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable` | Backward-compatible PostgreSQL connection string; also used as the platform control database when `PLATFORM_DATABASE_URL` is unset. |
-| `PLATFORM_DATABASE_URL` | Follows `DATABASE_URL` | SaaS platform control database connection string for platform administration, tenant organizations, capability packages, marketplace catalog, and tenant database routing metadata. |
+| `PLATFORM_DATABASE_URL` | Follows `DATABASE_URL` | SaaS platform control database connection string for platform administration, tenant organizations, capability packages, marketplace catalog, and tenant database routing metadata. The platform pool defaults to `MaxConns=20`/`MinConns=2` with 30-minute connection lifetimes; override with standard pgx URL parameters (`pool_max_conns`, ...). |
 | `TENANT_DATABASE_ADMIN_URL` | `postgres` database on the same instance as `DATABASE_URL` | Administrative connection string for physical tenant business database creation and maintenance. SaaS onboarding uses it to try creating tenant databases in `dedicated_database` mode. |
 | `TENANT_DATABASE_NAME_PREFIX` | `meta_org_` | Prefix used when deriving physical tenant business database names from tenant organization IDs; physical tenant databases use `meta_org_` plus the first 4 lowercase hex characters of the tenant organization UUID. |
 | `TENANT_DATABASE_MODE` | `dedicated_database` | Tenant database target mode; `dedicated_database` records one physical database per tenant, `shared_schema` preserves the compatibility single-database schema mode. |
@@ -399,7 +399,7 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `BUSINESS_AI_MODEL` | empty | Default five-stage business AI model key; it must match an active AI Gateway model. |
 | `BUSINESS_AI_MAX_TOKENS` | `1800` | Maximum output tokens for one structured business-stage analysis. |
 | `MIGRATIONS_PATH` | `migrations` | SQL migration directory; when running from `backend/`, usually set it to `../migrations`. |
-| `META_ORG_ENVIRONMENT` | `development` | Deployment environment: `development`, `test`, or `production`. Production mode rejects development secrets and invalid runtime bounds before connecting to PostgreSQL. |
+| `META_ORG_ENVIRONMENT` | `development` | Deployment environment: `development`, `test`, or `production`. Both `production` and `saas` mode (except when `test`) reject the repository's built-in development secrets (`JWT_SECRET`/`MODEL_SECRET_KEY`/`SECURITY_KERNEL_SHARED_SECRET`) and invalid runtime bounds before connecting to PostgreSQL — use `test` for local `saas` stacks. |
 | `META_ORG_MODE` | `single_org` | Runtime mode; set to `saas` for multi-tenant/SaaS semantics. |
 | `META_ORG_DISTRIBUTION_MODE` | Follows `META_ORG_MODE` | Distribution mode: `saas`, `saas_org_private`, `single_org_commercial`, or `private_deployment`. |
 | `META_ORG_LICENSE_MODE` | `commercial` | License mode: `community`, `commercial`, `enterprise`, or `private_contract`. |

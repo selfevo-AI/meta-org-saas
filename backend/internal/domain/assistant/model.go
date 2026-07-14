@@ -174,6 +174,7 @@ type RunEvent struct {
 	Message *Message       `json:"message,omitempty"`
 	Delta   string         `json:"delta,omitempty"`
 	Error   string         `json:"error,omitempty"`
+	Code    string         `json:"code,omitempty"`
 	Done    bool           `json:"done,omitempty"`
 	Data    map[string]any `json:"data,omitempty"`
 }

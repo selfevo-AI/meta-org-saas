@@ -41,6 +41,52 @@ func TestValidateIndustrySolutionManifestRejectsUnsafeFieldType(t *testing.T) {
 	}
 }
 
+func TestSafeIndexPredicate(t *testing.T) {
+	safe := []string{
+		"status = 'active'",
+		"finance_payable_id is not null",
+		"deleted_at IS NULL AND status <> 'void'",
+		"(amount > 0 or credit > 0)",
+		"created_at >= '2026-01-01'",
+	}
+	for _, expr := range safe {
+		if !safeIndexPredicate(expr) {
+			t.Fatalf("safeIndexPredicate(%q) = false, want true", expr)
+		}
+	}
+	unsafe := []string{
+		"",
+		"true); drop table platform_users; --",
+		"status = 'x' ; delete from users",
+		"1=1 union select secret from platform_users",
+		"pg_sleep(10) is null",
+		"status = 'a' /* comment */",
+		"col = $1",
+	}
+	for _, expr := range unsafe {
+		if safeIndexPredicate(expr) {
+			t.Fatalf("safeIndexPredicate(%q) = true, want false", expr)
+		}
+	}
+}
+
+func TestValidateIndustrySolutionManifestRejectsUnsafeIndexPredicate(t *testing.T) {
+	manifest := validOrganizationManifest()
+	manifest.Tables[0].Indexes = append(manifest.Tables[0].Indexes, IndustrySolutionIndexDefinition{
+		Name:   "idx_injection",
+		Fields: []string{manifest.Tables[0].Fields[0].Name},
+		Where:  "true); drop table platform_users; --",
+	})
+
+	err := ValidateIndustrySolutionManifest(manifest)
+	if err == nil {
+		t.Fatal("ValidateIndustrySolutionManifest() succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "unsafe index predicate") {
+		t.Fatalf("ValidateIndustrySolutionManifest() error = %q, want unsafe index predicate", err.Error())
+	}
+}
+
 func TestBuildIndustrySolutionTableStatementsUsesQuotedSchemaAndNonDestructiveDDL(t *testing.T) {
 	statements, err := BuildIndustrySolutionTableStatements("org_123e4567e89b12d3a456426614174000", validOrganizationManifest())
 	if err != nil {

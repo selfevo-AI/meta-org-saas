@@ -33,10 +33,55 @@ func TestValidateRejectsUnsafeProductionSecrets(t *testing.T) {
 	if err == nil {
 		t.Fatal("Validate() error = nil")
 	}
-	for _, expected := range []string{"production JWT_SECRET", "production MODEL_SECRET_KEY", "production SECURITY_KERNEL_SHARED_SECRET"} {
+	for _, expected := range []string{"JWT_SECRET", "MODEL_SECRET_KEY", "SECURITY_KERNEL_SHARED_SECRET"} {
 		if !strings.Contains(err.Error(), expected) {
 			t.Fatalf("Validate() error = %v, missing %q", err, expected)
 		}
+	}
+}
+
+func TestValidateRejectsUnsafeSecretsInDevelopmentSaaS(t *testing.T) {
+	cfg := validTestConfig()
+	// Default (unset) environment is development; saas mode must still fail closed
+	// on the repository-public development secrets so a misconfigured deployment
+	// cannot sign JWTs with a committed key.
+	cfg.Environment = "development"
+	cfg.MetaOrgMode = "saas"
+	cfg.PlatformAdminEmail = "platform-admin@example.com"
+	cfg.PlatformAdminPasswordHash = testBcryptHash
+	cfg.SecurityKernelURL = "http://security-kernel:8090"
+	cfg.SecurityKernelSharedSecret = developmentKernelKey
+	cfg.SecurityKernelEnforcementMode = "blocking"
+	cfg.JWTSecret = developmentJWTSecret
+	cfg.ModelSecretKey = composeModelSecret
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() error = nil for development saas with repository default secrets")
+	}
+	for _, expected := range []string{"JWT_SECRET", "MODEL_SECRET_KEY", "SECURITY_KERNEL_SHARED_SECRET"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("Validate() error = %v, missing %q", err, expected)
+		}
+	}
+}
+
+func TestValidateAllowsTestSaaSWithThrowawaySecrets(t *testing.T) {
+	cfg := validTestConfig()
+	// The test environment (used by CI e2e) is intentionally exempt so saas flows
+	// can run with the Compose throwaway keys.
+	cfg.Environment = "test"
+	cfg.MetaOrgMode = "saas"
+	cfg.PlatformAdminEmail = "platform-admin@example.com"
+	cfg.PlatformAdminPasswordHash = testBcryptHash
+	cfg.SecurityKernelURL = "http://security-kernel:8090"
+	cfg.SecurityKernelSharedSecret = strings.Repeat("k", 40)
+	cfg.SecurityKernelEnforcementMode = "blocking"
+	cfg.JWTSecret = "e2e-jwt-secret-0123456789abcdef"
+	cfg.ModelSecretKey = composeModelSecret
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil for test saas", err)
 	}
 }
 

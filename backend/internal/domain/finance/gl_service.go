@@ -15,6 +15,12 @@ func (s *Service) CreateGLAccount(ctx context.Context, input CreateGLAccountInpu
 	if input.AccountCode == "" || input.Name == "" {
 		return nil, fmt.Errorf("%w: account_code and name are required", ErrValidation)
 	}
+	if input.OrganizationID == nil {
+		input.OrganizationID = currentTenantOrganizationID(ctx)
+	}
+	if err := ensureTenantOrganization(ctx, input.OrganizationID); err != nil {
+		return nil, err
+	}
 	return s.repo.CreateGLAccount(ctx, input)
 }
 
@@ -30,6 +36,12 @@ func (s *Service) CreateGLCostCenter(ctx context.Context, input CreateGLCostCent
 	normalizeGLCostCenterInput(&input)
 	if input.CostCenterCode == "" || input.Name == "" {
 		return nil, fmt.Errorf("%w: cost_center_code and name are required", ErrValidation)
+	}
+	if input.OrganizationID == nil {
+		input.OrganizationID = currentTenantOrganizationID(ctx)
+	}
+	if err := ensureTenantOrganization(ctx, input.OrganizationID); err != nil {
+		return nil, err
 	}
 	return s.repo.CreateGLCostCenter(ctx, input)
 }
@@ -49,6 +61,12 @@ func (s *Service) CreateGLJournalEntry(ctx context.Context, input CreateGLJourna
 	}
 	referenceDate, err := parseGLRequiredDate(input.ReferenceDate)
 	if err != nil {
+		return nil, err
+	}
+	if input.OrganizationID == nil {
+		input.OrganizationID = currentTenantOrganizationID(ctx)
+	}
+	if err := ensureTenantOrganization(ctx, input.OrganizationID); err != nil {
 		return nil, err
 	}
 	for index := range input.Lines {
@@ -96,6 +114,12 @@ func (s *Service) PostGLJournalEntry(ctx context.Context, id uuid.UUID) (*GLJour
 }
 
 func (s *Service) GetGLTrialBalance(ctx context.Context, input GLTrialBalanceInput) (*GLTrialBalance, error) {
+	if orgID := currentTenantOrganizationID(ctx); orgID != nil {
+		if input.OrganizationID != nil && *input.OrganizationID != *orgID {
+			return nil, fmt.Errorf("%w: trial balance organization must match current organization", ErrForbidden)
+		}
+		input.OrganizationID = orgID
+	}
 	input.Currency = defaultCurrency(input.Currency)
 	var err error
 	input.periodStartTime, err = parseOptionalDate(input.PeriodStart)

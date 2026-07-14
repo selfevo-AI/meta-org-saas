@@ -365,7 +365,10 @@ func main() {
 	salesHandler := sales.NewHandler(salesSvc)
 
 	runtimeRepo := domainruntime.NewRepository(db)
-	runtimeSvc := domainruntime.NewService(runtimeRepo)
+	runtimeSvc := domainruntime.NewService(runtimeRepo, domainruntime.WithOperationAdapter(
+		domainruntime.ActionFinanceGLTrialBalance,
+		domainruntime.NewFinanceTrialBalanceAdapter(financeSvc),
+	))
 	runtimeHandler := domainruntime.NewHandler(runtimeSvc)
 
 	erpRepo := erp.NewRepository(tenantBusinessDB)

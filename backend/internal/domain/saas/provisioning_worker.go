@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -88,7 +89,7 @@ func (w *TenantDatabaseProvisioningWorker) Start(ctx context.Context) {
 		ticker := time.NewTicker(w.config.PollInterval)
 		defer ticker.Stop()
 		for {
-			processed, err := w.RunOnce(ctx)
+			processed, err := w.runOnceGuarded(ctx)
 			if err != nil {
 				log.Printf("tenant database provisioning job failed: %v", err)
 			}
@@ -102,6 +103,13 @@ func (w *TenantDatabaseProvisioningWorker) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// runOnceGuarded keeps a panic in one provisioning job from killing the
+// worker goroutine (and with it the whole process).
+func (w *TenantDatabaseProvisioningWorker) runOnceGuarded(ctx context.Context) (processed bool, err error) {
+	defer panicguard.RecoverAs("tenant database provisioning worker", &err)
+	return w.RunOnce(ctx)
 }
 
 func (w *TenantDatabaseProvisioningWorker) RunOnce(ctx context.Context) (bool, error) {

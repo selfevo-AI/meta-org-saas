@@ -268,7 +268,7 @@ type fakeRuntimeOperationService struct {
 	operationID string
 }
 
-func (f *fakeRuntimeOperationService) ExecuteOperation(_ context.Context, operationID string, input domainruntime.RuntimeExecutionRequest) (*domainruntime.RuntimeExecutionResult, error) {
+func (f *fakeRuntimeOperationService) ExecuteAssistantOperation(_ context.Context, operationID string, input domainruntime.RuntimeExecutionRequest) (*domainruntime.RuntimeExecutionResult, error) {
 	f.operationID = operationID
 	return &domainruntime.RuntimeExecutionResult{Status: "ok", Data: input.Body}, nil
 }

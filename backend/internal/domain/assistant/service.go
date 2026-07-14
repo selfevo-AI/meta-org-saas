@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/google/uuid"
@@ -20,6 +21,22 @@ var (
 	ErrNotFound   = errors.New("not found")
 	ErrForbidden  = errors.New("forbidden")
 )
+
+// runErrorCode gives SSE error events a stable machine-readable code so
+// clients can distinguish governance denials from provider failures without
+// parsing the free-text message.
+func runErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrForbidden), errors.Is(err, toolruntime.ErrForbidden), errors.Is(err, aigateway.ErrForbidden):
+		return "forbidden"
+	case errors.Is(err, ErrValidation), errors.Is(err, toolruntime.ErrValidation), errors.Is(err, aigateway.ErrValidation):
+		return "invalid_request"
+	case errors.Is(err, aigateway.ErrUnavailable):
+		return "upstream_unavailable"
+	default:
+		return "internal_error"
+	}
+}
 
 type AIInvoker interface {
 	Invoke(context.Context, aigateway.InvokeInput) (*aigateway.InvokeOutput, error)
@@ -628,7 +645,7 @@ func (s *Service) runLoop(ctx context.Context, events chan<- RunEvent, session *
 	fail := func(err error, turn int) {
 		_ = s.repo.UpdateSessionStatus(context.Background(), session.ID, StatusFailed, err.Error())
 		step, _ := s.repo.AddStep(context.Background(), session, AddStepInput{StepType: StepError, Status: StatusFailed, Summary: err.Error(), Turn: turn})
-		send(RunEvent{Type: "error", Step: step, Error: err.Error(), Done: true})
+		send(RunEvent{Type: "error", Step: step, Error: err.Error(), Code: runErrorCode(err), Done: true})
 	}
 
 	userMessage, err := s.repo.AddMessage(ctx, session.ID, "user", input.Message, "", "", nil)
@@ -686,7 +703,7 @@ func (s *Service) resumeLoop(ctx context.Context, events chan<- RunEvent, sessio
 	fail := func(err error, turn int) {
 		_ = s.repo.UpdateSessionStatus(context.Background(), session.ID, StatusFailed, err.Error())
 		step, _ := s.repo.AddStep(context.Background(), session, AddStepInput{StepType: StepError, Status: StatusFailed, Summary: err.Error(), Turn: turn})
-		send(RunEvent{Type: "error", Step: step, Error: err.Error(), Done: true})
+		send(RunEvent{Type: "error", Step: step, Error: err.Error(), Code: runErrorCode(err), Done: true})
 	}
 
 	approval, err := s.tools.GetApproval(ctx, input.ToolApprovalID)
@@ -1003,7 +1020,12 @@ func (s *Service) finishRun(ctx context.Context, send func(RunEvent) bool, sessi
 			send(RunEvent{Type: "proposal_created", Data: map[string]any{"proposal_id": proposal.ID.String(), "status": proposal.Status}})
 		}
 	}
-	_ = s.repo.UpdateSessionStatus(ctx, session.ID, StatusCompleted, "")
+	// Use a detached context: the request ctx is already cancelled when the
+	// client disconnects right after the final event, which would strand the
+	// session in "running" forever.
+	if err := s.repo.UpdateSessionStatus(context.Background(), session.ID, StatusCompleted, ""); err != nil {
+		log.Printf("assistant: mark session %s completed failed: %v", session.ID, err)
+	}
 	send(RunEvent{Type: "done", Done: true, Data: map[string]any{"status": StatusCompleted}})
 }
 

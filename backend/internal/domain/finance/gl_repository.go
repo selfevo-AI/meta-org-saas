@@ -36,9 +36,10 @@ func (r *PostgresRepository) ListGLAccounts(ctx context.Context, limit int) ([]G
 		SELECT id, master_key, account_code, name, account_type, currency, parent_account_code,
 		       postable, active, organization_id, department_id, metadata, created_at, updated_at
 		FROM gl_accounts
+		WHERE ($1::uuid IS NULL OR organization_id IS NULL OR organization_id = $1)
 		ORDER BY account_code
-		LIMIT $1
-	`, normalizeLimit(limit))
+		LIMIT $2
+	`, nullableUUID(currentTenantOrganizationID(ctx)), normalizeLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list GL accounts: %w", err)
 	}
@@ -76,9 +77,10 @@ func (r *PostgresRepository) ListGLCostCenters(ctx context.Context, limit int) (
 		SELECT id, master_key, cost_center_code, name, active, organization_id, department_id,
 		       metadata, created_at, updated_at
 		FROM gl_cost_centers
+		WHERE ($1::uuid IS NULL OR organization_id IS NULL OR organization_id = $1)
 		ORDER BY cost_center_code
-		LIMIT $1
-	`, normalizeLimit(limit))
+		LIMIT $2
+	`, nullableUUID(currentTenantOrganizationID(ctx)), normalizeLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list GL cost centers: %w", err)
 	}
@@ -142,9 +144,10 @@ func (r *PostgresRepository) ListGLJournalEntries(ctx context.Context, limit int
 		SELECT id, master_key, entry_number, reference_date, memo, status, currency, source_type,
 		       source_id, organization_id, department_id, metadata, posted_at, created_at, updated_at
 		FROM gl_journal_entries
+		WHERE ($1::uuid IS NULL OR organization_id IS NULL OR organization_id = $1)
 		ORDER BY reference_date DESC, created_at DESC
-		LIMIT $1
-	`, normalizeLimit(limit))
+		LIMIT $2
+	`, nullableUUID(currentTenantOrganizationID(ctx)), normalizeLimit(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list GL journal entries: %w", err)
 	}
@@ -167,7 +170,8 @@ func (r *PostgresRepository) GetGLJournalEntry(ctx context.Context, id uuid.UUID
 		       source_id, organization_id, department_id, metadata, posted_at, created_at, updated_at
 		FROM gl_journal_entries
 		WHERE id = $1
-	`, id), entry)
+		  AND ($2::uuid IS NULL OR organization_id IS NULL OR organization_id = $2)
+	`, id, nullableUUID(currentTenantOrganizationID(ctx))), entry)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -187,7 +191,8 @@ func (r *PostgresRepository) PostGLJournalEntry(ctx context.Context, id uuid.UUI
 		UPDATE gl_journal_entries
 		SET status = 'posted', posted_at = COALESCE(posted_at, NOW()), updated_at = NOW()
 		WHERE id = $1
-	`, id)
+		  AND ($2::uuid IS NULL OR organization_id IS NULL OR organization_id = $2)
+	`, id, nullableUUID(currentTenantOrganizationID(ctx)))
 	if err != nil {
 		return nil, fmt.Errorf("post GL journal entry: %w", err)
 	}
@@ -204,7 +209,7 @@ func (r *PostgresRepository) GetGLTrialBalance(ctx context.Context, input GLTria
 		FROM gl_journal_entries e
 		JOIN gl_journal_entry_lines l ON l.entry_id = e.id
 		WHERE e.status = 'posted'
-		  AND ($1::uuid IS NULL OR e.organization_id = $1)
+		  AND ($1::uuid IS NULL OR e.organization_id IS NULL OR e.organization_id = $1)
 		  AND ($2::date IS NULL OR e.reference_date >= $2)
 		  AND ($3::date IS NULL OR e.reference_date <= $3)
 		  AND ($4 = '' OR e.currency = $4)

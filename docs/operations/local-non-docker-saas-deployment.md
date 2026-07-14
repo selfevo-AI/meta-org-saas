@@ -106,6 +106,7 @@ Start-Process -FilePath 'go' `
     'MIGRATIONS_PATH'='../migrations'
     'JWT_SECRET'='dev-secret-change-in-production'
     'MODEL_SECRET_KEY'='0123456789abcdef0123456789abcdef'
+    'META_ORG_ENVIRONMENT'='test'
     'META_ORG_MODE'='saas'
     'META_ORG_DISTRIBUTION_MODE'='saas'
     'META_ORG_LICENSE_MODE'='commercial'

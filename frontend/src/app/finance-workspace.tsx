@@ -49,6 +49,7 @@ import {
   type FinanceReconciliationItem,
   type FinanceSettlementOrder,
 } from '@/lib/api'
+import { describeApiError } from '@/lib/api-error'
 import { useI18n } from '@/lib/i18n'
 
 interface FinanceWorkspaceProps {
@@ -259,7 +260,7 @@ export function FinanceWorkspace({ token, mode = 'all' }: FinanceWorkspaceProps)
       setAllocationForm((current) => ({ ...current, payment_id: current.payment_id || paymentData[0]?.id || '', payable_id: current.payable_id || payableData[0]?.id || '' }))
       setReceiptAllocationForm((current) => ({ ...current, receipt_id: current.receipt_id || receiptData[0]?.id || '', receivable_id: current.receivable_id || receivableData[0]?.id || '' }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('finance.loadFailed'))
+      setError(describeApiError(err, t, t('finance.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -281,7 +282,7 @@ export function FinanceWorkspace({ token, mode = 'all' }: FinanceWorkspaceProps)
       setNotice(t(success))
       await loadFinance()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

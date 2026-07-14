@@ -64,6 +64,11 @@ func TestTenantMiddlewareModuleGate(t *testing.T) {
 			wantStatus: http.StatusForbidden,
 		},
 		{
+			name:       "blocks disabled erp module route",
+			path:       "/api/v1/erp/catalog",
+			wantStatus: http.StatusForbidden,
+		},
+		{
 			name:       "allows saas module management route",
 			path:       "/api/v1/organizations/" + orgID.String() + "/modules",
 			wantStatus: http.StatusOK,

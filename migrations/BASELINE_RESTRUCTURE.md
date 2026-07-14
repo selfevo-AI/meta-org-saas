@@ -29,11 +29,19 @@ This directory now uses staged baseline migrations instead of the historical
 24. `024_ai_audit_retention.sql`
 25. `025_ai_gateway_reservation_recovery.sql`
 26. `026_business_ai_context_freshness.sql`
+27. `027_ai_provider_channel_circuit_breaker.sql`
+28. `028_ai_observability_hot_path_indexes.sql`
+29. `029_finance_costing_hot_path_indexes.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
 1. `tenant/001_tenant_business_baseline.sql`
 2. `tenant/002_tenant_projection_outbox.sql`
+3. `tenant/003_project_erp_authoritative_projection.sql`
+4. `tenant/004_project_erp_organization_scope.sql`
+5. `tenant/005_requirement_erp_authoritative_projection.sql`
+6. `tenant/006_project_requirement_business_key_link.sql`
+7. `tenant/007_finance_costing_hot_path_indexes.sql`
 
 The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,

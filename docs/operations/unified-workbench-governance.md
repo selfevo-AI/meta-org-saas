@@ -25,6 +25,7 @@ Meta-Org 的操作界面同时服务人类操作员和具备权限的内部/外�
 - 每个人类可点击的业务动作都应映射到 `ApiOperation` 或平台 runtime operation。
 - 单据页面内嵌 API/Agent 操作抽屉，独立 API Workbench 继续保留用于集中调试。
 - runtime operation 的 `metadata.workspace` 是租户单据工作台的优先元数据来源；缺失时可使用前端保守默认配置。
+- 标记为 `assistant_eligible` 的非 CRUD runtime operation 必须注册后端 operation adapter；AI 只能通过 Tool Runtime 的受治理入口执行，不能仅凭目录元数据或前端 path 直接调用。
 - 账号安全操作分层：平台管理员通过 SaaS 管理台 API 管理租户账号与重置临时密码，所有已认证账号通过身份 API 修改自己的密码；不得要求直接改库。
 
 ## 数据库与分库约束

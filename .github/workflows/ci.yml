@@ -35,6 +35,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+      - name: Apply platform migrations to CI database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for f in migrations/*.sql; do
+            psql -h localhost -U postgres -d meta_org_saas -v ON_ERROR_STOP=1 -q -f "$f"
+          done
       - name: Test backend
         working-directory: backend
         env:
@@ -46,6 +53,13 @@ jobs:
           MODEL_SECRET_KEY: 0123456789abcdef0123456789abcdef
           RUN_FRESH_DB_MIGRATION_TEST: "1"
           RUN_FRESH_TENANT_DB_MIGRATION_TEST: "1"
+          RUN_AI_GATEWAY_DB_TEST: "1"
+          AI_GATEWAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          RUN_RUNTIME_DB_TEST: "1"
+          RUNTIME_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          RUN_BUSINESS_AI_DB_TEST: "1"
+          BUSINESS_AI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          AUDIT_RETENTION_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
           META_ORG_ENVIRONMENT: test
         run: |
           go test ./...

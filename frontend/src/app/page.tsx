@@ -101,6 +101,7 @@ import {
   setSession,
 } from '@/lib/auth'
 import type { SessionScope } from '@/lib/auth'
+import { APIError } from '@/lib/api-error'
 import { useI18n } from '@/lib/i18n'
 import { apiOperations, getOperationProfile, operationDomains } from '@/lib/operations'
 import type { ApiOperation } from '@/lib/operations'
@@ -1956,7 +1957,10 @@ export default function Home() {
       setPassword('')
     } catch (err) {
       const message = err instanceof Error ? err.message : ''
-      setError(message === 'email already registered' ? t('auth.emailAlreadyRegistered') : message || t('auth.failed'))
+      const emailTaken =
+        (mode === 'register' && err instanceof APIError && err.code === 'conflict') ||
+        message === 'email already registered'
+      setError(emailTaken ? t('auth.emailAlreadyRegistered') : message || t('auth.failed'))
     } finally {
       setLoading(false)
     }

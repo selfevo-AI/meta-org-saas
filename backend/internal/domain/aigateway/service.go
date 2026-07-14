@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 )
 
@@ -754,7 +756,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 	releaseInput := ReleaseChannelInput{Outcome: ChannelOutcomeNeutral}
 	defer func() {
 		if releaseChannel {
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, releaseInput)
+			logCompensationFailure("release channel", s.repo.ReleaseChannel(context.Background(), target.ChannelID, releaseInput))
 		}
 	}()
 	var reservation *BalanceReservation
@@ -776,14 +778,14 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 	}
 	if err := s.authorizeInvocationWithKernel(ctx, input, target); err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		return nil, err
 	}
 	adapter, err := s.adapterFor(target)
 	if err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		return nil, err
 	}
@@ -809,15 +811,15 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 	})
 	if err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
 	if reservation != nil {
 		if err := s.repo.AttachBalanceReservation(ctx, reservation.ID, invocation.ID); err != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
-			_ = s.repo.FailInvocation(context.Background(), invocation.ID, FailInvocationInput{ErrorType: "reservation_attach_error", Message: err.Error(), DurationMS: int(time.Since(started).Milliseconds())})
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
+			logCompensationFailure("fail invocation after reservation attach error", s.repo.FailInvocation(context.Background(), invocation.ID, FailInvocationInput{ErrorType: "reservation_attach_error", Message: err.Error(), DurationMS: int(time.Since(started).Milliseconds())}))
 			s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 			return nil, err
 		}
@@ -832,7 +834,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 	if err != nil {
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err, channelOutcomeForError(ctx, err))
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		releaseChannel = false
 		s.recordInvocationSpan(ctx, trace, observability.SpanAIInvocation, invocation.ID, target, input.Attribution, StatusFailed, err.Error(), int(time.Since(started).Milliseconds()))
@@ -867,7 +869,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		Metadata:            accessTokenLedgerMetadata(input),
 	}); err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
@@ -884,7 +886,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 			return nil, err
 		}
 	}
-	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, releaseInput)
+	logCompensationFailure("release channel", s.repo.ReleaseChannel(ctx, target.ChannelID, releaseInput))
 	releaseChannel = false
 	s.recordCostLedger(ctx, invocation.ID, target, input.Attribution, resp.Usage, breakdown, currency, ModeSync, StatusCompleted, "")
 	completedAt := time.Now()
@@ -946,7 +948,7 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 	releaseChannel := target.ChannelID != nil
 	defer func() {
 		if releaseChannel {
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{Outcome: ChannelOutcomeNeutral})
+			logCompensationFailure("release channel", s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{Outcome: ChannelOutcomeNeutral}))
 		}
 	}()
 	var reservation *BalanceReservation
@@ -968,14 +970,14 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 	}
 	if err := s.authorizeInvocationWithKernel(ctx, input, target); err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		return nil, err
 	}
 	adapter, err := s.adapterFor(target)
 	if err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		return nil, err
 	}
@@ -1000,15 +1002,15 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 	})
 	if err != nil {
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 		return nil, err
 	}
 	if reservation != nil {
 		if err := s.repo.AttachBalanceReservation(ctx, reservation.ID, invocation.ID); err != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
-			_ = s.repo.FailInvocation(context.Background(), invocation.ID, FailInvocationInput{ErrorType: "reservation_attach_error", Message: err.Error(), DurationMS: int(time.Since(started).Milliseconds())})
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
+			logCompensationFailure("fail invocation after reservation attach error", s.repo.FailInvocation(context.Background(), invocation.ID, FailInvocationInput{ErrorType: "reservation_attach_error", Message: err.Error(), DurationMS: int(time.Since(started).Milliseconds())}))
 			s.completeObservationTrace(ctx, trace, observability.TraceFailed)
 			return nil, err
 		}
@@ -1026,7 +1028,7 @@ func (s *Service) stream(ctx context.Context, input InvokeInput, accessToken *Ac
 		s.recordFailedInvocation(ctx, invocation.ID, target, started, err, channelOutcomeForError(ctx, err))
 		releaseChannel = false
 		if reservation != nil {
-			_ = s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error())
+			logCompensationFailure("refund balance reservation", s.repo.RefundAccessTokenBalance(context.Background(), reservation.ID, err.Error()))
 		}
 		s.recordInvocationSpan(ctx, trace, observability.SpanAIStream, invocation.ID, target, input.Attribution, StatusFailed, err.Error(), int(time.Since(started).Milliseconds()))
 		s.completeObservationTrace(ctx, trace, observability.TraceFailed)
@@ -1448,6 +1450,7 @@ func effectiveTimeout(deploymentLimit time.Duration, providerTimeoutMS int) time
 func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc, invocationID uuid.UUID, target ResolvedModel, input InvokeInput, serviceTier string, reasoningEffort string, started time.Time, events <-chan StreamEvent, trace *observability.Trace, reservation *BalanceReservation, accessToken *AccessTokenContext) <-chan StreamEvent {
 	out := make(chan StreamEvent, 1)
 	go func() {
+		defer panicguard.Recover("aigateway recording stream")
 		defer cancel()
 		defer close(out)
 		usage := TokenUsage{}
@@ -1487,7 +1490,7 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 		breakdown := CalculateCostBreakdown(usage, target.Price, target.RateMultiplier, serviceTier)
 		cost := breakdown.ActualCost
 		currency := currencyOrDefault(target.Currency)
-		_ = s.repo.CreateUsageLedger(context.Background(), CreateUsageLedgerInput{
+		logCompensationFailure("create usage ledger for stream", s.repo.CreateUsageLedger(context.Background(), CreateUsageLedgerInput{
 			InvocationID:        invocationID,
 			AccessTokenID:       input.AccessTokenID,
 			ModelGroupID:        input.ModelGroupID,
@@ -1505,31 +1508,31 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 			UpstreamModel:       target.UpstreamModel,
 			Reason:              failed,
 			Metadata:            accessTokenLedgerMetadata(input),
-		})
+		}))
 		durationMS := int(time.Since(started).Milliseconds())
 		if err := s.settleStreamBalance(reservation, accessToken, cost, currency, firstNonEmpty(failed, "ai_stream_settle")); err != nil {
 			failed = err.Error()
 		}
 		if failed != "" {
-			_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: "provider_error", Message: failed, DurationMS: durationMS})
-			_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
+			logCompensationFailure("fail invocation after stream failure", s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: "provider_error", Message: failed, DurationMS: durationMS}))
+			logCompensationFailure("release channel", s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
 				Amount: cost, Outcome: ChannelOutcomeFailure, Error: failed, ResponseMS: durationMS,
-			})
+			}))
 			s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusFailed, failed, durationMS)
 			s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
 			return
 		}
-		_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
+		logCompensationFailure("release channel", s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
 			Amount: cost, Outcome: ChannelOutcomeSuccess, ResponseMS: durationMS,
-		})
+		}))
 		s.recordCostLedger(context.Background(), invocationID, target, input.Attribution, usage, breakdown, currency, ModeStream, StatusCompleted, "")
-		_ = s.repo.CompleteInvocation(context.Background(), invocationID, CompleteInvocationInput{
+		logCompensationFailure("complete invocation", s.repo.CompleteInvocation(context.Background(), invocationID, CompleteInvocationInput{
 			Usage:         usage,
 			CostAmount:    cost,
 			CostBreakdown: breakdown,
 			Currency:      currency,
 			DurationMS:    durationMS,
-		})
+		}))
 		s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusCompleted, "", durationMS)
 		s.recordAIMetrics(context.Background(), invocationID, usage, cost, currency, map[string]any{"mode": ModeStream, "provider_type": target.ProviderType, "model": target.Model})
 		s.completeObservationTrace(context.Background(), trace, observability.TraceComplete)
@@ -1548,7 +1551,7 @@ func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, tar
 	breakdown := CalculateCostBreakdown(usage, target.Price, target.RateMultiplier, serviceTier)
 	cost := breakdown.ActualCost
 	currency := currencyOrDefault(target.Currency)
-	_ = s.repo.CreateUsageLedger(context.Background(), CreateUsageLedgerInput{
+	logCompensationFailure("create usage ledger for cancelled stream", s.repo.CreateUsageLedger(context.Background(), CreateUsageLedgerInput{
 		InvocationID:        invocationID,
 		AccessTokenID:       input.AccessTokenID,
 		ModelGroupID:        input.ModelGroupID,
@@ -1566,24 +1569,34 @@ func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, tar
 		UpstreamModel:       target.UpstreamModel,
 		Reason:              cause.Error(),
 		Metadata:            accessTokenLedgerMetadata(input),
-	})
+	}))
 	if err := s.settleStreamBalance(reservation, accessToken, cost, currency, cause.Error()); err != nil {
 		cause = err
 	}
-	_ = s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: errorType, Message: cause.Error(), DurationMS: durationMS, Cancelled: true})
+	logCompensationFailure("fail invocation after stream cancellation", s.repo.FailInvocation(context.Background(), invocationID, FailInvocationInput{ErrorType: errorType, Message: cause.Error(), DurationMS: durationMS, Cancelled: true}))
 	outcome := ChannelOutcomeNeutral
 	if errors.Is(cause, context.DeadlineExceeded) {
 		outcome = ChannelOutcomeFailure
 	}
-	_ = s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
+	logCompensationFailure("release channel", s.repo.ReleaseChannel(context.Background(), target.ChannelID, ReleaseChannelInput{
 		Amount: cost, Outcome: outcome, Error: cause.Error(), ResponseMS: durationMS,
-	})
+	}))
 	if cost > 0 {
 		s.recordCostLedger(context.Background(), invocationID, target, input.Attribution, usage, breakdown, currency, ModeStream, StatusCancelled, cause.Error())
 	}
 	s.recordInvocationSpan(context.Background(), trace, observability.SpanAIStream, invocationID, target, input.Attribution, StatusCancelled, cause.Error(), durationMS)
 	s.recordMetric(context.Background(), observability.MetricReliability, metricName, &invocationID, "ai_invocation", 1, map[string]any{"provider_type": target.ProviderType, "model": target.Model})
 	s.completeObservationTrace(context.Background(), trace, observability.TraceFailed)
+}
+
+// logCompensationFailure makes failed compensating writes (balance refunds,
+// channel releases, invocation status updates, usage-ledger inserts) visible.
+// They stay non-fatal — the reservation recovery worker reconciles balances
+// later — but a silent failure here hides real money and channel-pool issues.
+func logCompensationFailure(operation string, err error) {
+	if err != nil {
+		log.Printf("aigateway: %s failed: %v", operation, err)
+	}
 }
 
 func (s *Service) settleStreamBalance(reservation *BalanceReservation, accessToken *AccessTokenContext, cost float64, currency string, reason string) error {
@@ -1600,7 +1613,7 @@ func (s *Service) settleStreamBalance(reservation *BalanceReservation, accessTok
 }
 
 func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, target ResolvedModel, started time.Time, cause error, outcome string) {
-	_ = s.repo.CreateUsageLedger(ctx, CreateUsageLedgerInput{
+	logCompensationFailure("create usage ledger for failed invocation", s.repo.CreateUsageLedger(ctx, CreateUsageLedgerInput{
 		InvocationID:        id,
 		ChannelID:           target.ChannelID,
 		ModelPriceVersionID: target.PriceVersionID,
@@ -1608,11 +1621,11 @@ func (s *Service) recordFailedInvocation(ctx context.Context, id uuid.UUID, targ
 		Amount:              0,
 		Currency:            currencyOrDefault(target.Currency),
 		Reason:              cause.Error(),
-	})
-	_ = s.repo.ReleaseChannel(ctx, target.ChannelID, ReleaseChannelInput{
+	}))
+	logCompensationFailure("release channel", s.repo.ReleaseChannel(ctx, target.ChannelID, ReleaseChannelInput{
 		Outcome: outcome, Error: cause.Error(), ResponseMS: int(time.Since(started).Milliseconds()),
-	})
-	_ = s.repo.FailInvocation(ctx, id, FailInvocationInput{ErrorType: "provider_error", Message: cause.Error(), DurationMS: int(time.Since(started).Milliseconds())})
+	}))
+	logCompensationFailure("fail invocation", s.repo.FailInvocation(ctx, id, FailInvocationInput{ErrorType: "provider_error", Message: cause.Error(), DurationMS: int(time.Since(started).Milliseconds())}))
 }
 
 func (s *Service) adapterFor(target ResolvedModel) (ProviderAdapter, error) {

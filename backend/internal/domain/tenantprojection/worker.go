@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -93,7 +94,7 @@ func (w *Worker) Start(ctx context.Context) {
 		ticker := time.NewTicker(w.config.PollInterval)
 		defer ticker.Stop()
 		for {
-			processed, err := w.RunOnce(ctx)
+			processed, err := w.runOnceGuarded(ctx)
 			if err != nil {
 				log.Printf("tenant projection worker failed: %v", err)
 			}
@@ -107,6 +108,13 @@ func (w *Worker) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// runOnceGuarded keeps a panic in one projection cycle from killing the
+// worker goroutine (and with it the whole process).
+func (w *Worker) runOnceGuarded(ctx context.Context) (processed int, err error) {
+	defer panicguard.RecoverAs("tenant projection worker", &err)
+	return w.RunOnce(ctx)
 }
 
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {

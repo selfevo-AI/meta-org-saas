@@ -35,10 +35,18 @@ func (r *ClientIPResolver) Resolve(request *http.Request) string {
 	if !r.isTrusted(peer) {
 		return peer.String()
 	}
-	for _, raw := range strings.Split(request.Header.Get("X-Forwarded-For"), ",") {
-		if ip := net.ParseIP(strings.TrimSpace(raw)); ip != nil {
-			return ip.String()
+	// The peer is a trusted proxy. Proxies append the address they received
+	// the request from to X-Forwarded-For, so the rightmost entry that is not
+	// itself a trusted proxy is the real client. Leftmost entries are
+	// client-supplied and trivially spoofable — trusting them lets callers
+	// mint fresh rate-limit identities per request.
+	entries := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
+	for index := len(entries) - 1; index >= 0; index-- {
+		ip := net.ParseIP(strings.TrimSpace(entries[index]))
+		if ip == nil || r.isTrusted(ip) {
+			continue
 		}
+		return ip.String()
 	}
 	if ip := net.ParseIP(strings.TrimSpace(request.Header.Get("X-Real-IP"))); ip != nil {
 		return ip.String()

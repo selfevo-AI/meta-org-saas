@@ -257,7 +257,7 @@ export function DataTable({
           {rows.map((row, index) => (
             <tr key={index}>
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex} className="max-w-[260px] truncate px-3 py-2 text-slate-700">
+                <td key={headers[cellIndex] ?? cellIndex} className="max-w-[260px] truncate px-3 py-2 text-slate-700">
                   {cell}
                 </td>
               ))}

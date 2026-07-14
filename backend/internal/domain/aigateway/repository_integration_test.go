@@ -373,3 +373,90 @@ func TestReservationRecoveryRefundsOrphansAndCancelsAbandonedInvocations(t *test
 		t.Fatalf("recovered state = balance:%v reserved:%v quota:%v invocation:%s inflight:%d", balance, reserved, quotaUsed, invocationStatus, inflight)
 	}
 }
+
+// TestFinishReservationIsIdempotent guards the double-finish path that keeps
+// the reservation-recovery worker and the live invoke goroutine from both
+// settling the same reservation (which would double-charge the balance).
+func TestFinishReservationIsIdempotent(t *testing.T) {
+	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {
+		t.Skip("set RUN_AI_GATEWAY_DB_TEST=1 to run AI Gateway database verification")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := os.Getenv("AI_GATEWAY_TEST_DATABASE_URL")
+	if url == "" {
+		url = "postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable"
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	orgID, tokenID := uuid.New(), uuid.New()
+	settleReservationID, refundReservationID := uuid.New(), uuid.New()
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ai_gateway_balance_transactions WHERE organization_id = $1`, orgID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ai_gateway_balances WHERE organization_id = $1`, orgID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM ai_access_tokens WHERE organization_id = $1`, orgID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM organizations WHERE id = $1`, orgID)
+	}()
+
+	statements := []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO organizations(id, name) VALUES ($1, $2)`, []any{orgID, "double-finish-" + orgID.String()}},
+		{`INSERT INTO ai_access_tokens(id, organization_id, name, token_hash, quota_amount, quota_used) VALUES ($1, $2, 'double-finish', $3, 100, 10)`, []any{tokenID, orgID, "double-finish-" + tokenID.String()}},
+		{`INSERT INTO ai_gateway_balances(organization_id, balance_amount, reserved_amount) VALUES ($1, 100, 10)`, []any{orgID}},
+		{`INSERT INTO ai_gateway_balance_transactions(id, organization_id, access_token_id, transaction_type, amount, currency) VALUES ($1, $2, $3, 'reserve', 4, 'CNY')`, []any{settleReservationID, orgID, tokenID}},
+		{`INSERT INTO ai_gateway_balance_transactions(id, organization_id, access_token_id, transaction_type, amount, currency) VALUES ($1, $2, $3, 'reserve', 6, 'CNY')`, []any{refundReservationID, orgID, tokenID}},
+	}
+	for _, statement := range statements {
+		if _, err := pool.Exec(ctx, statement.sql, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	repo := &PostgresRepository{db: pool}
+
+	// Settle once, then settle again: the second call must be a no-op.
+	settle := SettleBalanceInput{ReservationID: settleReservationID, AccessTokenID: tokenID, ActualAmount: 3, Currency: "CNY", Reason: "first"}
+	if err := repo.SettleAccessTokenBalance(ctx, settle); err != nil {
+		t.Fatalf("first settle error = %v", err)
+	}
+	settle.ActualAmount = 3
+	settle.Reason = "duplicate"
+	if err := repo.SettleAccessTokenBalance(ctx, settle); err != nil {
+		t.Fatalf("duplicate settle error = %v", err)
+	}
+	// Refund the second reservation, then attempt to settle it: must be a no-op.
+	if err := repo.RefundAccessTokenBalance(ctx, refundReservationID, "refunded"); err != nil {
+		t.Fatalf("refund error = %v", err)
+	}
+	if err := repo.SettleAccessTokenBalance(ctx, SettleBalanceInput{ReservationID: refundReservationID, AccessTokenID: tokenID, ActualAmount: 6, Currency: "CNY", Reason: "settle-after-refund"}); err != nil {
+		t.Fatalf("settle-after-refund error = %v", err)
+	}
+
+	var balance, reserved float64
+	if err := pool.QueryRow(ctx, `SELECT balance_amount::float8, reserved_amount::float8 FROM ai_gateway_balances WHERE organization_id = $1`, orgID).Scan(&balance, &reserved); err != nil {
+		t.Fatal(err)
+	}
+	// Started at balance 100 / reserved 10. Settle 3 of a 4 reservation: -3
+	// balance, -4 reserved. Refund the 6 reservation: -6 reserved. So the
+	// balance must move exactly once (to 97) and reserved unwind exactly to 0 —
+	// duplicate settle and settle-after-refund must not double-charge.
+	if balance != 97 || reserved != 0 {
+		t.Fatalf("balance after idempotent finishes = balance:%v reserved:%v, want 97/0", balance, reserved)
+	}
+	var settleCount, refundCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM ai_gateway_balance_transactions WHERE reservation_id = $1 AND transaction_type = 'settle'`, settleReservationID).Scan(&settleCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM ai_gateway_balance_transactions WHERE reservation_id = $1 AND transaction_type = 'refund'`, refundReservationID).Scan(&refundCount); err != nil {
+		t.Fatal(err)
+	}
+	if settleCount != 1 || refundCount != 1 {
+		t.Fatalf("finish transaction counts = settle:%d refund:%d, want 1/1", settleCount, refundCount)
+	}
+}

@@ -3,6 +3,7 @@ package toolruntime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -164,7 +165,7 @@ func (r *PostgresRepository) UpdateInterfaceFile(ctx context.Context, id uuid.UU
 	return file, nil
 }
 
-func (r *PostgresRepository) CreateExecution(ctx context.Context, input CreateExecutionInput) (*ToolExecution, error) {
+func (r *PostgresRepository) CreateExecution(ctx context.Context, input CreateExecutionInput) (*ToolExecution, bool, error) {
 	execution := &ToolExecution{}
 	err := scanExecutionRow(r.db.QueryRow(ctx, `
 		INSERT INTO tool_executions (
@@ -181,10 +182,10 @@ func (r *PostgresRepository) CreateExecution(ctx context.Context, input CreateEx
 		input.ProjectID, input.WorkflowID, input.TaskID, input.IdempotencyKey, input.Policy, input.GovernanceDecision,
 		input.RequestedByHumanID, input.Status, mustJSON(input.Arguments)), execution)
 	if err == nil {
-		return execution, nil
+		return execution, false, nil
 	}
 	if err != pgx.ErrNoRows || input.IdempotencyKey == "" {
-		return nil, fmt.Errorf("create tool execution: %w", err)
+		return nil, false, fmt.Errorf("create tool execution: %w", err)
 	}
 	err = scanExecutionRow(r.db.QueryRow(ctx, `
 		SELECT id, tool_id, invocation_id, actor_id, actor_type, organization_id, department_id,
@@ -195,9 +196,9 @@ func (r *PostgresRepository) CreateExecution(ctx context.Context, input CreateEx
 			AND ($3::uuid IS NULL OR organization_id IS NOT DISTINCT FROM $3)
 	`, input.ToolID, input.IdempotencyKey, nullableUUID(currentTenantOrganizationID(ctx))), execution)
 	if err != nil {
-		return nil, fmt.Errorf("get idempotent tool execution: %w", err)
+		return nil, false, fmt.Errorf("get idempotent tool execution: %w", err)
 	}
-	return execution, nil
+	return execution, true, nil
 }
 
 func (r *PostgresRepository) CompleteExecution(ctx context.Context, id uuid.UUID, input CompleteExecutionInput) (*ToolExecution, error) {
@@ -271,6 +272,25 @@ func (r *PostgresRepository) GetApproval(ctx context.Context, id uuid.UUID) (*To
 	`, id, nullableUUID(currentTenantOrganizationID(ctx))), approval)
 	if err != nil {
 		return nil, fmt.Errorf("get tool approval: %w", err)
+	}
+	return approval, nil
+}
+
+func (r *PostgresRepository) GetLatestApprovalByExecution(ctx context.Context, executionID uuid.UUID) (*ToolApproval, error) {
+	approval := &ToolApproval{}
+	err := scanApprovalRow(r.db.QueryRow(ctx, `
+		SELECT a.id, a.execution_id, a.status, a.requested_by, a.reviewed_by, a.approved_by_human_id, a.reason, a.expires_at, a.created_at, a.reviewed_at
+		FROM tool_approvals a
+		JOIN tool_executions e ON e.id = a.execution_id
+		WHERE a.execution_id = $1 AND ($2::uuid IS NULL OR e.organization_id IS NOT DISTINCT FROM $2)
+		ORDER BY a.created_at DESC
+		LIMIT 1
+	`, executionID, nullableUUID(currentTenantOrganizationID(ctx))), approval)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest tool approval: %w", err)
 	}
 	return approval, nil
 }

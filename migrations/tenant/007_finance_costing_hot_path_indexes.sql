@@ -1,0 +1,3 @@
+-- Reuse the platform hot-path index repair so platform-era and dedicated
+-- tenant schemas share one finance/costing index set.
+-- tenantdb:include ../029_finance_costing_hot_path_indexes.sql

@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 func TestRuntimeOperationRepositoryAcceptsOptionalEntityKey(t *testing.T) {
@@ -51,4 +54,49 @@ func TestRuntimeOperationRepositoryAcceptsOptionalEntityKey(t *testing.T) {
 	if !found {
 		t.Fatalf("ListOperations() did not include %q", operation.ID)
 	}
+
+	financeService := &integrationTrialBalanceService{balance: &finance.GLTrialBalance{Rows: []finance.GLTrialBalanceRow{}, Currency: "CNY"}}
+	service := NewService(repo, WithOperationAdapter(ActionFinanceGLTrialBalance, NewFinanceTrialBalanceAdapter(financeService)))
+	organizationID := uuid.New()
+	tenantCtx := context.WithValue(ctx, middleware.TenantContextKey, &middleware.TenantContext{
+		Mode: "saas", OrganizationID: &organizationID, EnabledModules: map[string]bool{"finance": true},
+	})
+	result, err := service.ExecuteAssistantOperation(tenantCtx, operation.ID, RuntimeExecutionRequest{Query: map[string]string{"currency": "CNY"}})
+	if err != nil {
+		t.Fatalf("ExecuteAssistantOperation() error = %v", err)
+	}
+	if result.Status != "ok" || financeService.input.Currency != "CNY" {
+		t.Fatalf("assistant runtime result/input = %#v/%#v", result, financeService.input)
+	}
+
+	tenantURL := os.Getenv("RUNTIME_TENANT_TEST_DATABASE_URL")
+	if tenantURL == "" {
+		t.Log("RUNTIME_TENANT_TEST_DATABASE_URL is not set; skipping live tenant finance adapter verification")
+		return
+	}
+	tenantPool, err := pgxpool.New(ctx, tenantURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tenantPool.Close()
+	liveFinanceService := finance.NewService(finance.NewRepository(tenantPool, nil))
+	liveService := NewService(repo, WithOperationAdapter(ActionFinanceGLTrialBalance, NewFinanceTrialBalanceAdapter(liveFinanceService)))
+	liveResult, err := liveService.ExecuteAssistantOperation(tenantCtx, operation.ID, RuntimeExecutionRequest{Query: map[string]string{"currency": "CNY"}})
+	if err != nil {
+		t.Fatalf("live ExecuteAssistantOperation() error = %v", err)
+	}
+	liveBalance, ok := liveResult.Data.(*finance.GLTrialBalance)
+	if !ok || liveBalance.Rows == nil || liveBalance.Currency != "CNY" {
+		t.Fatalf("live trial balance result = %#v", liveResult)
+	}
+}
+
+type integrationTrialBalanceService struct {
+	input   finance.GLTrialBalanceInput
+	balance *finance.GLTrialBalance
+}
+
+func (s *integrationTrialBalanceService) GetGLTrialBalance(_ context.Context, input finance.GLTrialBalanceInput) (*finance.GLTrialBalance, error) {
+	s.input = input
+	return s.balance, nil
 }

@@ -33,6 +33,7 @@ interface GatewayStreamData {
   invocation_id?: string
   delta?: string
   error?: string
+  code?: string
   done?: boolean
   step?: AssistantStep
   data?: Record<string, unknown>
@@ -326,7 +327,10 @@ export function AIAssistant({
             setPendingApprovalID(approvalID)
           }
           if (data.error) {
-            const denied = data.error.toLowerCase().includes('denied') || data.error.toLowerCase().includes('forbidden')
+            const denied =
+              data.code === 'forbidden' ||
+              data.error.toLowerCase().includes('denied') ||
+              data.error.toLowerCase().includes('forbidden')
             setState(denied ? 'governance_denied' : 'provider_error')
             setMessages((current) =>
               current.map((message) =>
@@ -418,7 +422,10 @@ export function AIAssistant({
             setState('approval_required')
           }
           if (data.error) {
-            const denied = data.error.toLowerCase().includes('denied') || data.error.toLowerCase().includes('forbidden')
+            const denied =
+              data.code === 'forbidden' ||
+              data.error.toLowerCase().includes('denied') ||
+              data.error.toLowerCase().includes('forbidden')
             setState(denied ? 'governance_denied' : 'provider_error')
             setMessages((current) =>
               current.map((message) =>

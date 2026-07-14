@@ -284,6 +284,9 @@ func (p *IndustrySolutionMigrationPlan) addIndexStatements(quotedSchema string, 
 		}
 		stmt := fmt.Sprintf("CREATE %sINDEX IF NOT EXISTS %s ON %s.%s (%s)", unique, quotedIndex, quotedSchema, quotedTable, strings.Join(fields, ", "))
 		if strings.TrimSpace(index.Where) != "" {
+			if !safeIndexPredicate(index.Where) {
+				return fmt.Errorf("unsafe index predicate for %s.%s", table.Name, index.Name)
+			}
 			stmt += " WHERE " + index.Where
 		}
 		p.add(stmt, IndustrySolutionDiff{Action: "create_index", Table: table.Name, Field: strings.Join(index.Fields, ","), To: index.Name, Risk: IndustrySolutionRiskSafe})
@@ -414,6 +417,19 @@ func validateTable(table IndustrySolutionTableDefinition) error {
 			return fmt.Errorf("unsafe default expression for %s.%s", table.Name, field.Name)
 		}
 	}
+	for _, index := range table.Indexes {
+		if _, err := tenantdb.QuoteIdentifier(index.Name); err != nil {
+			return fmt.Errorf("invalid index name %q: %w", index.Name, err)
+		}
+		for _, field := range index.Fields {
+			if _, err := tenantdb.QuoteIdentifier(field); err != nil {
+				return fmt.Errorf("invalid index field %q for %s.%s: %w", field, table.Name, index.Name, err)
+			}
+		}
+		if strings.TrimSpace(index.Where) != "" && !safeIndexPredicate(index.Where) {
+			return fmt.Errorf("unsafe index predicate for %s.%s", table.Name, index.Name)
+		}
+	}
 	return nil
 }
 
@@ -485,6 +501,45 @@ func safeQuotedLiteral(value string) bool {
 			continue
 		}
 		return false
+	}
+	return true
+}
+
+// safeIndexPredicate accepts simple partial-index predicates (identifier
+// comparisons, IS [NOT] NULL, AND/OR, literals) and rejects anything that
+// could smuggle extra statements into the generated DDL: the plan executes
+// each statement without bind parameters, where stacked statements run.
+func safeIndexPredicate(expr string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(expr))
+	if trimmed == "" {
+		return false
+	}
+	for _, item := range []string{";", "--", "/*", "*/", "$"} {
+		if strings.Contains(trimmed, item) {
+			return false
+		}
+	}
+	for _, r := range trimmed {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case strings.ContainsRune(" \t_.\"'(),=<>!+-*/%:", r):
+		default:
+			return false
+		}
+	}
+	blockedWords := map[string]bool{
+		"select": true, "insert": true, "update": true, "delete": true,
+		"drop": true, "alter": true, "create": true, "truncate": true,
+		"grant": true, "revoke": true, "copy": true, "execute": true,
+		"call": true, "do": true, "pg_sleep": true, "union": true,
+	}
+	words := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_')
+	})
+	for _, word := range words {
+		if blockedWords[word] {
+			return false
+		}
 	}
 	return true
 }

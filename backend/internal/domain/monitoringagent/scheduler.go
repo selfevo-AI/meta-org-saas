@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 )
 
 type SchedulerConfig struct {
@@ -77,12 +79,20 @@ func (s *Scheduler) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
-				if _, executed, err := s.RunIfDue(ctx, now); executed && err != nil {
+				if _, executed, err := s.runIfDueGuarded(ctx, now); executed && err != nil {
 					log.Printf("monitoring agent scheduled run failed: %v", err)
 				}
 			}
 		}
 	}()
+}
+
+// runIfDueGuarded keeps a panic in one scheduled run from killing the
+// scheduler goroutine (and with it the whole process).
+func (s *Scheduler) runIfDueGuarded(ctx context.Context, now time.Time) (run *MonitoringAgentRun, executed bool, err error) {
+	defer panicguard.RecoverAs("monitoring agent scheduler", &err)
+	run, executed, err = s.RunIfDue(ctx, now)
+	return run, executed, err
 }
 
 func (s *Scheduler) dueAt(now time.Time) bool {

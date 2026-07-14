@@ -72,15 +72,22 @@ func (c *Config) Validate() error {
 	if len(c.JWTSecret) < 16 {
 		errs = append(errs, fmt.Errorf("JWT_SECRET must contain at least 16 characters"))
 	}
-	if c.Environment == "production" {
+	// Repository-public development secrets must be rejected in production, and
+	// also in saas mode outside an explicit test environment: the default
+	// Environment is "development", so a saas deployment that forgets to set
+	// META_ORG_ENVIRONMENT=production would otherwise silently sign JWTs and
+	// encrypt provider keys with secrets that are committed to this repository.
+	// The "test" environment is exempt so CI can run saas flows with throwaway keys.
+	requireHardenedSecrets := c.Environment == "production" || (c.MetaOrgMode == "saas" && c.Environment != "test")
+	if requireHardenedSecrets {
 		if len(c.JWTSecret) < 32 || c.JWTSecret == developmentJWTSecret {
-			errs = append(errs, fmt.Errorf("production JWT_SECRET must contain at least 32 characters and must not use the development default"))
+			errs = append(errs, fmt.Errorf("JWT_SECRET must contain at least 32 characters and must not use the development default in production or saas mode"))
 		}
 		if c.ModelSecretKey == developmentModelSecret || c.ModelSecretKey == composeModelSecret {
-			errs = append(errs, fmt.Errorf("production MODEL_SECRET_KEY must not use a repository development key"))
+			errs = append(errs, fmt.Errorf("MODEL_SECRET_KEY must not use a repository development key in production or saas mode"))
 		}
 		if c.SecurityKernelSharedSecret == developmentKernelKey {
-			errs = append(errs, fmt.Errorf("production SECURITY_KERNEL_SHARED_SECRET must not use the Compose development key"))
+			errs = append(errs, fmt.Errorf("SECURITY_KERNEL_SHARED_SECRET must not use the Compose development key in production or saas mode"))
 		}
 	}
 	if c.MetaOrgMode == "saas" {

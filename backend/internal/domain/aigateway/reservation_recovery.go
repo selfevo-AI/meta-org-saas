@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/panicguard"
 )
 
 type StaleBalanceReservation struct {
@@ -98,7 +99,7 @@ func (w *ReservationRecoveryWorker) Start(ctx context.Context) {
 	w.setRunning(true)
 	go func() {
 		defer w.setRunning(false)
-		if _, err := w.RunOnce(ctx); err != nil {
+		if _, err := w.runOnceGuarded(ctx); err != nil {
 			log.Printf("ai gateway reservation recovery failed: %v", err)
 		}
 		ticker := time.NewTicker(w.config.PollInterval)
@@ -108,12 +109,19 @@ func (w *ReservationRecoveryWorker) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := w.RunOnce(ctx); err != nil {
+				if _, err := w.runOnceGuarded(ctx); err != nil {
 					log.Printf("ai gateway reservation recovery failed: %v", err)
 				}
 			}
 		}
 	}()
+}
+
+// runOnceGuarded keeps a panic in one recovery cycle from killing the worker
+// goroutine (and with it the whole process).
+func (w *ReservationRecoveryWorker) runOnceGuarded(ctx context.Context) (counts ReservationRecoveryCounts, err error) {
+	defer panicguard.RecoverAs("ai gateway reservation recovery worker", &err)
+	return w.RunOnce(ctx)
 }
 
 func (w *ReservationRecoveryWorker) RunOnce(ctx context.Context) (ReservationRecoveryCounts, error) {
