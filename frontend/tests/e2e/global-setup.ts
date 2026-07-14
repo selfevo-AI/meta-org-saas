@@ -17,6 +17,10 @@ type AIModel = {
   model_key: string
 }
 
+type Project = {
+  id: string
+}
+
 const mockPort = Number(process.env.PLAYWRIGHT_MOCK_AI_PORT || 18081)
 const mockProviderName = 'Playwright Business AI'
 const mockModelKey = 'playwright-business-ai'
@@ -164,6 +168,36 @@ export default async function globalSetup(_config: FullConfig) {
     mockServer.close()
     throw new Error(`Playwright sample tenant setup failed: ${sampleResponse.status}`)
   }
+
+  const tenantEmail = process.env.PLAYWRIGHT_TENANT_EMAIL || 'demo@local.com'
+  const tenantPassword = process.env.PLAYWRIGHT_TENANT_PASSWORD || 'MetaOrgSampleTenant!2026'
+  let tenantReady = false
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const tenantLoginResponse = await fetch(`${apiBase}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: tenantEmail, password: tenantPassword }),
+    })
+    if (tenantLoginResponse.ok) {
+      const tenantLogin = await tenantLoginResponse.json() as LoginResponse
+      const projectResponse = await fetch(`${apiBase}/projects?limit=100`, {
+        headers: { Authorization: `Bearer ${tenantLogin.token}` },
+      })
+      if (projectResponse.ok) {
+        const projects = await projectResponse.json() as Project[]
+        if (projects.length > 0) {
+          tenantReady = true
+          break
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+  }
+  if (!tenantReady) {
+    mockServer.close()
+    throw new Error('Playwright sample tenant provisioning did not produce a project')
+  }
+
   return async () => {
     await apiRequest<ModelProvider>(apiBase, `${managementBase}/model-providers/${provider.id}`, login.token, {
       method: 'PATCH',

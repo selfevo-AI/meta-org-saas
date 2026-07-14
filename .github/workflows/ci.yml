@@ -59,7 +59,7 @@ jobs:
           RUN_FRESH_DB_MIGRATION_TEST: "1"
           RUN_FRESH_TENANT_DB_MIGRATION_TEST: "1"
           RUN_AI_GATEWAY_DB_TEST: "1"
-          AI_GATEWAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_ai_gateway_test?sslmode=disable
+          AI_GATEWAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_ai_gateway_test?sslmode=disable&pool_max_conns=20
           RUN_RUNTIME_DB_TEST: "1"
           RUNTIME_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_runtime_test?sslmode=disable
           RUN_BUSINESS_AI_DB_TEST: "1"
