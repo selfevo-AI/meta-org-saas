@@ -76,13 +76,16 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([
+    Promise.allSettled([
       apiRequest<ModelProvider[]>('/model-providers', { token }),
       apiRequest<AIModel[]>('/models', { token }),
       apiRequest<ProjectOption[]>('/projects?limit=100', { token }),
     ])
-      .then(([providerData, modelData, projectData]) => {
+      .then(([providerResult, modelResult, projectResult]) => {
         if (cancelled) return
+        const providerData = providerResult.status === 'fulfilled' ? providerResult.value : []
+        const modelData = modelResult.status === 'fulfilled' ? modelResult.value : []
+        const projectData = projectResult.status === 'fulfilled' ? projectResult.value : []
         const nextProviders = Array.isArray(providerData) ? providerData.filter((item) => item.status === 'active') : []
         const activeProviderIDs = new Set(nextProviders.map((item) => item.id))
         const nextModels = Array.isArray(modelData)
@@ -95,11 +98,12 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
         setModelSelection((current) => current || (nextModels[0] ? `${nextModels[0].provider_id}:${nextModels[0].model_key}` : ''))
         setActiveProjectID((current) => {
           const matched = nextProjects.find((item) => item.id === projectID || item.master_key === projectID || item.id === current)
-          return matched?.id || nextProjects[0]?.id || ''
+          return matched?.id || nextProjects[0]?.id || current || projectID
         })
-      })
-      .catch((requestError) => {
-        if (!cancelled) setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+        const failedResult = [providerResult, modelResult, projectResult].find((result) => result.status === 'rejected')
+        if (failedResult?.status === 'rejected') {
+          setError(failedResult.reason instanceof Error ? failedResult.reason.message : t('common.operationFailed'))
+        }
       })
     return () => {
       cancelled = true

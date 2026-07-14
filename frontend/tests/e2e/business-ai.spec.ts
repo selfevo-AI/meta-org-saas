@@ -46,8 +46,10 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
     ['learn', /evolution\.(create_knowledge|create_signal|propose_experiment)/],
     ['do', /project\.(create_deliverable|create_cost_entry|estimate_cost|update_status)/],
   ] as const
+  await expect(workbench.getByTestId('business-ai-analyze')).toBeEnabled({ timeout: 30_000 })
   for (const [stage, allowedTool] of stages) {
     await workbench.getByTestId(`business-ai-stage-${stage}`).click()
+    await expect(workbench.getByTestId('business-ai-analyze')).toBeEnabled({ timeout: 30_000 })
     const responsePromise = page.waitForResponse((response) => (
       response.request().method() === 'POST' && response.url().includes('/projects/') && response.url().endsWith('/ai-analyses')
     ))

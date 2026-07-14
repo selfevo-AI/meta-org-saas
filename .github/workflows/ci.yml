@@ -35,12 +35,17 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - name: Apply platform migrations to CI database
+      - name: Create and migrate backend integration databases
         env:
           PGPASSWORD: postgres
         run: |
-          for f in migrations/*.sql; do
-            psql -h localhost -U postgres -d meta_org_saas -v ON_ERROR_STOP=1 -q -f "$f"
+          for db in meta_org_ai_gateway_test meta_org_runtime_test meta_org_business_ai_test meta_org_audit_retention_test; do
+            createdb -h localhost -U postgres "$db"
+          done
+          for db in meta_org_saas meta_org_ai_gateway_test meta_org_runtime_test meta_org_business_ai_test meta_org_audit_retention_test; do
+            for f in migrations/*.sql; do
+              psql -h localhost -U postgres -d "$db" -v ON_ERROR_STOP=1 -q -f "$f"
+            done
           done
       - name: Test backend
         working-directory: backend
@@ -54,12 +59,12 @@ jobs:
           RUN_FRESH_DB_MIGRATION_TEST: "1"
           RUN_FRESH_TENANT_DB_MIGRATION_TEST: "1"
           RUN_AI_GATEWAY_DB_TEST: "1"
-          AI_GATEWAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          AI_GATEWAY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_ai_gateway_test?sslmode=disable
           RUN_RUNTIME_DB_TEST: "1"
-          RUNTIME_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          RUNTIME_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_runtime_test?sslmode=disable
           RUN_BUSINESS_AI_DB_TEST: "1"
-          BUSINESS_AI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
-          AUDIT_RETENTION_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable
+          BUSINESS_AI_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_business_ai_test?sslmode=disable
+          AUDIT_RETENTION_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/meta_org_audit_retention_test?sslmode=disable
           META_ORG_ENVIRONMENT: test
         run: |
           go test ./...
@@ -107,6 +112,9 @@ jobs:
       - name: Lint
         working-directory: frontend
         run: npm run lint
+      - name: Build
+        working-directory: frontend
+        run: npm run build
       - name: Verify frontend contracts
         working-directory: frontend
         run: |
@@ -120,10 +128,6 @@ jobs:
           npm run test:bundle
           npm run test:i18n-bundle
           npm run test:routing
-      - name: Build
-        working-directory: frontend
-        run: npm run build
-
   e2e:
     runs-on: ubuntu-latest
     services:

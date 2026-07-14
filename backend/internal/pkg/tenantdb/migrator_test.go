@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 6 {
-		t.Fatalf("tenant migration file count = %d, want 6", len(files))
+	if len(files) != 7 {
+		t.Fatalf("tenant migration file count = %d, want 7", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -167,6 +167,10 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		if !strings.Contains(businessKeyLinkSQL, snippet) {
 			t.Fatalf("tenant project requirement business-key migration SQL missing %q", snippet)
 		}
+	}
+	financeCostingIndexesSQL := files[6].SQL
+	if !strings.Contains(financeCostingIndexesSQL, "tenantdb:include ../029_finance_costing_hot_path_indexes.sql") {
+		t.Fatal("tenant finance/costing index migration SQL missing platform index include")
 	}
 }
 

@@ -58,8 +58,8 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run fresh tenant migrations: %v", err)
 	}
-	if result.Version != "006_project_requirement_business_key_link" {
-		t.Fatalf("tenant migration version = %q, want 006_project_requirement_business_key_link", result.Version)
+	if result.Version != "007_finance_costing_hot_path_indexes" {
+		t.Fatalf("tenant migration version = %q, want 007_finance_costing_hot_path_indexes", result.Version)
 	}
 
 	targetPool, err = pgxpool.New(ctx, targetURL)
