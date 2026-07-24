@@ -1,0 +1,13 @@
+# Use the same lightweight theme as the previous Pages build, but build it directly
+# on the Actions runner instead of the hosted Jekyll container.
+theme: jekyll-theme-primer
+
+# These internal implementation plans contain literal Liquid-like examples such as
+# {{ field: value }}. GitHub Pages' Jekyll 3 renderer evaluates those examples as
+# templates before Markdown conversion, so keep the plans in the repository while
+# excluding them from the generated reference site.
+exclude:
+  - docs/superpowers/plans/2026-06-14-meta-org-production-v1-implementation-plan.md
+  - docs/superpowers/plans/2026-06-19-assistant-runtime-context-engine-implementation-plan.md
+  - docs/superpowers/plans/2026-06-24-phase-1-erp-business-loop-hardening-implementation-plan.md
+  - docs/superpowers/plans/2026-06-24-verified-context-tool-loop-implementation-plan.md

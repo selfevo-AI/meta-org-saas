@@ -122,6 +122,42 @@ func BootstrapTenantData(ctx context.Context, db DB, input TenantBootstrapInput)
 
 func bootstrapBusinessClosureSample(ctx context.Context, db DB, input TenantBootstrapInput, departmentID uuid.UUID) error {
 	if _, err := db.Exec(ctx, `
+		INSERT INTO projects(
+			organization_id, department_id, name, description, status, priority,
+			risk_level, required_level, budget_amount, budget_currency, metadata
+		)
+		VALUES (
+			$1, $3, 'ERPNext Manufacturing Demo Delivery',
+			'Deliver the demo assembly kit through the governed manufacturing workflow.',
+			'active', 'high', 'medium', 'L2', 150000, 'CNY',
+			jsonb_build_object(
+				'sample_key', $2::text,
+				'erp_project_code', 'PRJ-DEMO-001',
+				'work_order_code', 'WO-DEMO-001',
+				'bom_code', 'BOM-DEMO-001',
+				'source', 'tenant_bootstrap'
+			)
+		)
+		ON CONFLICT ((metadata->>'erp_project_code'))
+		WHERE NULLIF(metadata->>'erp_project_code', '') IS NOT NULL
+		DO UPDATE SET
+			organization_id = EXCLUDED.organization_id,
+			department_id = EXCLUDED.department_id,
+			name = EXCLUDED.name,
+			description = EXCLUDED.description,
+			status = EXCLUDED.status,
+			priority = EXCLUDED.priority,
+			risk_level = EXCLUDED.risk_level,
+			required_level = EXCLUDED.required_level,
+			budget_amount = EXCLUDED.budget_amount,
+			budget_currency = EXCLUDED.budget_currency,
+			metadata = projects.metadata || EXCLUDED.metadata,
+			updated_at = NOW()
+	`, input.OrganizationID, input.SampleKey, departmentID); err != nil {
+		return fmt.Errorf("bootstrap sample project: %w", err)
+	}
+
+	if _, err := db.Exec(ctx, `
 		INSERT INTO sample_work_orders(organization_id, work_order_no, product_name, quantity, status, metadata)
 		VALUES ($1, 'WO-DEMO-001', 'Demo Assembly Kit', 120, 'planned', jsonb_build_object('sample_key', $2::text))
 		ON CONFLICT (work_order_no) DO UPDATE SET

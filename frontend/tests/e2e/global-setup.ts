@@ -172,30 +172,53 @@ export default async function globalSetup(_config: FullConfig) {
   const tenantEmail = process.env.PLAYWRIGHT_TENANT_EMAIL || 'demo@local.com'
   const tenantPassword = process.env.PLAYWRIGHT_TENANT_PASSWORD || 'MetaOrgSampleTenant!2026'
   let tenantReady = false
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const tenantLoginResponse = await fetch(`${apiBase}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: tenantEmail, password: tenantPassword }),
-    })
-    if (tenantLoginResponse.ok) {
-      const tenantLogin = await tenantLoginResponse.json() as LoginResponse
+  let lastTenantState = 'tenant login was not attempted'
+  let tenantToken: string | undefined
+  let pollDelayMs = 2000
+  for (let attempt = 0; attempt < 45; attempt += 1) {
+    if (!tenantToken) {
+      const tenantLoginResponse = await fetch(`${apiBase}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: tenantEmail, password: tenantPassword }),
+      })
+      if (tenantLoginResponse.ok) {
+        const tenantLogin = await tenantLoginResponse.json() as LoginResponse
+        tenantToken = tenantLogin.token
+        lastTenantState = 'tenant login succeeded; waiting for project data'
+      } else {
+        const retryAfterSeconds = Number(tenantLoginResponse.headers.get('retry-after') || 0)
+        lastTenantState = `tenant login failed: ${tenantLoginResponse.status} ${await tenantLoginResponse.text()}`
+        if (retryAfterSeconds > 0) {
+          pollDelayMs = Math.max(pollDelayMs, retryAfterSeconds * 1000)
+        }
+      }
+    }
+
+    if (tenantToken) {
       const projectResponse = await fetch(`${apiBase}/projects?limit=100`, {
-        headers: { Authorization: `Bearer ${tenantLogin.token}` },
+        headers: { Authorization: `Bearer ${tenantToken}` },
       })
       if (projectResponse.ok) {
         const projects = await projectResponse.json() as Project[]
+        lastTenantState = `project list returned ${projects.length} item(s)`
         if (projects.length > 0) {
           tenantReady = true
           break
         }
+      } else {
+        lastTenantState = `project list failed: ${projectResponse.status} ${await projectResponse.text()}`
+        if (projectResponse.status === 401 || projectResponse.status === 403) {
+          tenantToken = undefined
+        }
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    await new Promise((resolve) => setTimeout(resolve, pollDelayMs))
+    pollDelayMs = Math.min(pollDelayMs + 1000, 12000)
   }
   if (!tenantReady) {
     mockServer.close()
-    throw new Error('Playwright sample tenant provisioning did not produce a project')
+    throw new Error(`Playwright sample tenant provisioning did not produce a project; last state: ${lastTenantState}`)
   }
 
   return async () => {

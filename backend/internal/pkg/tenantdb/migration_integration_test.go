@@ -117,6 +117,18 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	if sampleWorkOrders != 1 {
 		t.Fatalf("sample work order count = %d, want 1", sampleWorkOrders)
 	}
+	var sampleProjects int
+	if err := targetPool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM projects
+		WHERE organization_id = $1
+		  AND metadata->>'erp_project_code' = 'PRJ-DEMO-001'
+	`, orgID).Scan(&sampleProjects); err != nil {
+		t.Fatalf("count sample projects: %v", err)
+	}
+	if sampleProjects != 1 {
+		t.Fatalf("sample project count = %d, want 1", sampleProjects)
+	}
 
 	assertProjectERPProjection(t, ctx, targetPool, orgID)
 	assertRequirementERPProjection(t, ctx, targetPool, orgID)

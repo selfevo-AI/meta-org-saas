@@ -76,6 +76,13 @@ func TestBootstrapTenantDataSeedsERPNextManufacturingDemoCodeTables(t *testing.T
 		t.Fatalf("BootstrapTenantData() error = %v", err)
 	}
 
+	projectSQL := db.tx.sqlContaining("INSERT INTO projects")
+	if projectSQL == "" {
+		t.Fatalf("bootstrap SQL missing sample project seed; SQL statements = %#v", db.tx.execSQL)
+	}
+	if !strings.Contains(projectSQL, "PRJ-DEMO-001") || !strings.Contains(projectSQL, "ON CONFLICT ((metadata->>'erp_project_code'))") {
+		t.Fatalf("sample project seed is not idempotent by ERP project code: %s", projectSQL)
+	}
 	for _, table := range []string{`"MBOM"`, `"BOM1"`, `"MWOR"`, `"WOR1"`} {
 		if db.tx.sqlContaining(table) == "" {
 			t.Fatalf("bootstrap SQL missing %s seed; SQL statements = %#v", table, db.tx.execSQL)

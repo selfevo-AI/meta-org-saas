@@ -213,6 +213,12 @@ jobs:
       - name: Run browser tests
         working-directory: frontend
         run: npm run test:e2e
+      - name: Print E2E service logs
+        if: failure()
+        run: |
+          cat /tmp/meta-org-backend.log || true
+          cat /tmp/meta-org-security-kernel.log || true
+          cat /tmp/meta-org-frontend.log || true
       - name: Upload browser artifacts
         if: failure()
         uses: actions/upload-artifact@v4
@@ -221,3 +227,6 @@ jobs:
           path: |
             frontend/playwright-report
             frontend/test-results
+            /tmp/meta-org-backend.log
+            /tmp/meta-org-security-kernel.log
+            /tmp/meta-org-frontend.log
