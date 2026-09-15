@@ -3,6 +3,8 @@
 ## 使用方式 / Everyday workflow
 
 - 工作台以待办、关键指标、常用入口和最近动态为主。左侧可筛选导航，顶部 `Ctrl/Cmd + K` 可搜索模块和单据入口。
+- 租户菜单采用紧凑的分组折叠条与单据图标，当前分组和当前单据分别高亮。切换工作区会展开对应分组，筛选菜单时临时显示匹配的单据。
+- 单据页参照 `租户UI参考.png`：上方为标签靠左的基本字段及备注，中间为明细工具栏和表格，底部为金额、审核状态和查看/编辑状态。单据列表通过工具栏展开，前后箭头可切换已加载的单据；查找、排序和筛选仍在列表中完成。
 - 单据默认以查看模式展示。点击“编辑单据”后修改；保存时先核对字段的修改前后值，再确认提交。明细也使用同样的核对流程。
 - 切换单据、页面内导航、取消编辑或刷新前，会提示处理未保存内容。刷新和关闭浏览器页面使用浏览器原生离开提示。
 - 业务操作显示当前单据、状态和影响。删除收纳在“更多操作”，确认框默认聚焦取消；已审批、已过账及其他受保护单据继续受业务规则约束。
@@ -11,6 +13,8 @@
 - 平台用户列表支持搜索，创建用户使用独立表单。重置密码、禁用用户、关闭组织、删除或应用行业方案需要核对目标后确认。
 
 The home page brings together pending work, metrics, shortcuts, and recent activity. Use the sidebar filter or `Ctrl/Cmd + K` to find a module or document entry.
+
+Tenant navigation uses compact accordion headings and document icons, with separate highlights for the current group and document. Opening a workspace reveals its group; filtering temporarily reveals matching destinations. Documents place left-aligned labels and notes at the top, line items in the center, and totals and approval status at the bottom. The toolbar opens the searchable, sortable register and provides previous/next navigation across loaded records.
 
 Documents open in view mode. Choose **Edit record**, make changes, then review the before/after comparison before saving. Line items use the same review flow. Navigation within the application, record changes, cancellation, and refresh are guarded against discarding unsaved changes; page reload and close use the browser's native warning.
 
@@ -21,7 +25,7 @@ AI proposals require a contextual review. Adjusting the request requires another
 ## 界面约定 / UI conventions
 
 - 统一使用浅色画布、内容卡片、主次按钮、状态和反馈样式；支持深色主题及持久化主题选择。
-- 桌面使用导航、单据列表和详情布局；平板及手机根据工作区实际宽度重排。宽表格在区域内滚动，操作列和菜单保持可用。
+- 桌面使用左侧导航及右侧单据布局，单据列表按需展开；平板及手机根据工作区实际宽度重排。宽表格在区域内滚动，首列、操作列和菜单保持可用。
 - 对话框使用原生 `dialog`，支持键盘操作、焦点恢复、嵌套弹窗及滚动锁定。上下文菜单使用原生 popover，避免被表格容器裁剪。
 - 所有新增界面文案通过 `useI18n` 提供中文和英文。新文案使用稳定的 `ui.*` 键。
 - 表单错误保留在当前操作中；单据更新仅提交已改变且允许写入的字段。

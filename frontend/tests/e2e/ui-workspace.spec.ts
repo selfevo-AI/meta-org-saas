@@ -198,6 +198,7 @@ test('workspace uses clear controls in both languages and both themes without ov
   await page.getByRole('button', { name: '中文', exact: true }).click()
   await expect(page.getByRole('button', { name: '编辑单据', exact: true })).toBeVisible()
   await assertLayout(page)
+  await page.screenshot({ path: testInfo.outputPath('reference-layout-zh.png'), fullPage: true })
   await page.getByRole('button', { name: 'EN', exact: true }).click()
   await page.getByRole('button', { name: /dark theme/i }).click()
   await expect(page.locator('main')).not.toHaveClass(/theme-light/)
@@ -220,6 +221,94 @@ test('workspace uses clear controls in both languages and both themes without ov
   await expect(page.getByTestId('document-workbench')).toBeVisible()
   await expect(page.locator('main')).not.toHaveClass(/theme-light/)
   expect(errors).toEqual([])
+})
+
+test('document form leads with fields and keeps totals below the line grid', async ({ page }, testInfo) => {
+  const state = await openDocument(page)
+  const form = page.getByTestId('document-header-form')
+  const summary = page.getByTestId('document-summary')
+  await expect(page.getByTestId('document-register')).not.toBeVisible()
+  await expect(summary.getByTestId('field-value-DocTotal')).toHaveText('1,446.40')
+  await expect(summary.getByTestId('field-value-WddStatus')).toBeVisible()
+  await expect(form.getByTestId('field-value-DocTotal')).toHaveCount(0)
+  const positions = await page.evaluate(() => {
+    const lines = document.querySelector('.document-tab-panel')!.getBoundingClientRect()
+    return {
+      header: document.querySelector('[data-testid="document-header-form"]')!.getBoundingClientRect().bottom,
+      linesTop: lines.top,
+      linesBottom: lines.bottom,
+      footer: document.querySelector('[data-testid="document-summary"]')!.getBoundingClientRect().top,
+    }
+  })
+  expect(positions.header).toBeLessThanOrEqual(positions.linesTop)
+  expect(positions.linesBottom).toBeLessThanOrEqual(positions.footer)
+  await page.getByRole('button', { name: 'Edit record', exact: true }).click()
+  for (const field of await form.locator('.document-fields-compact .ui-field').all()) {
+    const bounds = await field.evaluate((element) => {
+      const label = element.querySelector('.ui-field-label')!.getBoundingClientRect()
+      const value = element.querySelector('input, select, output')!.getBoundingClientRect()
+      return { labelRight: label.right, valueLeft: value.left, valueRight: value.right, fieldRight: element.getBoundingClientRect().right }
+    })
+    expect(bounds.labelRight).toBeLessThanOrEqual(bounds.valueLeft)
+    expect(bounds.valueRight).toBeLessThanOrEqual(bounds.fieldRight + 1)
+  }
+  await assertLayout(page)
+  await page.screenshot({ path: testInfo.outputPath('reference-layout-edit.png'), fullPage: true })
+  expect(state.writes).toHaveLength(0)
+})
+
+test('record navigation supports previous, next, and a searchable register', async ({ page }) => {
+  const state = await openDocument(page)
+  const previous = page.getByRole('button', { name: 'Previous record', exact: true })
+  const next = page.getByRole('button', { name: 'Next record', exact: true })
+  await expect(previous).toBeDisabled()
+  await next.click()
+  await expect(page.getByTestId('field-value-DocEntry')).toHaveText('PO-1002')
+  await previous.click()
+  await expect(page.getByTestId('field-value-DocEntry')).toHaveText('PO-1001')
+  await page.getByTestId('document-register-toggle').click()
+  await expect(page.getByTestId('document-register')).toBeVisible()
+  await page.locator('.document-search input').fill('PO-1002')
+  await page.locator('.document-search').getByRole('button').click()
+  await expect(page.getByTestId('document-register').locator('tbody tr')).toHaveCount(1)
+  await page.locator('[data-record-key="PO-1002"]').click()
+  await expect(page.getByTestId('field-value-DocEntry')).toHaveText('PO-1002')
+  await expect(page.getByTestId('document-register')).not.toBeVisible()
+  await expect(previous).toBeDisabled()
+  await expect(next).toBeDisabled()
+  await page.getByTestId('document-register-toggle').click()
+  await page.locator('.document-search input').fill('NO-MATCH')
+  await page.locator('.document-search').getByRole('button').click()
+  await expect(page.getByTestId('document-register').locator('tbody tr')).toHaveCount(0)
+  await expect(page.getByTestId('document-register-toggle')).toBeDisabled()
+  await expect(previous).toBeDisabled()
+  await expect(next).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'New record', exact: true })).toBeEnabled()
+  await page.locator('.document-search input').fill('')
+  await page.locator('.document-search').getByRole('button').click()
+  await expect(page.getByTestId('document-register').locator('tbody tr')).toHaveCount(3)
+  await page.locator('[data-record-key="PO-1001"]').click()
+  await expect(page.getByTestId('field-value-DocEntry')).toHaveText('PO-1001')
+  expect(state.writes).toHaveLength(0)
+})
+
+test('menu groups fold independently and filtering reveals document destinations', async ({ page }, testInfo) => {
+  const state = await openDocument(page)
+  await openNavigation(page)
+  const group = page.getByTestId('navigation-group-supplyChain')
+  const heading = group.getByRole('button', { name: 'Supply Chain', exact: true })
+  await expect(heading).toHaveAttribute('aria-expanded', 'true')
+  await heading.click()
+  await expect(group.getByTestId('domain-nav-Procurement')).not.toBeVisible()
+  await expect(page).toHaveURL(/\/procurement$/)
+  await page.getByRole('textbox', { name: 'Filter navigation', exact: true }).fill('purchase')
+  await expect(group.getByTestId('domain-nav-Procurement')).toBeVisible()
+  await expect(group.locator('.sidebar-submenu button').first()).toBeVisible()
+  await page.getByRole('textbox', { name: 'Filter navigation', exact: true }).fill('')
+  await expect(heading).toHaveAttribute('aria-expanded', 'false')
+  await heading.click()
+  await page.screenshot({ path: testInfo.outputPath('reference-layout-menu.png'), fullPage: false })
+  expect(state.writes).toHaveLength(0)
 })
 
 test('record edits require a review and send only the changed writable fields', async ({ page }) => {
@@ -250,7 +339,7 @@ test('switching records or modules preserves edits until the employee discards t
   await page.getByRole('button', { name: 'Edit record', exact: true }).click()
   const remarks = page.getByTestId('document-header-form').locator('[name="Comments"]')
   await remarks.fill('An unsaved delivery note')
-  await page.locator('[data-record-key="PO-1002"]').click()
+  await page.getByRole('button', { name: 'Next record', exact: true }).click()
   const guard = page.getByRole('dialog', { name: 'You have unsaved changes', exact: true })
   await guard.getByRole('button', { name: 'Keep editing', exact: true }).click()
   await expect(remarks).toHaveValue('An unsaved delivery note')
@@ -260,7 +349,7 @@ test('switching records or modules preserves edits until the employee discards t
   await guard.getByRole('button', { name: 'Keep editing', exact: true }).click()
   await expect(page).toHaveURL(/\/procurement$/)
   await expect(remarks).toHaveValue('An unsaved delivery note')
-  await page.locator('[data-record-key="PO-1002"]').click()
+  await page.getByRole('button', { name: 'Next record', exact: true }).click()
   await guard.getByRole('button', { name: 'Discard changes', exact: true }).click()
   await expect(page.getByTestId('field-value-DocEntry')).toHaveText('PO-1002')
   expect(state.writes).toHaveLength(0)
@@ -320,6 +409,7 @@ test('new records are reviewed before creation and cancelled deletion makes no w
 
 test('locked records cannot be edited or deleted but retain available workflow actions', async ({ page }) => {
   const state = await openDocument(page)
+  await page.getByTestId('document-register-toggle').click()
   await page.locator('[data-record-key="PO-LOCKED"]').click()
   await expect(page.getByTestId('field-value-DocEntry')).toHaveText('PO-LOCKED')
   await expect(page.getByRole('button', { name: 'Edit record', exact: true })).toBeDisabled()

@@ -35,6 +35,9 @@ This directory now uses staged baseline migrations instead of the historical
 30. `030_operational_ontology_ledger.sql`
 31. `031_ontology_tools.sql`
 32. `032_core_business_boundary.sql`
+33. `033_ontology_document_imports.sql`
+34. `034_document_import_operations.sql`
+35. `035_migration_line_endings.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -46,6 +49,8 @@ Physical tenant databases use their own tenant migration directory:
 6. `tenant/006_project_requirement_business_key_link.sql`
 7. `tenant/007_finance_costing_hot_path_indexes.sql`
 8. `tenant/008_operational_ontology_ledger.sql`
+9. `tenant/009_ontology_document_imports.sql`
+10. `tenant/010_migration_line_endings.sql`
 
 The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
@@ -124,6 +129,34 @@ baseline, create tenant databases through the backend provisioner, and verify
 tenant migration expansion before using tenant ERP/finance APIs.
 
 ## Stage Ownership
+
+### Migration Line Endings
+
+Migration SQL is checked out with LF line endings on every platform through
+`.gitattributes`. Checksums remain byte-exact; the migrators do not ignore
+whitespace differences or accept arbitrary edits to applied SQL.
+
+Platform `035` reconciles historical Windows CRLF/mixed-line-ending checksums
+for `000`, `001`, `002`, `004`, `006`, `007`, and `012` through `015`.
+Tenant `010` reconciles `001` (including its expanded ERP SQL) and `002`.
+The SQL content of these files is unchanged. These repairs execute no DDL or
+business-data updates; the existing migrators record old/new checksums and the
+repair filename in the same transaction. Once applied, they cannot authorize
+later edits. Do not update migration tracking rows manually or reset a database
+to resolve a checksum error.
+
+Verification covers fresh platform and tenant databases, upgrades from mixed
+line endings, preservation of existing business rows, repeat startup, and
+rejection of subsequent drift:
+
+```bash
+RUN_FRESH_DB_MIGRATION_TEST=1 RUN_FRESH_TENANT_DB_MIGRATION_TEST=1 \
+  MIGRATION_TEST_ADMIN_URL=postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable \
+  go test ./internal/pkg/database ./internal/pkg/tenantdb
+```
+
+Run this command from `backend/` against a development PostgreSQL instance;
+the integration tests create and remove only their own temporary databases.
 
 ### Operational Ontology and Accounting
 

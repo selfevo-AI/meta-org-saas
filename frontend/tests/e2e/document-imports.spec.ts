@@ -144,7 +144,7 @@ async function fixture(page: Page, source?: { name: string; mediaType: string; b
     return respond([])
   })
   await page.goto(`/tenant/${organizationID}/procurement`)
-  await expect(page.getByTestId('document-register')).toBeVisible()
+  await expect(page.getByTestId('document-header-form')).toBeVisible()
   return { state, original }
 }
 
@@ -173,7 +173,7 @@ test('external originals require human review before creating one draft', async 
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   const { state, original } = await fixture(page)
-  await page.screenshot({ path: testInfo.outputPath('document-register-en.png'), fullPage: true })
+  await page.screenshot({ path: testInfo.outputPath('document-form-en.png'), fullPage: true })
   await upload(page, original)
   const workbench = page.getByTestId('document-import-workspace')
   await expect(workbench.locator('[data-low-confidence="true"]')).toHaveCount(1)
@@ -224,6 +224,7 @@ test('stale review keeps corrections and does not create a document', async ({ p
 
 test('register sends status and semantic sort to the server', async ({ page }) => {
   const { state } = await fixture(page)
+  await page.getByTestId('document-register-toggle').click()
   const table = page.getByTestId('document-register')
   await table.getByRole('button', { name: 'Total', exact: true }).click()
   await expect.poll(() => state.queries.at(-1)?.sort).toBe('total')

@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 9 {
-		t.Fatalf("tenant migration file count = %d, want 9", len(files))
+	if len(files) != 10 {
+		t.Fatalf("tenant migration file count = %d, want 10", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -174,6 +174,11 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 	}
 	if len(files[7].AcceptsChecksumDrift) != 1 || files[7].AcceptsChecksumDrift[0] != "001_tenant_business_baseline.sql" {
 		t.Fatalf("ontology repair must reconcile the expanded baseline: %#v", files[7])
+	}
+	if files[9].Filename != "010_migration_line_endings.sql" || !reflect.DeepEqual(files[9].AcceptsChecksumDrift, []string{
+		"001_tenant_business_baseline.sql", "002_tenant_projection_outbox.sql",
+	}) {
+		t.Fatalf("line-ending repair must reconcile the historical Windows migrations: %#v", files[9])
 	}
 }
 

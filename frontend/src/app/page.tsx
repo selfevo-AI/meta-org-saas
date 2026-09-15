@@ -1196,7 +1196,7 @@ function normalizeMenuGroups(input?: MenuGroup[]): MenuGroup[] {
 }
 
 function defaultExpandedGroups(): Record<string, boolean> {
-  return Object.fromEntries(defaultMenuGroups.map((group) => [group.id, group.id !== 'archive']))
+  return Object.fromEntries(defaultMenuGroups.map((group) => [group.id, ['business', 'supplyChain'].includes(group.id)]))
 }
 
 function loadMenuGroups(): MenuGroup[] {
@@ -1679,6 +1679,13 @@ function WorkspaceApplication() {
     if (!menuReady || typeof window === 'undefined') return
     window.localStorage.setItem(menuStorageKey, JSON.stringify(menuGroups))
   }, [menuGroups, menuReady])
+
+  useEffect(() => {
+    if (!menuReady || isPlatformSession || workspaceView === 'overview') return
+    const group = menuGroups.find((item) => item.domains.includes(workspaceView.replace('domain:', '')))
+    if (!group) return
+    return deferStateUpdate(() => setExpandedGroups((current) => current[group.id] ? current : { ...current, [group.id]: true }))
+  }, [isPlatformSession, menuGroups, menuReady, workspaceView])
 
   useEffect(() => {
     if (!token) {
@@ -2458,7 +2465,7 @@ function WorkspaceApplication() {
   ]
 
   return (
-    <main className={`app-dark ${themeMode === 'light' ? 'theme-light' : ''}`}>
+    <main className={`app-dark ${themeMode === 'light' ? 'theme-light' : ''} ${token && !isPlatformSession ? 'tenant-workspace' : ''}`}>
       {token && <a className="shell-skip" href="#main-workspace">{t('ui.shell.skip')}</a>}
       <UnsavedChangesDialog />
       <NavigationSearch open={searchOpen && !!token} onClose={() => setSearchOpen(false)} items={searchItems} />
@@ -2637,6 +2644,7 @@ function WorkspaceApplication() {
               currentTenantDocumentID={activeTenantDocumentID}
               onTenantDocumentSelect={(item) => { setMobileMenuOpen(false); requestNavigation(() => handleTenantDocumentSelect(item)) }}
               onClose={() => setMobileMenuOpen(false)}
+              organizationName={isPlatformSession ? undefined : organizations.find((item) => item.id === currentOrganizationID)?.name}
             />
           </div>
           {mobileMenuOpen && (
@@ -3041,7 +3049,7 @@ function Topbar({
 
 function NavigationSidebar({
   workspaceView, groups, expandedGroups, onViewChange, onToggleGroup, onDragStart, onDropDomain, onReset,
-  currentSupplyChainFunctionID, onSupplyChainFunctionChange, currentTenantDocumentID, onTenantDocumentSelect, onClose,
+  currentSupplyChainFunctionID, onSupplyChainFunctionChange, currentTenantDocumentID, onTenantDocumentSelect, onClose, organizationName,
 }: {
   workspaceView: WorkspaceView
   groups: MenuGroup[]
@@ -3056,6 +3064,7 @@ function NavigationSidebar({
   currentTenantDocumentID?: string | null
   onTenantDocumentSelect: (item: TenantDocumentMenuItem) => void
   onClose: () => void
+  organizationName?: string
 }) {
   const { t } = useI18n()
   const [query, setQuery] = useState('')
@@ -3070,7 +3079,7 @@ function NavigationSidebar({
     <aside className="studio-sidebar">
       <div className="sidebar-brand">
         <span className="sidebar-brand-mark"><Boxes size={23} strokeWidth={1.8} /></span>
-        <div className="min-w-0 flex-1"><strong>{t('app.product')}</strong><small>{t('ui.brand.tagline')}</small></div>
+        <div className="min-w-0 flex-1"><strong>{t('app.product')}</strong><small title={organizationName}>{organizationName || t('ui.brand.tagline')}</small></div>
         <div className="lg:hidden"><button type="button" className="ui-icon-button" onClick={onClose} aria-label={t('nav.close')}><X size={17} /></button></div>
       </div>
       <label className="sidebar-filter">
@@ -3081,11 +3090,12 @@ function NavigationSidebar({
       <nav className="sidebar-groups" aria-label={t('ui.nav.label')}>
         {filteredGroups.map((group) => {
           const expanded = !!search || (expandedGroups[group.id] ?? true)
-          return <div key={group.id} className="sidebar-group" onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDropDomain(event, group.id)}>
-            <button type="button" className="sidebar-group-title" onClick={() => onToggleGroup(group.id)} aria-expanded={expanded}>
+          const activeGroup = group.domains.some((domain) => workspaceView === `domain:${domain}`)
+          return <div key={group.id} className="sidebar-group" data-active={activeGroup} data-testid={`navigation-group-${group.id}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDropDomain(event, group.id)}>
+            <button type="button" className="sidebar-group-title" onClick={() => onToggleGroup(group.id)} aria-expanded={expanded} aria-controls={`navigation-items-${group.id}`}>
               <span>{t(`nav.group.${group.id}`)}</span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
             </button>
-            {expanded && group.domains.map((domain) => {
+            <div id={`navigation-items-${group.id}`} className="sidebar-group-items" hidden={!expanded}>{group.domains.map((domain) => {
               const menuKey = `domain:${domain}` as const
               const Icon = domainIcons[domain] ?? FolderKanban
               const supplyChainFunctions = supplyChainFunctionsForDomain(domain)
@@ -3105,17 +3115,17 @@ function NavigationSidebar({
                 />
                 {tenantDocuments.length > 0 && (active || search) && <div className="sidebar-submenu">
                   {matchingDocuments.map((item) => <button key={item.id} type="button" data-testid={`tenant-document-${item.id}`}
-                    aria-current={active && currentTenantDocumentID === item.documentID ? 'page' : undefined} onClick={() => onTenantDocumentSelect(item)}>
-                    <span className="truncate">{t(item.label)}</span>
+                    aria-current={active && currentTenantDocumentID === item.documentID ? 'page' : undefined} onClick={() => onTenantDocumentSelect(item)} title={t(item.label)}>
+                    <FileText size={14} aria-hidden="true" /><span>{t(item.label)}</span>
                   </button>)}
                 </div>}
                 {tenantDocuments.length === 0 && supplyChainFunctions.length > 0 && active && <div className="sidebar-submenu">
                   {supplyChainFunctions.map((item) => <button key={item.id} type="button" aria-current={currentSupplyChainFunctionID === item.id ? 'page' : undefined} onClick={() => onSupplyChainFunctionChange(item.id)}>
-                    <span className="truncate">{t(item.label)}</span>
+                    <FileText size={14} aria-hidden="true" /><span>{t(item.label)}</span>
                   </button>)}
                 </div>}
               </div>
-            })}
+            })}</div>
           </div>
         })}
         {filteredGroups.length === 0 && <p className="px-3 py-5 text-xs ui-muted">{t('ui.nav.noResults')}</p>}

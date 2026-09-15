@@ -12,6 +12,12 @@ const legacyLanguageStorageKey = 'harness.language.v1'
 const zh: Dictionary = {
   'ui.document.totalRecords': '共 {count} 条单据',
   'ui.document.loadedRecords': '已列示 {count} / {total} 条',
+  'ui.document.browse': '浏览单据',
+  'ui.document.previous': '上一张单据',
+  'ui.document.next': '下一张单据',
+  'ui.document.position': '{current} / {count}',
+  'ui.document.summary': '单据汇总与状态',
+  'ui.document.viewMode': '查看',
   'ui.document.hideDetail': '收起单据详情',
   'ui.document.showDetail': '显示单据详情',
   'ui.document.deleteLine': '删除明细',

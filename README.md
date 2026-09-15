@@ -322,6 +322,21 @@ API_PROXY_TARGET=http://127.0.0.1:8080
 
 ### Windows 本机重启注意事项
 
+如果前端显示 `HTTP 500`，先请求当前站点的 `/api/v1/health`。开发服务器日志中的
+`ECONNREFUSED` 表示代理无法连接后端，需要恢复 PostgreSQL、安全内核和后端，而不只是重启前端。
+
+如果 Docker 绑定 `8080` 或 `8090` 时提示端口访问被禁止，用
+`netsh interface ipv4 show excludedportrange protocol=tcp` 检查 Windows 保留端口。
+保留现有数据库卷，选择未占用且未被保留的主机端口，例如后端映射
+`127.0.0.1:18080:8080`、安全内核映射 `127.0.0.1:18090:8090`，同步调整
+后端的 `SECURITY_KERNEL_URL`。在 `frontend/.env.development.local` 中设置
+`API_PROXY_TARGET=http://127.0.0.1:18080` 后重启开发服务器；浏览器仍访问 `3000`。
+通过 `http://127.0.0.1:3000/api/v1/health` 验证完整代理链路。
+
+迁移 SQL 的换行格式由 `.gitattributes` 固定为 LF。历史 Windows 换行校验问题通过
+平台 `035` 和租户 `010` 受控迁移处理，详见 `migrations/BASELINE_RESTRUCTURE.md`；
+不要手工更新校验值或清空数据库。
+
 如果 `docker compose up --build` 提示 `docker` 命令不可用，可以使用本机 PostgreSQL、Go 和 Node 启动开发服务。先确认 PostgreSQL 可连接，再分别启动后端和前端。
 
 本项目在 Windows PowerShell 中通过 `Start-Process -ArgumentList` 后台启动时，不要在嵌套命令里写 `$env:NAME="value"`。外层 PowerShell 可能提前解析 `$env:`，导致子进程实际收到 `=value` 或未加引号的 URL/路径，常见报错包括：

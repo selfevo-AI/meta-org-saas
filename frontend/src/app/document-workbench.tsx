@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Check, CheckCircle2, ClipboardCopy, Clock3, FileInput, FileText, Link2, Loader2, LockKeyhole, MoreHorizontal, PanelBottomClose, PanelBottomOpen, Pencil, Play, Plus, RefreshCw, Save, Search, Trash2, Upload } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ArrowUpDown, Check, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCopy, Clock3, Eye, FileInput, FileText, Link2, List, Loader2, LockKeyhole, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Save, Search, Trash2, Upload } from 'lucide-react'
 import { type FormEvent, type KeyboardEvent, useId, useRef, useState } from 'react'
 
 import { type ERPActionExecution } from '@/lib/api'
@@ -58,6 +58,9 @@ const statusTones = {
   closed: 'neutral', active: 'green', inactive: 'neutral', void: 'red',
 } as const
 
+const summaryFieldNames = new Set(['DocTotal', 'VatSum', 'PaidToDate', 'AllocatedAmount', 'OpenBal', 'DocStatus', 'WddStatus', 'Posted', 'BtfStatus'])
+const noteFieldNames = new Set(['Comments', 'Memo', 'Description'])
+
 export function DocumentWorkbench({
   definition, records, childRows, selectedKey, selectedRecord, onSelectRecord, onRefresh,
   onCreateHeader, onUpdateHeader, onDeleteHeader, onCreateLine, onUpdateLine, onDeleteLine,
@@ -68,11 +71,12 @@ export function DocumentWorkbench({
   const { t, locale } = useI18n()
   const { requestNavigation } = useWorkspaceInteraction()
   const tabsID = useId()
+  const registerID = useId()
   const lineFormID = useId()
   const actionFormID = useId()
   const submitLock = useRef(false)
   const detailRef = useRef<HTMLDivElement>(null)
-  const [detailsVisible, setDetailsVisible] = useState(true)
+  const [recordsVisible, setRecordsVisible] = useState(false)
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState(false)
   const [headerDirty, setHeaderDirty] = useState(false)
@@ -93,12 +97,18 @@ export function DocumentWorkbench({
   const editingHeader = creating || editing
   const detail = definition.detailTables[0]
   const fields = definition.headerFields.filter((field) => resolveFieldCapability(field, definition.fieldPermissions).readable)
+  const summaryFields = fields.filter((field) => field.readOnly && summaryFieldNames.has(field.name))
+  const headerFields = fields.filter((field) => !summaryFields.includes(field) && (!creating || !field.readOnly))
+  const noteFields = headerFields.filter((field) => noteFieldNames.has(field.name))
+  const mainFields = headerFields.filter((field) => !noteFieldNames.has(field.name))
   const lineFields = detail?.fields.filter((field) => resolveFieldCapability(field, definition.fieldPermissions).readable) ?? []
   const line = childRows.find((row) => String(row.key ?? row[detail?.lineKey ?? 'LineNum']) === lineMode)
   const nextLine = String(Math.max(0, ...childRows.map((row) => Number(row[detail?.lineKey ?? 'LineNum'] ?? row.key) || 0)) + 1)
   const activeAction = definition.actions.find((action) => action.id === actionID)
   const activeFilter = filterStatus ?? statusFilter
   const visibleRecords = onStatusFilter || activeFilter === 'all' ? records : records.filter((record) => recordStatus(record) === activeFilter)
+  const recordIndex = creating ? -1 : visibleRecords.findIndex((record) => String(record.key ?? record[definition.primaryKey]) === selectedKey)
+  const showRecords = recordsVisible || (!selectedRecord && !creating)
   const isDocument = definition.primaryKey === 'DocEntry'
   const columns = isDocument ? ['key', 'partner', 'date', 'status', 'currency', 'total', 'external_number'] : ['key', 'name', 'status']
   const status = recordStatus(selectedRecord)
@@ -136,11 +146,17 @@ export function DocumentWorkbench({
   }
 
   function select(key: string) {
-    if (key === selectedKey && !creating) { setDetailsVisible(true); return }
+    if (key === selectedKey && !creating) { setRecordsVisible(false); return }
     requestNavigation(() => {
-      resetEditing(); setNotice(''); setDetailsVisible(true); onSelectRecord(key)
+      resetEditing(); setNotice(''); setRecordsVisible(false); onSelectRecord(key)
       requestAnimationFrame(() => detailRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
     })
+  }
+
+  function selectAdjacentRecord(offset: number) {
+    const record = visibleRecords[recordIndex + offset]
+    if (!record || fieldsDisabled) return
+    select(String(record.key ?? record[definition.primaryKey]))
   }
 
   function prepareSave(event: FormEvent<HTMLFormElement>, kind: 'header' | 'line') {
@@ -217,18 +233,23 @@ export function DocumentWorkbench({
   </div>
 
   return (
-    <section data-testid="document-workbench" className="document-workbench document-table-workbench" aria-busy={disabled}>
+    <section data-testid="document-workbench" className="document-workbench document-table-workbench" aria-busy={disabled || detailLoading}>
       <header className="document-toolbar">
         <div className="document-heading"><FileText size={19} /><div><h3>{t(definition.titleKey)}</h3><p>{t('ui.document.totalRecords', { count: totalCount ?? visibleRecords.length })}</p></div></div>
         <div className="document-toolbar-actions">
+          <div className="document-record-navigation" role="group" aria-label={t('ui.document.browse')}>
+            <button type="button" className="ui-icon-button" data-testid="document-register-toggle" disabled={!selectedRecord && !creating} aria-controls={registerID} aria-expanded={showRecords} title={t('ui.document.records')} aria-label={t('ui.document.records')} onClick={() => setRecordsVisible((value) => !value)}><List size={16} /></button>
+            <button type="button" className="ui-icon-button" disabled={fieldsDisabled || recordIndex <= 0} title={t('ui.document.previous')} aria-label={t('ui.document.previous')} onClick={() => selectAdjacentRecord(-1)}><ChevronLeft size={16} /></button>
+            <span className="document-record-position" aria-live="polite">{t('ui.document.position', { current: recordIndex + 1, count: visibleRecords.length })}</span>
+            <button type="button" className="ui-icon-button" disabled={fieldsDisabled || recordIndex < 0 || recordIndex >= visibleRecords.length - 1} title={t('ui.document.next')} aria-label={t('ui.document.next')} onClick={() => selectAdjacentRecord(1)}><ChevronRight size={16} /></button>
+          </div>
           {onImport && <button type="button" className="ui-button ui-button-secondary" disabled={disabled} onClick={() => requestNavigation(() => { resetEditing(); onImport() })}><Upload size={16} />{t('import.open')}</button>}
-          {onCreateHeader && <button type="button" className="ui-button ui-button-primary" disabled={disabled} onClick={() => requestNavigation(() => { resetEditing(); setDetailsVisible(true); setCreating(true) })}><Plus size={16} />{t('ui.document.new')}</button>}
+          {onCreateHeader && <button type="button" className="ui-button ui-button-primary" disabled={disabled} onClick={() => requestNavigation(() => { resetEditing(); setRecordsVisible(false); setCreating(true) })}><Plus size={16} />{t('ui.document.new')}</button>}
           <button type="button" className="ui-icon-button" disabled={disabled} onClick={() => requestNavigation(() => { resetEditing(); onRefresh() })} title={t('common.refresh')} aria-label={t('common.refresh')}><RefreshCw size={16} className={busy ? 'animate-spin' : ''} /></button>
-          <button type="button" className="ui-icon-button" aria-expanded={detailsVisible} title={t(detailsVisible ? 'ui.document.hideDetail' : 'ui.document.showDetail')} aria-label={t(detailsVisible ? 'ui.document.hideDetail' : 'ui.document.showDetail')} onClick={() => setDetailsVisible((value) => !value)}>{detailsVisible ? <PanelBottomClose size={16} /> : <PanelBottomOpen size={16} />}</button>
         </div>
       </header>
       <div className="document-grid">
-        <aside className="document-list-panel" aria-label={t('ui.document.records')}>
+        <aside id={registerID} className="document-list-panel" hidden={!showRecords} aria-label={t('ui.document.records')}>
           <div className="document-list-controls">
           <form className="document-search" role="search" onSubmit={(event) => { event.preventDefault(); requestNavigation(() => { resetEditing(); onSearch(search.trim()) }) }}>
             <Search size={15} className="shrink-0" />
@@ -276,7 +297,7 @@ export function DocumentWorkbench({
             {onLoadMore && <button type="button" className="ui-button ui-button-ghost w-full" disabled={disabled} onClick={onLoadMore}><ArrowDown size={15} />{t('ontology.loadMore')}</button>}
           </div>
         </aside>
-        <div className="document-main" ref={detailRef} hidden={!detailsVisible}>
+        <div className="document-main" ref={detailRef}>
           {formError && !hasDialog && <FeedbackMessage error>{formError}</FeedbackMessage>}
           {notice && <FeedbackMessage>{notice}</FeedbackMessage>}
           {creating || selectedRecord ? <>
@@ -297,15 +318,20 @@ export function DocumentWorkbench({
               key={(creating ? 'new' : selectedKey) + ':' + version + ':' + editing}
               data-testid="document-header-form"
               className="document-header-form"
+              aria-label={t('ui.document.details')}
               onSubmit={(event) => prepareSave(event, 'header')}
               onChange={(event) => {
                 const data = collectFields(event.currentTarget, fields, creating, definition)
                 setHeaderDirty(creating || fieldChanges(data, fields, selectedRecord, false).length > 0)
               }}
             >
-              <div className="document-section-title"><h4>{t('ui.document.details')}</h4>{editingHeader && <small>{t('ui.document.requiredHint')}</small>}</div>
-              <div className={'document-fields' + (editingHeader ? ' document-fields-edit' : '')}>
-                {fields.filter((field) => !creating || !field.readOnly).map((field) => <FieldEditor key={field.name} field={field} value={creating ? undefined : selectedRecord?.[field.name]} definition={definition} locked={!editingHeader || locked || (!!field.primary && !creating)} disabled={fieldsDisabled} creating={creating} lookupOptions={lookupOptions} />)}
+              <div className={'document-header-layout' + (noteFields.length > 0 ? ' document-header-with-notes' : '')}>
+                <div className={'document-fields document-fields-compact' + (editingHeader ? ' document-fields-edit' : '')}>
+                  {mainFields.map((field) => <FieldEditor key={field.name} field={field} value={creating ? undefined : selectedRecord?.[field.name]} definition={definition} locked={!editingHeader || locked || (!!field.primary && !creating)} disabled={fieldsDisabled} creating={creating} lookupOptions={lookupOptions} />)}
+                </div>
+                {noteFields.length > 0 && <div className="document-notes">
+                  {noteFields.map((field) => <FieldEditor key={field.name} field={field} value={creating ? undefined : selectedRecord?.[field.name]} definition={definition} locked={!editingHeader || locked || (!!field.primary && !creating)} disabled={fieldsDisabled} creating={creating} lookupOptions={lookupOptions} />)}
+                </div>}
               </div>
               {editingHeader && <div className="document-savebar">
                 <span>{headerDirty ? <Pencil size={14} /> : <FileText size={14} />}{t(headerDirty ? 'ui.document.unsaved' : 'ui.document.requiredHint')}</span>
@@ -333,10 +359,10 @@ export function DocumentWorkbench({
               </nav>
               <div id={tabsID + '-panel'} role="tabpanel" aria-labelledby={tabsID + '-' + tab} className="document-tab-panel">
                 {tab === 'detail' && <>
-                  <div className="document-section-title"><h4>{t('workbench.detail')}<small>{t('ui.document.lineCount', { count: childRows.length })}</small></h4>
+                  <div className="document-section-title document-line-toolbar"><h4>{t('workbench.detail')}<small>{t('ui.document.lineCount', { count: childRows.length })}</small></h4>
                     {onCreateLine && <button type="button" className="ui-button ui-button-secondary" disabled={fieldsDisabled || locked || editingHeader} onClick={() => openLine('new')}><Plus size={16} />{t('ui.document.addLine')}</button>}
                   </div>
-                  {detail && childRows.length > 0 ? <div className="document-table-scroll" tabIndex={0} aria-label={t('workbench.detail')}>
+                  {detail && childRows.length > 0 ? <div className="document-table-scroll" tabIndex={0} role="region" aria-label={t('workbench.detail')}>
                     <table className="document-table">
                       <thead><tr>{lineFields.map((field) => <th key={field.name} scope="col" data-numeric={isNumeric(field)}>{t(field.labelKey)}</th>)}{onUpdateLine && <th scope="col" className="document-table-actions">{t('common.actions')}</th>}</tr></thead>
                       <tbody>{childRows.map((row) => {
@@ -345,7 +371,7 @@ export function DocumentWorkbench({
                           {lineFields.map((field) => <td key={field.name} data-numeric={isNumeric(field)} title={resolveFieldCapability(field, definition.fieldPermissions).masked ? '***' : formatValue(field, row[field.name], t)}>
                             {resolveFieldCapability(field, definition.fieldPermissions).masked ? '***' : formatValue(field, row[field.name], t) || '—'}
                           </td>)}
-                          {onUpdateLine && <td className="document-table-actions"><button type="button" className="ui-button ui-button-link" disabled={fieldsDisabled || locked || editingHeader} aria-label={t('ui.document.editLine') + ' ' + key} onClick={() => openLine(key)}><Pencil size={14} />{t('ontology.edit')}</button></td>}
+                          {onUpdateLine && <td className="document-table-actions"><button type="button" className="ui-icon-button" disabled={fieldsDisabled || locked || editingHeader} title={t('ui.document.editLine') + ' ' + key} aria-label={t('ui.document.editLine') + ' ' + key} onClick={() => openLine(key)}><Pencil size={14} /></button></td>}
                         </tr>
                       })}</tbody>
                     </table>
@@ -371,6 +397,16 @@ export function DocumentWorkbench({
                 </>}
               </div>
             </>}
+            <footer className="document-footer">
+              {!creating && summaryFields.length > 0 && <div className="document-summary document-fields-compact" data-testid="document-summary" role="group" aria-label={t('ui.document.summary')}>
+                {summaryFields.map((field) => <FieldEditor key={field.name} field={field} value={selectedRecord?.[field.name]} definition={definition} locked creating={false} />)}
+              </div>}
+              <div className="document-statusbar" data-testid="document-statusbar">
+                <span>{editingHeader ? <Pencil size={13} /> : <Eye size={13} />}{t(editingHeader ? 'ui.document.editing' : 'ui.document.viewMode')}{locked && <LockKeyhole size={13} />}</span>
+                <span>{creating ? t('ui.document.new') : selectedKey}</span>
+                {!creating && detail && <span>{t('ui.document.lineCount', { count: childRows.length })}</span>}
+              </div>
+            </footer>
           </> : <div className="ui-empty min-h-96">
             {detailLoading || busy ? <Loader2 size={26} className="animate-spin" /> : <FileText size={26} />}
             <strong>{t(detailLoading || busy ? 'common.loading' : 'ui.document.noSelection')}</strong>{!detailLoading && !busy && <p>{t('ui.document.noSelectionHint')}</p>}
@@ -389,7 +425,7 @@ export function DocumentWorkbench({
           const isNew = lineMode === 'new'
           setLineDirty(isNew || fieldChanges(collectFields(event.currentTarget, lineFields, isNew, definition), lineFields, line, false).length > 0)
         }}>
-          <div className="document-fields document-fields-edit">{lineFields.map((field) => <FieldEditor key={field.name} field={field} definition={definition} value={lineMode === 'new' ? (field.primary ? nextLine : undefined) : line?.[field.name]} locked={!!field.primary && lineMode !== 'new'} disabled={fieldsDisabled} creating={lineMode === 'new'} lookupOptions={lookupOptions} />)}</div>
+          <div className="document-fields document-fields-edit document-fields-compact">{lineFields.map((field) => <FieldEditor key={field.name} field={field} definition={definition} value={lineMode === 'new' ? (field.primary ? nextLine : undefined) : line?.[field.name]} locked={!!field.primary && lineMode !== 'new'} disabled={fieldsDisabled} creating={lineMode === 'new'} lookupOptions={lookupOptions} />)}</div>
         </form>
         {formError && !pendingSave && !deleteTarget && <FeedbackMessage error>{formError}</FeedbackMessage>}
       </Dialog>
@@ -460,25 +496,30 @@ function FieldEditor({ field, value, definition, locked, disabled, creating, loo
   creating: boolean
   lookupOptions?: WorkbenchLookupOptions
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const fieldID = useId()
   const capability = resolveFieldCapability(field, definition.fieldPermissions)
   const readOnly = locked || !capability.writable
   const initial = initialValue(field, value, creating)
   const candidates = field.primary ? undefined : lookupOptions?.[field.name]
   const candidate = candidates?.find((item) => item.value === initial)
+  const className = 'ui-field' + (noteFieldNames.has(field.name) ? ' ui-field-notes' : '')
   const label = <span id={fieldID + '-label'} className="ui-field-label">{t(field.labelKey)}{field.required && !readOnly && <em aria-hidden="true">*</em>}</span>
-  if (readOnly) return <div className="ui-field">{label}<output data-testid={'field-value-' + field.name} aria-labelledby={fieldID + '-label'} className="ui-field-value block">{capability.masked ? '***' : candidate?.label || formatValue(field, initial, t) || '—'}</output></div>
-  if (field.dataType === 'boolean') return <label className="ui-checkbox"><input id={fieldID} name={field.name} type="checkbox" value="Y" defaultChecked={initial === 'Y'} disabled={disabled} /><span>{t(field.labelKey)}</span></label>
-  if (field.options) return <label className="ui-field">{label}<select id={fieldID} name={field.name} defaultValue={initial} required={field.required} disabled={disabled} className="ui-select">{field.options.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}</select></label>
-  if (candidates?.length) return <label className="ui-field">{label}
+  if (readOnly) {
+    const amount = ['DocTotal', 'VatSum', 'PaidToDate', 'AllocatedAmount', 'OpenBal'].includes(field.name) && initial !== '' && Number.isFinite(Number(initial))
+    const display = amount ? new Intl.NumberFormat(locale === 'zh' ? 'zh-CN' : 'en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(Number(initial)) : candidate?.label || formatValue(field, initial, t) || '—'
+    return <div className={className} data-field={field.name}>{label}<output data-testid={'field-value-' + field.name} aria-labelledby={fieldID + '-label'} className="ui-field-value block">{capability.masked ? '***' : display}</output></div>
+  }
+  if (field.dataType === 'boolean') return <label className="ui-checkbox" data-field={field.name}><input id={fieldID} name={field.name} type="checkbox" value="Y" defaultChecked={initial === 'Y'} disabled={disabled} /><span>{t(field.labelKey)}</span></label>
+  if (field.options) return <label className={className} data-field={field.name}>{label}<select id={fieldID} name={field.name} defaultValue={initial} required={field.required} disabled={disabled} className="ui-select">{field.options.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}</select></label>
+  if (candidates?.length) return <label className={className} data-field={field.name}>{label}
     <input id={fieldID} name={field.name} list={fieldID + '-options'} defaultValue={initial} required={field.required} disabled={disabled} className="ui-input" autoComplete="off" aria-describedby={fieldID + '-hint'} />
     <datalist id={fieldID + '-options'}>{candidates.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</datalist>
-    <small id={fieldID + '-hint'} className="mt-1 block text-[11px] ui-muted">{t('ui.document.lookupHint')}</small>
+    <small id={fieldID + '-hint'} className="sr-only">{t('ui.document.lookupHint')}</small>
   </label>
-  if (['Comments', 'Memo', 'Description'].includes(field.name)) return <label className="ui-field">{label}<textarea id={fieldID} name={field.name} defaultValue={initial} required={field.required} disabled={disabled} className="ui-input min-h-20 resize-y" /></label>
+  if (noteFieldNames.has(field.name)) return <label className={className} data-field={field.name}>{label}<textarea id={fieldID} name={field.name} defaultValue={initial} required={field.required} disabled={disabled} className="ui-input min-h-20 resize-y" /></label>
   const numeric = isNumeric(field)
-  return <label className="ui-field">{label}<input id={fieldID} name={field.name} type={numeric ? 'number' : field.dataType === 'date' ? 'date' : field.dataType === 'email' ? 'email' : 'text'} defaultValue={initial} required={field.required} disabled={disabled}
+  return <label className={className} data-field={field.name}>{label}<input id={fieldID} name={field.name} type={numeric ? 'number' : field.dataType === 'date' ? 'date' : field.dataType === 'email' ? 'email' : 'text'} defaultValue={initial} required={field.required} disabled={disabled}
     min={numeric ? (field.name === 'Quantity' ? 0.000001 : 0) : undefined} max={field.name === 'TaxRate' ? 100 : undefined} step={numeric ? (field.dataType === 'integer' ? 1 : '0.000001') : undefined} className="ui-input" /></label>
 }
 

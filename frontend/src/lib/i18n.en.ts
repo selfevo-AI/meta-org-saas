@@ -1,6 +1,12 @@
 const en: Record<string, string> = {
   'ui.document.totalRecords': '{count} records',
   'ui.document.loadedRecords': 'Showing {count} of {total}',
+  'ui.document.browse': 'Browse records',
+  'ui.document.previous': 'Previous record',
+  'ui.document.next': 'Next record',
+  'ui.document.position': '{current} / {count}',
+  'ui.document.summary': 'Record totals and status',
+  'ui.document.viewMode': 'View',
   'ui.document.hideDetail': 'Hide record details',
   'ui.document.showDetail': 'Show record details',
   'ui.document.deleteLine': 'Remove line',
