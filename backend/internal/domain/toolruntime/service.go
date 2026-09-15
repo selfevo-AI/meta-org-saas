@@ -159,7 +159,7 @@ func EffectivePolicyForExecution(tool ToolDefinition, input ExecuteToolInput, go
 		return PolicyApprove
 	}
 	switch tool.Name {
-	case "erp.action.execute", "context.proposal.apply", "finance.prepare_export_batch":
+	case "erp.action.execute", "ontology.action.execute", "context.proposal.apply", "finance.prepare_export_batch":
 		return PolicyApprove
 	case "industry.solution.change.preview":
 		if policy == PolicyAuto || policy == "" {
@@ -529,6 +529,9 @@ func (s *Service) authorizeApprovalReview(ctx context.Context, approvalID uuid.U
 		return nil, nil, nil, err
 	}
 	requiredTier := normalizeApprovalTier(tool.ApprovalTierRequired, approvalTierForCategory(tool.ToolCategory))
+	if (tool.Name == "ontology.action.execute" || tool.Name == "erp.action.execute") && requiredTier == ApprovalTierExecutor {
+		requiredTier = ApprovalTierReviewer
+	}
 	actualTier, err := s.repo.GetHumanAuthorityTier(ctx, *reviewedBy, execution.OrganizationID)
 	if err != nil {
 		return nil, nil, nil, err
@@ -561,6 +564,13 @@ func (s *Service) runAdapter(ctx context.Context, tool *ToolDefinition, executio
 		return &ExecuteToolOutput{Execution: completed}, fmt.Errorf("%w: tool adapter is not configured", ErrNotFound)
 	}
 	started := time.Now()
+	arguments := make(map[string]any, len(input.Arguments)+1)
+	for key, value := range input.Arguments {
+		arguments[key] = value
+	}
+	input.Arguments = arguments
+	input.Arguments["tool_execution_id"] = execution.ID.String()
+	input.IdempotencyKey = "tool:" + execution.ID.String()
 	result, err := adapter(ctx, input)
 	if err != nil {
 		completed, updateErr := s.repo.CompleteExecution(ctx, execution.ID, CompleteExecutionInput{

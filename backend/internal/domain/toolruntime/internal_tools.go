@@ -9,6 +9,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/ontology"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	domainruntime "github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
@@ -41,6 +42,14 @@ type ERPActionService interface {
 	RunAction(context.Context, string, string, string, erp.ActionInput) (*erp.ActionResult, error)
 }
 
+type OntologyService interface {
+	Types(context.Context) ([]ontology.ObjectType, error)
+	Query(context.Context, string, ontology.QueryInput) (*ontology.ObjectPage, error)
+	Get(context.Context, string, string) (*ontology.Object, error)
+	Links(context.Context, string, string) (*ontology.ObjectLinks, error)
+	Execute(context.Context, string, string, string, erp.ActionInput) (*ontology.ActionResult, error)
+}
+
 type IndustrySolutionChangeVerifier interface {
 	VerifyIndustrySolutionChange(context.Context, uuid.UUID, uuid.UUID) (*systemadmin.IndustrySolutionVerificationReport, error)
 }
@@ -55,6 +64,7 @@ type ContextProposalService interface {
 
 type PlatformToolServices struct {
 	ERP                      ERPActionService
+	Ontology                 OntologyService
 	IndustrySolutionVerifier IndustrySolutionChangeVerifier
 	Runtime                  RuntimeOperationService
 	ContextProposal          ContextProposalService
@@ -108,6 +118,9 @@ func InternalToolsWithPlatform(projectSvc ProjectService, financeSvc FinanceServ
 	} else {
 		tools["erp.action.execute"] = erpActionExecuteTool(platform.ERP)
 	}
+	for name, adapter := range OntologyTools(platform.Ontology) {
+		tools[name] = adapter
+	}
 	if platform.IndustrySolutionVerifier == nil {
 		tools["industry.solution.change.preview"] = notConfiguredTool("industry solution verifier is not configured")
 	} else {
@@ -136,7 +149,7 @@ func ContextProposalTools(service ContextProposalService) map[string]ToolAdapter
 }
 
 func DefaultToolDefinitions() []CreateToolInput {
-	return []CreateToolInput{
+	return append([]CreateToolInput{
 		{Name: "requirement.analyze", Description: "Analyze a requirement", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "project.match_members", Description: "Recommend project members", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "project.bind_workflow", Description: "Bind workflow to project", SourceType: SourceInternalAPI, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
@@ -155,7 +168,7 @@ func DefaultToolDefinitions() []CreateToolInput {
 		{Name: "industry.solution.change.preview", Description: "Verify an industry solution change request without applying it", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "low", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "runtime.operation.execute", Description: "Execute a platform runtime operation", SourceType: SourceInternalAPI, DefaultPolicy: PolicyNotify, RiskLevel: "medium", RequiredLevel: "L2", ToolCategory: ToolCategoryExecutionOperation, ApprovalTierRequired: ApprovalTierExecutor},
 		{Name: "context.proposal.apply", Description: "Apply an approved context change proposal", SourceType: SourceManualApproval, DefaultPolicy: PolicyApprove, RiskLevel: "high", RequiredLevel: "L3", ToolCategory: ToolCategoryBusinessApproval, ApprovalTierRequired: ApprovalTierReviewer},
-	}
+	}, OntologyToolDefinitions()...)
 }
 
 func bilingualToolMetadata(zh, en string) map[string]any {
@@ -434,7 +447,7 @@ func erpActionExecuteTool(erpSvc ERPActionService) ToolAdapter {
 			return ToolResult{}, err
 		}
 		actorID := input.ActorID
-		result, err := erpSvc.RunAction(ctx, tableCode, key, action, erp.ActionInput{
+		result, err := erpSvc.RunAction(erp.WithApprovedAction(ctx), tableCode, key, action, erp.ActionInput{
 			Data:               mapArg(input.Arguments, "data"),
 			ActorID:            &actorID,
 			ActorType:          input.ActorType,

@@ -37,6 +37,11 @@ func NewRepository(db tenantdb.DB) *PostgresRepository {
 	return &PostgresRepository{db: db, querier: db}
 }
 
+// NewRepositoryWithTx joins a tenant transaction owned by an application workflow.
+func NewRepositoryWithTx(tx pgx.Tx) *PostgresRepository {
+	return &PostgresRepository{db: tx, tx: tx, querier: tx}
+}
+
 func (r *PostgresRepository) RunInTx(ctx context.Context, fn func(Repository) error) error {
 	if r.tx != nil {
 		return fn(r)
@@ -48,6 +53,11 @@ func (r *PostgresRepository) RunInTx(ctx context.Context, fn func(Repository) er
 	// Deferred so a panic inside fn cannot pin the pooled connection; a
 	// rollback after successful commit is a no-op.
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Business state and its audit ledger share this tenant-local lock. It also
+	// protects missing stock rows and multi-document allocations from races.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(current_database() || ':erp:ledger', 0))`); err != nil {
+		return err
+	}
 	txRepo := &PostgresRepository{db: r.db, tx: tx, querier: tx}
 	if err := fn(txRepo); err != nil {
 		return err
@@ -90,6 +100,9 @@ func (r *PostgresRepository) CreateRecord(ctx context.Context, table TableDefini
 func (r *PostgresRepository) GetRecord(ctx context.Context, table TableDefinition, key string) (*Record, error) {
 	query := fmt.Sprintf(`SELECT %s::TEXT, row_to_json(t)::jsonb, "CreatedAt", "UpdatedAt" FROM %s t WHERE %s::TEXT = $1`,
 		quoteIdent(table.PrimaryKey), quoteIdent(table.Code), quoteIdent(table.PrimaryKey))
+	if r.tx != nil {
+		query += " FOR UPDATE"
+	}
 	record, err := scanRecord(table.Code, "", "", r.querier.QueryRow(ctx, query, key))
 	if err != nil {
 		return nil, err
@@ -101,7 +114,10 @@ func (r *PostgresRepository) UpdateRecord(ctx context.Context, table TableDefini
 	if len(input.Data) == 0 {
 		return r.GetRecord(ctx, table, key)
 	}
-	payload, _ := json.Marshal(input.Data)
+	payload, err := json.Marshal(input.Data)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid %s payload: %v", ErrValidation, table.Code, err)
+	}
 	query := fmt.Sprintf(`UPDATE %s SET "Payload" = "Payload" || $1::jsonb, "UpdatedAt" = NOW() WHERE %s::TEXT = $2 RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
 		quoteIdent(table.Code), quoteIdent(table.PrimaryKey), quoteIdent(table.PrimaryKey), quoteIdent(table.Code))
 	record, err := scanRecord(table.Code, "", "", r.querier.QueryRow(ctx, query, payload, key))
@@ -171,7 +187,10 @@ func (r *PostgresRepository) UpdateChildRecord(ctx context.Context, parent Table
 	payload := copyData(input.Data)
 	payload[child.ParentKey] = parentKey
 	payload[child.LineKey] = lineKey
-	payloadBytes, _ := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid %s payload: %v", ErrValidation, child.Code, err)
+	}
 	query := fmt.Sprintf(`UPDATE %s SET "Payload" = "Payload" || $1::jsonb, "UpdatedAt" = NOW() WHERE %s::TEXT = $2 AND %s::TEXT = $3 RETURNING %s::TEXT, row_to_json(%s)::jsonb, "CreatedAt", "UpdatedAt"`,
 		quoteIdent(child.Code), quoteIdent(child.ParentKey), quoteIdent(child.LineKey), quoteIdent(child.LineKey), quoteIdent(child.Code))
 	record, err := scanRecord(child.Code, parent.Code, parentKey, r.querier.QueryRow(ctx, query, string(payloadBytes), parentKey, lineKey))
@@ -212,6 +231,12 @@ func (r *PostgresRepository) CreateActionExecution(ctx context.Context, executio
 	}
 	query := fmt.Sprintf(`INSERT INTO %s ("ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "Payload")
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+		ON CONFLICT ("IdempotencyKey") DO UPDATE SET
+		  "Status" = EXCLUDED."Status", "Payload" = EXCLUDED."Payload",
+		  "ActorID" = EXCLUDED."ActorID", "ActorType" = EXCLUDED."ActorType",
+		  "ToolExecutionID" = EXCLUDED."ToolExecutionID", "AssistantSessionID" = EXCLUDED."AssistantSessionID",
+		  "FailureCode" = '', "FailureMessage" = '', "CompletedAt" = NULL, "StartedAt" = NOW()
+		WHERE "MAEX"."Status" = 'failed'
 		RETURNING "ActionID", "TableCode", "RecordKey", "Action", "Status", "IdempotencyKey", "ActorID", "ActorType", "ToolExecutionID", "AssistantSessionID", "Source", "FailureCode", "FailureMessage", "Payload", "StartedAt", "CompletedAt"`, quoteIdent(actionExecutionTable))
 	return scanActionExecution(r.querier.QueryRow(ctx, query, execution.ID, execution.TableCode, execution.RecordKey, execution.Action, execution.Status, execution.IdempotencyKey, execution.ActorID, execution.ActorType, execution.ToolExecutionID, execution.AssistantSessionID, execution.Source, string(payload)))
 }
@@ -308,6 +333,9 @@ func (r *PostgresRepository) ListActionExecutions(ctx context.Context, tableCode
 }
 
 func (r *PostgresRepository) insertRecord(ctx context.Context, tableCode, keyColumn string, values map[string]any) (*Record, error) {
+	if _, err := json.Marshal(values); err != nil {
+		return nil, fmt.Errorf("%w: invalid %s payload: %v", ErrValidation, tableCode, err)
+	}
 	names := sortedKeys(values)
 	columns := make([]string, 0, len(names))
 	placeholders := make([]string, 0, len(names))

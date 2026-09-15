@@ -672,14 +672,23 @@ func (r *Repository) applyIndustrySolutionAsset(ctx context.Context, tx pgx.Tx, 
 		)
 		return err
 	case AssetTypeToolDefinition, AssetTypeToolPolicy:
-		_, err := tx.Exec(ctx, `
-			INSERT INTO tool_definitions(name, description, source_type, default_policy, risk_level, required_level, metadata)
-			VALUES ($1, 'Generated from ERP industry solution', 'internal_api', 'approve', 'medium', 'L2', $2::jsonb)
-			ON CONFLICT (name) DO UPDATE SET
-				metadata = tool_definitions.metadata || EXCLUDED.metadata,
-				updated_at = NOW()
-		`, result.AssetKey, jsonBytes(map[string]any{"source_change_request_id": request.ID.String(), "asset_key": result.AssetKey}))
-		return err
+		toolKey := stringValue(payload["tool_key"])
+		if toolKey == "" {
+			return fmt.Errorf("%w: tool asset must reference a registered tool_key", ErrValidation)
+		}
+		// Packages reference the platform registry; they cannot create adapters or
+		// replace a registered tool's approval policy, schema, or permission floor.
+		tag, err := tx.Exec(ctx, `
+			UPDATE tool_definitions SET metadata = metadata || $2::jsonb, updated_at = NOW()
+			WHERE name = $1 AND is_active = TRUE
+		`, toolKey, jsonBytes(map[string]any{"source_change_request_id": request.ID.String(), "asset_key": result.AssetKey}))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("%w: tool %s is not registered and active", ErrValidation, toolKey)
+		}
+		return nil
 	default:
 		_, err := tx.Exec(ctx, `
 			INSERT INTO platform.platform_masters(module_key, entity_type, source_table, source_pk, title, status, organization_id, payload, metadata)

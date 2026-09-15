@@ -25,21 +25,33 @@ func TestDefaultCatalogIncludesERPBusinessHierarchy(t *testing.T) {
 		{"Finance", "Trial Balance", "Trial Balance", "MGLR", "", "run"},
 		{"Master Data", "Items", "Item", "MITM", "ITM1", ""},
 		{"Retail", "Stores", "Store", "MBRN", "BRN1", ""},
-		{"Retail", "POS", "POS Sale", "MRPS", "RPS1", "close"},
-		{"Retail", "Distribution", "Distribution Request", "MDRQ", "DRQ1", "auto-allocate"},
-		{"Retail", "Distribution", "Distribution Shipment", "MDSP", "DSP1", "ship"},
-		{"Retail", "Distribution", "Distribution Receipt", "MDRC", "DRC1", "receive"},
-		{"Retail", "Distribution", "Distribution Difference", "MDIF", "DIF1", "resolve"},
-		{"Retail", "Inventory Control", "Stock Policy", "MSTP", "STP1", "replenish"},
-		{"Retail", "Inventory Control", "Store Count", "MCNT", "CNT1", "post-adjustment"},
-		{"Retail", "Special Procurement", "Special Purchase Request", "MSPR", "SPR1", "convert-to-purchase-order"},
-		{"Manufacturing", "BOM", "Bill of Materials", "MBOM", "BOM1", "make-work-order"},
-		{"Manufacturing", "Work Orders", "Work Order", "MWOR", "WOR1", "complete"},
+		{"Retail", "POS", "POS Sale", "MRPS", "RPS1", ""},
+		{"Retail", "Distribution", "Distribution Request", "MDRQ", "DRQ1", ""},
+		{"Retail", "Distribution", "Distribution Shipment", "MDSP", "DSP1", ""},
+		{"Retail", "Distribution", "Distribution Receipt", "MDRC", "DRC1", ""},
+		{"Retail", "Distribution", "Distribution Difference", "MDIF", "DIF1", ""},
+		{"Retail", "Inventory Control", "Stock Policy", "MSTP", "STP1", ""},
+		{"Retail", "Inventory Control", "Store Count", "MCNT", "CNT1", ""},
+		{"Retail", "Special Procurement", "Special Purchase Request", "MSPR", "SPR1", ""},
+		{"Manufacturing", "BOM", "Bill of Materials", "MBOM", "BOM1", ""},
+		{"Manufacturing", "Work Orders", "Work Order", "MWOR", "WOR1", ""},
 	}
 
 	for _, tc := range cases {
 		if !catalog.HasBusinessDocument(tc.module, tc.submodule, tc.document, tc.table, tc.child, tc.action) {
 			t.Fatalf("catalog missing hierarchy %#v", tc)
+		}
+	}
+	for _, module := range catalog.Modules {
+		if module.Name != "Retail" && module.Name != "Manufacturing" {
+			continue
+		}
+		for _, submodule := range module.Submodules {
+			for _, document := range submodule.Documents {
+				if document.TableCode != "MIGE" && document.TableCode != "MIGN" && document.TableCode != "MJDT" && len(document.ActionNames) != 0 {
+					t.Fatalf("archived document %s exposes actions: %v", document.TableCode, document.ActionNames)
+				}
+			}
 		}
 	}
 }

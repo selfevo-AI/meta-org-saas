@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 7 {
-		t.Fatalf("tenant migration file count = %d, want 7", len(files))
+	if len(files) != 9 {
+		t.Fatalf("tenant migration file count = %d, want 9", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -171,6 +171,9 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 	financeCostingIndexesSQL := files[6].SQL
 	if !strings.Contains(financeCostingIndexesSQL, "tenantdb:include ../029_finance_costing_hot_path_indexes.sql") {
 		t.Fatal("tenant finance/costing index migration SQL missing platform index include")
+	}
+	if len(files[7].AcceptsChecksumDrift) != 1 || files[7].AcceptsChecksumDrift[0] != "001_tenant_business_baseline.sql" {
+		t.Fatalf("ontology repair must reconcile the expanded baseline: %#v", files[7])
 	}
 }
 

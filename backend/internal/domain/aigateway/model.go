@@ -215,12 +215,20 @@ type UsageLedgerEntry struct {
 }
 
 type Message struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
-	ToolName   string         `json:"tool_name,omitempty"`
-	ToolCalls  []ToolCall     `json:"tool_calls,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
+	Attachments      []Attachment   `json:"attachments,omitempty"`
+	Role             string         `json:"role"`
+	Content          string         `json:"content,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ToolName         string         `json:"tool_name,omitempty"`
+	ToolCalls        []ToolCall     `json:"tool_calls,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+}
+
+type Attachment struct {
+	Name      string `json:"name"`
+	MediaType string `json:"media_type"`
+	Data      []byte `json:"data"`
 }
 
 type ToolSpec struct {

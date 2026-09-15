@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 )
 
 const IndustryManifestVersion = "meta-org.industry-solution.v1"
@@ -397,6 +399,42 @@ func buildIndustryAssetManifest(input ERPSolutionFlowRequest, metadata map[strin
 		Dependencies:          []string{"erp.catalog", "erp.action_registry", "platform.industry_solution_change"},
 		QualityGates:          stringSliceFromMaps(mapSliceFromAny(metadata["quality_gates"]), "gate_key"),
 		VerificationScenarios: stringSliceFromMaps(mapSliceFromAny(metadata["verification_scenarios"]), "scenario_key"),
+	}
+}
+
+func archiveUnavailableERPWorkflows(metadata map[string]any) {
+	actions := erp.DefaultActionRegistry()
+	tools := map[string]bool{}
+	for _, tool := range mapSliceFromAny(metadata["tool_definitions"]) {
+		tools[stringValue(tool["tool_key"])] = true
+	}
+	for _, kind := range []string{"process_loops", "verification_scenarios", "assistant_skills"} {
+		active, archived := []map[string]any{}, []map[string]any{}
+		for _, item := range mapSliceFromAny(metadata[kind]) {
+			available := true
+			for _, step := range stringSliceFromAny(item["steps"]) {
+				table, action, isAction := strings.Cut(step, ".")
+				if isAction {
+					if _, ok := actions.Lookup(table, action); !ok {
+						available = false
+					}
+				}
+			}
+			for _, tool := range stringSliceFromAny(item["allowed_tools"]) {
+				if !tools[tool] {
+					available = false
+				}
+			}
+			if available {
+				active = append(active, item)
+			} else {
+				item["status"] = "retired"
+				item["reason"] = "ledger_safe_adapter_required"
+				archived = append(archived, item)
+			}
+		}
+		metadata[kind] = active
+		metadata["archived_"+kind] = archived
 	}
 }
 

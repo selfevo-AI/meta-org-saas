@@ -97,8 +97,8 @@ func TestAnthropicAdapterInvokeParsesContent(t *testing.T) {
 
 func TestGeminiAdapterInvokeParsesContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("key"); got != "sk-test" {
-			t.Fatalf("key = %q, want sk-test", got)
+		if got := r.Header.Get("x-goog-api-key"); got != "sk-test" || r.URL.Query().Has("key") {
+			t.Fatalf("API key must be sent only in the header, got %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -141,7 +141,7 @@ func TestProviderStreamsNormalizeDeltaAndDone(t *testing.T) {
 		},
 		{
 			name: "gemini",
-			body: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"he\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"llo\"}]}}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":2}}\n\n",
+			body: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"he\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"llo\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":2}}\n\n",
 			adapter: func(baseURL string, client *http.Client) ProviderAdapter {
 				return NewGeminiAdapter(baseURL, "sk-test", client)
 			},

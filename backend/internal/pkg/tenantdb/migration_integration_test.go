@@ -58,8 +58,8 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run fresh tenant migrations: %v", err)
 	}
-	if result.Version != "007_finance_costing_hot_path_indexes" {
-		t.Fatalf("tenant migration version = %q, want 007_finance_costing_hot_path_indexes", result.Version)
+	if result.Version != "009_ontology_document_imports" {
+		t.Fatalf("tenant migration version = %q, want 009_ontology_document_imports", result.Version)
 	}
 
 	targetPool, err = pgxpool.New(ctx, targetURL)
@@ -84,6 +84,18 @@ func TestFreshTenantBusinessMigrationAgainstPostgres(t *testing.T) {
 		`public."APRJ"`,
 		`public."MREQ"`,
 		`public."REQ1"`,
+		`public."MVPM"`,
+		`public."VPM1"`,
+		"public.erp_gl_journal_entries",
+		"public.erp_gl_journal_entry_lines",
+		"public.ontology_object_types",
+		"public.ontology_properties",
+		"public.ontology_link_types",
+		"public.ontology_action_types",
+		"public.ontology_document_imports",
+		"public.ontology_source_files",
+		"public.ontology_import_events",
+		"public.ontology_document_sources",
 	} {
 		assertTenantTableExists(t, ctx, targetPool, tableRef)
 	}

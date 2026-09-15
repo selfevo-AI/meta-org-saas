@@ -12,7 +12,7 @@ export default defineConfig({
   // E2E projects share the same platform and tenant fixtures, including persisted UI preferences.
   workers: 1,
   reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : 'list',
-  globalSetup: './tests/e2e/global-setup.ts',
+  globalSetup: process.env.PLAYWRIGHT_SKIP_GLOBAL_SETUP === '1' ? undefined : './tests/e2e/global-setup.ts',
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',

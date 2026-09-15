@@ -32,6 +32,9 @@ This directory now uses staged baseline migrations instead of the historical
 27. `027_ai_provider_channel_circuit_breaker.sql`
 28. `028_ai_observability_hot_path_indexes.sql`
 29. `029_finance_costing_hot_path_indexes.sql`
+30. `030_operational_ontology_ledger.sql`
+31. `031_ontology_tools.sql`
+32. `032_core_business_boundary.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -42,6 +45,7 @@ Physical tenant databases use their own tenant migration directory:
 5. `tenant/005_requirement_erp_authoritative_projection.sql`
 6. `tenant/006_project_requirement_business_key_link.sql`
 7. `tenant/007_finance_costing_hot_path_indexes.sql`
+8. `tenant/008_operational_ontology_ledger.sql`
 
 The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
@@ -120,6 +124,55 @@ baseline, create tenant databases through the backend provisioner, and verify
 tenant migration expansion before using tenant ERP/finance APIs.
 
 ## Stage Ownership
+
+### Operational Ontology and Accounting
+
+The `ontology` API is a semantic projection over ERP objects, not a second
+business store. Queries support scalar property filters and keyset pagination;
+links recheck the target module permission before returning any related data.
+`004` owns the five Ontology tool definitions, bilingual property metadata, and
+their approval policies. `031` installs them on existing platform databases.
+Only read tools can run without business approval. `ontology.action.execute`
+uses the existing Tool Runtime reviewer gate and the ERP transaction/audit path.
+Retired inventory/procurement/sales repositories are no longer registered as
+active HTTP routes; no historical tables are removed by this change.
+
+`001` owns the operational ontology backing tables and the canonical ledger.
+`030` upgrades existing platform databases; tenant `008` expands the same SQL
+through the tenant migrator. It adds outgoing payments (`MVPM/VPM1`), the
+default posting accounts, object-type metadata in `MREG`, and the
+`erp_gl_*` compatibility views over `MACT/MPRC/MJDT/JDT1`.
+
+Upgrades must run the migrators, not apply SQL or edit tracked checksums by
+hand. Platform repairs `030`, `031`, and `032` explicitly reconcile the
+changed `001`, `004`, and `002` baselines respectively. Tenant repair `008`
+reconciles the expanded tenant `001` baseline. Repair SQL and checksum
+history are committed together. An already-applied repair cannot authorize
+later edits to a baseline; use a new reviewed migration for later changes.
+
+Legacy `gl_*` rows are copied once into ERP objects with their UUIDs preserved
+as `LegacyID`. The original tables remain available for reconciliation, but
+application GL writes and reads use ERP objects. The compatibility views do
+not maintain another copy of journal data. Do not resume writing the legacy
+tables after upgrading. Historical unvalued stock is not assigned an invented
+cost; inventory adjustments should establish its verified carrying value.
+
+Actions and successful provenance commit in one tenant-local transaction.
+Ledger mutations are serialized with a PostgreSQL transaction advisory lock
+per tenant database. This intentionally favors correctness for the current
+single-organization workload; split the lock only with cross-object ordering
+and concurrency tests. ERP code tables require dedicated tenant databases in
+SaaS mode. Ontology queries and actions retain per-module authorization.
+
+Purchase/sales order conversion currently creates a full-order receipt or
+delivery. Payments support partial settlement and multiple allocations, with
+currency, partner, and both open balances checked on every allocation.
+Financial values use six decimal places and decimal arithmetic. Inventory
+valuation is weighted average within an item/warehouse/currency balance.
+
+Fresh verification must run both platform and tenant migration tests plus the
+ERP business-flow integration test. SQL containing `tenantdb:include` must be
+executed through the tenant migrator.
 
 `000_saas_platform_management_baseline.sql` owns the SaaS management platform:
 platform accounts, SaaS organizations, subscriptions, platform modules,
@@ -500,6 +553,45 @@ metadata are retained in `input_context` but do not influence this authority
 check. Pre-`026` runs have an empty hash and fail closed at proposal submission;
 operators must not backfill hashes from unverified historical payloads.
 
+## Ontology Catalog and Document Intake
+
+`001_erp_code_baseline.sql` owns the normalized tenant ontology catalog:
+`ontology_object_types`, `ontology_properties`, `ontology_link_types`, and
+`ontology_action_types`. Type identities reference the ERP module registry;
+properties, link endpoints, and action definitions reference type identities.
+The runtime loads this catalog from the routed tenant database. ERP records
+remain the authoritative object state; there is no second EAV or graph store.
+
+The same stage owns `ontology_document_imports`, `ontology_source_files`,
+`ontology_import_events`, and the `ontology_document_sources` view. External
+documents are evidence attached to an object type until a human confirms them.
+Original bytes and content hashes, extraction evidence, human corrections, and
+versioned review events stay in the physical tenant database. User and AI
+invocation UUIDs are control-plane identities and intentionally have no
+cross-database foreign keys. A confirmed source edge resolves the authoritative
+ERP key without duplicating its business state.
+
+`033_ontology_document_imports.sql` upgrades existing platform databases and
+accepts the matching `001` checksum drift once. Tenant migration
+`009_ontology_document_imports.sql` includes that repair and accepts drift of
+the expanded tenant `001`. `002_erp_platform_integration_baseline.sql` owns the
+bilingual human-only API operation metadata; `034_document_import_operations.sql`
+repairs existing installations and accepts the matching `002` checksum drift.
+
+Upload and recognition do not create business records. Confirmation checks
+human identity, tenant module permissions, master-data references, numeric
+precision, totals, and the reviewed version. Header, lines, ERP provenance,
+action audit, and the confirmation event commit in one tenant-local transaction.
+The unique source fingerprint deduplicates uploads; the confirmation hash and
+review version make retries idempotent. No import implicitly approves or posts
+a document. Rejected records and originals remain available for audit.
+
+Fresh verification must cover both platform stages and the provisioner-expanded
+tenant stages, including validated foreign keys and catalog/source relationships.
+The import integration suite additionally tests concurrent confirmation,
+rollback, stale review rejection, human-only authorization, and document queries.
+See `docs/document-imports.md` for formats, API contracts, and verification commands.
+
 ## AI Audit Retention
 
 `004_ai_capability_baseline.sql` owns the governed AI audit-retention schema.
@@ -544,6 +636,44 @@ WHERE NOT convalidated;
 The expected result is `0`.
 
 ## Change Governance
+
+### Operational Ontology Boundary
+
+The ledger import preserves legacy account and cost-center UUIDs even when
+their codes already exist in the canonical ERP tables. Existing canonical
+properties win; legacy rows remain available for reconciliation. Duplicate
+legacy codes across organizations, conflicting legacy identities, or mismatched
+organization ownership stop the upgrade with an explicit error. Resolve that
+ambiguity before retrying; never drop a tenant's accounts to bypass the check.
+Legacy void journals remain void (`BtfStatus = V`) and cannot be edited, deleted,
+or posted. The upgrade integration test covers collisions and void states on
+both platform and tenant databases, in addition to balanced posted entries.
+
+`030_operational_ontology_ledger.sql` and the matching `001` section mark
+retail/manufacturing records and stock balances read only in MREG. Historical
+industry tables and templates are retained, but their quantity-only mutation
+adapters are retired. Re-enabling an extension requires a valued inventory and
+balanced journal implementation with integration tests.
+
+New industry manifests archive unsupported process loops, verification scenarios,
+and assistant skills instead of offering them as executable assets. Core workflow
+metadata includes receipt/delivery approval, invoice posting, and payment allocation.
+Tool assets reference existing registered tool names and cannot create adapter
+aliases or downgrade approval policies. The matching `004`/`031` AI stage disables
+historical `tool_definition.*`, `tool_policy.*`, and `erp.m*.*` internal aliases;
+their identities and audit history remain intact.
+
+`032_core_business_boundary.sql` and the matching `002` section disable obsolete
+semantic finance and industry mutation operations, and register the completed
+receipt/delivery, payable posting and outgoing allocation operations. Old
+`/finance/receivables`, `/receipts`, `/payables` and `/payments` APIs return 410
+with an Ontology replacement. No historical finance rows are deleted.
+
+Human workbenches use Ontology queries, links, action history and execution;
+draft creation/editing continues through the same ERP service. AI changes use
+`ontology.action.execute` with a mandatory reviewer approval floor. Provider
+configuration remains platform-owned; tenant AI screens are consumption and
+audit views and never expose provider keys.
 
 Every future change that touches database structure, table ownership,
 relationships, foreign keys, indexes, seed data, schema-generation logic, or

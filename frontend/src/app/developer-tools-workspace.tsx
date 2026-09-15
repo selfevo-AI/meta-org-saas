@@ -1,6 +1,6 @@
 'use client'
 
-import { Activity, Bot, FileCode2, Gauge, KeyRound, Network, Plus, RefreshCw, Route, ServerCog, Wrench } from 'lucide-react'
+import { Activity, Bot, FileCode2, Gauge, KeyRound, Network, Play, Plus, RefreshCw, Route, ServerCog, Wrench } from 'lucide-react'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -15,20 +15,17 @@ import {
   createRoutingRule,
   getAICostSummary,
   getAIGatewayBalance,
-  getAIUsageAnalysis,
   listAIAccessTokens,
   listAIAdapters,
   listAIBalanceTransactions,
   listAIModelChannelAbilities,
   listAIModelGroups,
-  listInterfaceFiles,
   listInvocations,
   listModelProviders,
   listModels,
   listPlatformModelProviders,
   listPlatformModels,
   listProviderChannels,
-  listRoutingRules,
   listToolExecutions,
   listTools,
   rotateModelProviderKey,
@@ -110,6 +107,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
   const [gatewayBalance, setGatewayBalance] = useState<AIGatewayBalance | null>(null)
   const [balanceTransactions, setBalanceTransactions] = useState<AIBalanceTransaction[]>([])
   const [adapters, setAdapters] = useState<AIAdapterDescriptor[]>([])
+  const [preset, setPreset] = useState('')
   const [selectedProviderID, setSelectedProviderID] = useState('')
   const [selectedChannelID, setSelectedChannelID] = useState('')
   const [selectedOrganizationID, setSelectedOrganizationID] = useState('')
@@ -213,7 +211,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
     () =>
       isPlatformScope
         ? tabs.filter((tab) => ['overview', 'providers', 'channels', 'models', 'groups', 'accessTokens', 'balance', 'adapters'].includes(tab.id))
-        : tabs.filter((tab) => !['groups', 'accessTokens', 'balance', 'adapters'].includes(tab.id)),
+        : tabs.filter((tab) => ['providers', 'models', 'invocations', 'analysis', 'tools'].includes(tab.id)),
     [isPlatformScope],
   )
   const effectiveActiveTab = visibleTabs.some((tab) => tab.id === activeTab) ? activeTab : visibleTabs[0]?.id ?? 'providers'
@@ -251,15 +249,15 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
         balanceTransactionData,
       ] = await Promise.all([
         loadProviders(token),
-        listProviderChannels(token, undefined, apiScope),
+        isPlatformScope ? listProviderChannels(token, undefined, apiScope) : Promise.resolve<ProviderChannel[]>([]),
         loadModels(token),
-        isPlatformScope ? Promise.resolve<AIRoutingRule[]>([]) : listRoutingRules(token),
+        Promise.resolve<AIRoutingRule[]>([]),
         isPlatformScope ? Promise.resolve<ToolDefinition[]>([]) : listTools(token),
-        isPlatformScope ? Promise.resolve<InterfaceFile[]>([]) : listInterfaceFiles(token),
+        Promise.resolve<InterfaceFile[]>([]),
         isPlatformScope ? Promise.resolve<ToolExecution[]>([]) : listToolExecutions(token),
         isPlatformScope ? Promise.resolve<AIInvocation[]>([]) : listInvocations(token),
         isPlatformScope ? Promise.resolve<AICostSummary | null>(null) : getAICostSummary(token),
-        isPlatformScope ? Promise.resolve<AIUsageAnalysis | null>(null) : getAIUsageAnalysis(token),
+        Promise.resolve<AIUsageAnalysis | null>(null),
         isPlatformScope ? listAIModelGroups(token, organizationID || undefined, apiScope) : Promise.resolve<AIModelGroup[]>([]),
         isPlatformScope ? listAIModelChannelAbilities(token, modelAbilityForm.model_group_id || undefined, apiScope) : Promise.resolve<AIModelChannelAbility[]>([]),
         isPlatformScope ? listAIAccessTokens(token, organizationID || undefined, apiScope) : Promise.resolve<AIAccessToken[]>([]),
@@ -326,6 +324,10 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
 
   async function submitProvider(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!providerForm.name.trim() || !providerForm.base_url.trim() || !providerForm.api_key.trim()) {
+      setError(t('developer.providerRequired'))
+      return
+    }
     await run(
       () =>
         createModelProvider(token, {
@@ -337,8 +339,13 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
           timeout_ms: Number(providerForm.timeout_ms || 60000),
           retry_count: Number(providerForm.retry_count || 1),
           tags: splitCsv(providerForm.tags),
-          metadata: {},
-        }, apiScope).then(() => setProviderForm((current) => ({ ...current, api_key: '' }))),
+          metadata: { adapter_key: preset || 'custom' },
+        }, apiScope).then((provider) => {
+          setProviderForm((current) => ({ ...current, api_key: '' }))
+          setSelectedProviderID(provider.id)
+          setModelForm((current) => ({ ...current, provider_id: provider.id }))
+          setChannelForm((current) => ({ ...current, provider_id: provider.id }))
+        }),
       'developer.providerCreated',
     )
   }
@@ -566,17 +573,19 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
 
   async function testProvider() {
     if (!selectedProvider) return
-    await run(() => testModelProvider(token, selectedProvider.id, testModel || undefined, apiScope).then(() => undefined), 'developer.providerTested')
+    if (!testModel.trim()) { setError(t('developer.testModelRequired')); return }
+    await run(() => testModelProvider(token, selectedProvider.id, testModel.trim(), apiScope).then(() => undefined), 'developer.providerTested')
   }
 
   async function testChannel() {
     if (!selectedChannel) return
-    await run(() => testProviderChannel(token, selectedChannel.id, channelTestModel || undefined, apiScope).then(() => undefined), 'developer.channelTested')
+    if (!channelTestModel.trim()) { setError(t('developer.testModelRequired')); return }
+    await run(() => testProviderChannel(token, selectedChannel.id, channelTestModel.trim(), apiScope).then(() => undefined), 'developer.channelTested')
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm">
+    <div className="min-w-0 space-y-5">
+      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
         {visibleTabs.map((tab) => {
           const Icon = tab.icon
           return (
@@ -640,14 +649,14 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       )}
 
       {effectiveActiveTab === 'providers' && (
-        <div className={`grid gap-5 ${isPlatformScope ? '' : 'xl:grid-cols-[minmax(0,1fr)_380px]'}`}>
+        <div className={`grid min-w-0 gap-5 ${isPlatformScope ? 'xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]' : ''}`}>
           <Panel title="developer.modelProviders">
             <div className="divide-y divide-slate-100">
               {providers.map((provider) => (
                 <button
                   key={provider.id}
                   type="button"
-                  onClick={() => setSelectedProviderID(provider.id)}
+                  onClick={() => { setSelectedProviderID(provider.id); setTestModel(''); setSecretInput('') }}
                   className={`grid w-full gap-2 py-3 text-left md:grid-cols-[1fr_auto] ${
                     selectedProvider?.id === provider.id ? 'text-slate-950' : 'text-slate-700'
                   }`}
@@ -665,9 +674,17 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
             </div>
           </Panel>
 
-          {!isPlatformScope && (
+          {isPlatformScope && (
           <Panel title="developer.providerSettings">
             <form className="space-y-3" onSubmit={submitProvider}>
+              <SelectInput label="developer.preset" value={preset} options={['', ...adapters.map((item) => item.adapter_key)]}
+                labels={{ '': t('developer.presetCustom'), ...Object.fromEntries(adapters.map((item) => [item.adapter_key, item.display_name])) }}
+                onChange={(key) => {
+                  setPreset(key)
+                  const adapter = adapters.find((item) => item.adapter_key === key)
+                  if (adapter) setProviderForm((current) => ({ ...current, name: adapter.display_name, provider_type: adapter.provider_type as 'openai' | 'anthropic' | 'gemini', base_url: adapter.default_base_url, api_key: '' }))
+                  else setProviderForm((current) => ({ ...current, name: '', base_url: '', api_key: '' }))
+                }} />
               <TextInput label="common.name" value={providerForm.name} onChange={(value) => setProviderForm({ ...providerForm, name: value })} />
               <SelectInput
                 label="developer.providerType"
@@ -675,17 +692,18 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
                 onChange={(value) => setProviderForm({ ...providerForm, provider_type: value as 'openai' | 'anthropic' | 'gemini' })}
                 options={['openai', 'anthropic', 'gemini']}
               />
-              <TextInput label="developer.baseUrl" value={providerForm.base_url} onChange={(value) => setProviderForm({ ...providerForm, base_url: value })} />
+              <TextInput label="developer.baseUrl" type="url" value={providerForm.base_url} onChange={(value) => setProviderForm({ ...providerForm, base_url: value })} />
               <TextInput label="developer.apiKey" type="password" value={providerForm.api_key} onChange={(value) => setProviderForm({ ...providerForm, api_key: value })} />
               <div className="grid gap-3 sm:grid-cols-2">
-                <TextInput label="developer.timeout" value={providerForm.timeout_ms} onChange={(value) => setProviderForm({ ...providerForm, timeout_ms: value })} />
-                <TextInput label="developer.retries" value={providerForm.retry_count} onChange={(value) => setProviderForm({ ...providerForm, retry_count: value })} />
+                <TextInput label="developer.timeout" type="number" value={providerForm.timeout_ms} onChange={(value) => setProviderForm({ ...providerForm, timeout_ms: value })} />
+                <TextInput label="developer.retries" type="number" value={providerForm.retry_count} onChange={(value) => setProviderForm({ ...providerForm, retry_count: value })} />
               </div>
               <TextInput label="developer.tags" value={providerForm.tags} onChange={(value) => setProviderForm({ ...providerForm, tags: value })} />
               <SubmitButton loading={loading} label="developer.createProvider" />
             </form>
 
             <div className="mt-5 border-t border-slate-100 pt-4">
+              <p className="mb-3 break-all text-sm font-medium">{t('developer.savedProvider')}: {selectedProvider?.name || t('common.none')}</p>
               <p className="text-sm font-semibold text-slate-950">{t('developer.keyRotation')}</p>
               <TextInput label="developer.newKey" type="password" value={secretInput} onChange={setSecretInput} />
               <button
@@ -701,10 +719,10 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
               <button
                 type="button"
                 onClick={() => void testProvider()}
-                disabled={!selectedProvider || loading}
+                disabled={!selectedProvider || !testModel.trim() || loading}
                 className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
-                {t('developer.testProvider')}
+                <Play className="mr-2 h-4 w-4" />{t('developer.testProvider')}
               </button>
             </div>
           </Panel>
@@ -765,7 +783,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
               <button
                 type="button"
                 onClick={() => void testChannel()}
-                disabled={!selectedChannel || loading}
+                disabled={!selectedChannel || !channelTestModel.trim() || loading}
                 className="mt-3 inline-flex h-10 w-full items-center justify-center rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
               >
                 {t('developer.testChannel')}
@@ -776,7 +794,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       )}
 
       {effectiveActiveTab === 'models' && (
-        <div className={`grid gap-5 ${isPlatformScope ? '' : 'xl:grid-cols-[minmax(0,1fr)_420px]'}`}>
+        <div className={`grid gap-5 ${isPlatformScope ? '2xl:grid-cols-[minmax(0,1fr)_420px]' : ''}`}>
           <Panel title="developer.modelCatalog">
             <Table
               headers={['developer.model', 'developer.provider', 'developer.status', 'developer.context']}
@@ -788,7 +806,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
               ])}
             />
           </Panel>
-          <Panel title="developer.createModel">
+          {isPlatformScope && <Panel title="developer.createModel">
             <form className="space-y-3" onSubmit={submitModel}>
               <SelectInput label="developer.provider" value={modelForm.provider_id} onChange={(value) => setModelForm({ ...modelForm, provider_id: value })} options={providers.map((provider) => provider.id)} labels={providerLabels} />
               <TextInput label="developer.modelKey" value={modelForm.model_key} onChange={(value) => setModelForm({ ...modelForm, model_key: value })} />
@@ -808,7 +826,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
               <TextInput label="developer.capabilities" value={modelForm.capabilities} onChange={(value) => setModelForm({ ...modelForm, capabilities: value })} />
               <SubmitButton loading={loading} label="developer.createModel" />
             </form>
-          </Panel>
+          </Panel>}
         </div>
       )}
 
@@ -1116,7 +1134,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   const { t } = useI18n()
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+    <section className="min-w-0 border-t border-slate-200 bg-white py-4">
       <h2 className="text-base font-semibold text-slate-950">{t(title)}</h2>
       <div className="mt-4">{children}</div>
     </section>
@@ -1129,7 +1147,9 @@ function TextInput({ label, value, onChange, type = 'text' }: { label: string; v
     <label className="block">
       <span className="text-xs font-semibold text-slate-500">{t(label)}</span>
       <input
+        aria-label={t(label)}
         type={type}
+        autoComplete={type === 'password' ? 'new-password' : undefined}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
@@ -1156,6 +1176,7 @@ function SelectInput({
     <label className="block">
       <span className="text-xs font-semibold text-slate-500">{t(label)}</span>
       <select
+        aria-label={t(label)}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"

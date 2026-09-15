@@ -12,6 +12,19 @@ type TokenUsage struct {
 	ImageOutputTokens     int `json:"image_output_tokens,omitempty"`
 }
 
+// Providers report cumulative counters, sometimes in separate SSE events.
+func mergeTokenUsage(current, update TokenUsage) TokenUsage {
+	return TokenUsage{
+		InputTokens:           max(current.InputTokens, update.InputTokens),
+		OutputTokens:          max(current.OutputTokens, update.OutputTokens),
+		CacheCreationTokens:   max(current.CacheCreationTokens, update.CacheCreationTokens),
+		CacheReadTokens:       max(current.CacheReadTokens, update.CacheReadTokens),
+		CacheCreation5mTokens: max(current.CacheCreation5mTokens, update.CacheCreation5mTokens),
+		CacheCreation1hTokens: max(current.CacheCreation1hTokens, update.CacheCreation1hTokens),
+		ImageOutputTokens:     max(current.ImageOutputTokens, update.ImageOutputTokens),
+	}
+}
+
 type Price struct {
 	InputPer1K                  float64 `json:"input_price_per_1k"`
 	OutputPer1K                 float64 `json:"output_price_per_1k"`

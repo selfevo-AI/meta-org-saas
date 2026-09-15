@@ -65,6 +65,9 @@ func (r *ToolRunner) ExecuteTool(ctx context.Context, request ToolRunRequest) (*
 	if contextPackageID != "" {
 		idempotencyKey = fmt.Sprintf("assistant:%s:%s:%s", request.Session.ID, contextPackageID, request.Call.ID)
 	}
+	if request.InvocationID != nil {
+		idempotencyKey += ":" + request.InvocationID.String()
+	}
 	return r.executor.ExecuteTool(ctx, toolruntime.ExecuteToolInput{
 		ToolName:       request.Call.Name,
 		InvocationID:   request.InvocationID,

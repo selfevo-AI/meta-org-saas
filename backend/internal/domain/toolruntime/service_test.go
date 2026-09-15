@@ -640,8 +640,11 @@ func (f *fakeApprovalRepository) CompleteExecution(_ context.Context, _ uuid.UUI
 	return &f.execution, nil
 }
 
-func (f *fakeApprovalRepository) CreateApproval(context.Context, uuid.UUID, *uuid.UUID, string) (*ToolApproval, error) {
+func (f *fakeApprovalRepository) CreateApproval(_ context.Context, executionID uuid.UUID, _ *uuid.UUID, reason string) (*ToolApproval, error) {
 	f.createApprovalCalls++
+	if f.approval.ID == uuid.Nil {
+		f.approval = ToolApproval{ID: uuid.New(), ExecutionID: executionID, Status: ApprovalPending, Reason: reason}
+	}
 	return &f.approval, nil
 }
 

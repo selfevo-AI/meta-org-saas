@@ -255,7 +255,7 @@ func TestValidateRecordInputRejectsUnknownFieldsWithoutPayload(t *testing.T) {
 }
 
 func TestCreateChildRecordUsesParentAndChildDefinitions(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{records: map[string][]Record{"MINV": {{Key: "1001", Data: map[string]any{"DocStatus": "O"}}}}}
 	service := NewService(repo, DefaultCatalog())
 
 	record, err := service.CreateChildRecord(context.Background(), "MINV", "1001", "INV1", RecordInput{
@@ -276,7 +276,7 @@ func TestCreateChildRecordUsesParentAndChildDefinitions(t *testing.T) {
 }
 
 func TestCreateChildRecordFlattensNestedPayloadFields(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{records: map[string][]Record{"MPDN": {{Key: "GR-1", Data: map[string]any{"DocStatus": "O"}}}}}
 	service := NewService(repo, DefaultCatalog())
 
 	_, err := service.CreateChildRecord(context.Background(), "MPDN", "GR-1", "PDN1", RecordInput{

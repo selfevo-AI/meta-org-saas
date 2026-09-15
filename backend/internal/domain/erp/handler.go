@@ -8,6 +8,8 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -68,6 +70,17 @@ func (h *Handler) runAction(w http.ResponseWriter, r *http.Request) {
 	input, ok := decodeActionInput(w, r)
 	if !ok {
 		return
+	}
+	input.ActorID, input.ToolExecutionID, input.AssistantSessionID = nil, nil, nil
+	input.ActorType, input.Source = "", "tenant_api"
+	if user, ok := middleware.UserFromContext(r.Context()); ok {
+		if id, err := uuid.Parse(user.ID); err == nil {
+			input.ActorID = &id
+		}
+		input.ActorType = user.Type
+	}
+	if header := r.Header.Get("Idempotency-Key"); header != "" {
+		input.IdempotencyKey = header
 	}
 	result, err := h.service.RunAction(
 		r.Context(),
@@ -238,6 +251,10 @@ func writeError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 	case errors.Is(err, ErrNotFound):
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+	case errors.Is(err, ErrForbidden):
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+	case errors.Is(err, ErrConflict):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}

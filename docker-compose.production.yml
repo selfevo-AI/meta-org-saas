@@ -1,0 +1,148 @@
+name: meta-org-production
+
+services:
+  gateway:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN to the public hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL for certificate renewal notices}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+      - "${HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./deploy/caddy/Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - ./deploy/caddy/routes.caddy:/etc/caddy/routes.caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      application:
+        ipv4_address: ${PROXY_IP_ADDRESS:-172.30.40.2}
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - application
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: "8080"
+      DATABASE_URL: ${PLATFORM_DATABASE_URL:?Set PLATFORM_DATABASE_URL for meta_org_saas}
+      PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:?Set PLATFORM_DATABASE_URL for meta_org_saas}
+      TENANT_DATABASE_ADMIN_URL: ${TENANT_DATABASE_ADMIN_URL:?Set TENANT_DATABASE_ADMIN_URL for postgres}
+      TENANT_DATABASE_NAME_PREFIX: meta_org_
+      TENANT_DATABASE_MODE: dedicated_database
+      TENANT_DATABASE_POOL_MAX_ENTRIES: ${TENANT_DATABASE_POOL_MAX_ENTRIES:-16}
+      TENANT_DATABASE_POOL_MAX_CONNECTIONS: ${TENANT_DATABASE_POOL_MAX_CONNECTIONS:-2}
+      TENANT_DATABASE_POOL_MIN_CONNECTIONS: "0"
+      MIGRATIONS_PATH: migrations
+      TENANT_MIGRATIONS_PATH: migrations/tenant
+      DOCUMENT_IMPORT_PROVIDER_TYPE: ${DOCUMENT_IMPORT_PROVIDER_TYPE:-}
+      DOCUMENT_IMPORT_MODEL: ${DOCUMENT_IMPORT_MODEL:-}
+      META_ORG_ENVIRONMENT: production
+      META_ORG_MODE: saas
+      META_ORG_DISTRIBUTION_MODE: saas
+      META_ORG_LICENSE_MODE: commercial
+      META_ORG_PLATFORM_ADMIN_EMAIL: ${META_ORG_PLATFORM_ADMIN_EMAIL:?Set the production administrator email}
+      META_ORG_PLATFORM_ADMIN_PASSWORD_HASH: ${META_ORG_PLATFORM_ADMIN_PASSWORD_HASH:?Set a production bcrypt password hash}
+      JWT_SECRET: ${JWT_SECRET:?Set a unique JWT_SECRET of at least 32 characters}
+      MODEL_SECRET_KEY: ${MODEL_SECRET_KEY:?Set a unique MODEL_SECRET_KEY of exactly 32 bytes}
+      CORS_ORIGINS: https://${APP_DOMAIN:?Set APP_DOMAIN to the public hostname}
+      TRUSTED_PROXY_CIDRS: ${PROXY_IP_ADDRESS:-172.30.40.2}/32
+      SECURITY_KERNEL_URL: http://security-kernel:8090
+      SECURITY_KERNEL_SHARED_SECRET: ${SECURITY_KERNEL_SHARED_SECRET:?Set a unique security kernel secret of at least 32 characters}
+      SECURITY_KERNEL_ENFORCEMENT_MODE: blocking
+    expose:
+      - "8080"
+    networks:
+      - application
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+      security-kernel:
+        # Backend migrations create the nonce table required by kernel readiness.
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/api/v1/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    stop_grace_period: 45s
+
+  security-kernel:
+    build:
+      context: .
+      dockerfile: security-kernel/Dockerfile
+    restart: unless-stopped
+    environment:
+      SECURITY_KERNEL_PORT: "8090"
+      SECURITY_KERNEL_SHARED_SECRET: ${SECURITY_KERNEL_SHARED_SECRET:?Set a unique security kernel secret of at least 32 characters}
+      SECURITY_KERNEL_MAX_CLOCK_SKEW_SECONDS: "60"
+      SECURITY_KERNEL_DATABASE_URL: ${PLATFORM_DATABASE_URL:?Set PLATFORM_DATABASE_URL for meta_org_saas}
+      RUST_LOG: info
+    expose:
+      - "8090"
+    networks:
+      - application
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8090/healthz >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique PostgreSQL password}
+      POSTGRES_DB: meta_org_saas
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meta_org_saas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  application:
+    ipam:
+      config:
+        - subnet: ${APP_NETWORK_SUBNET:-172.30.40.0/24}
+          ip_range: ${APP_NETWORK_DYNAMIC_RANGE:-172.30.40.128/25}
+  database:
+    internal: true
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

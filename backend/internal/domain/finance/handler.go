@@ -62,22 +62,20 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Patch("/finance/settlement-orders/{id}", h.updateSettlementOrder)
 	r.Post("/finance/settlement-orders/{id}/post", h.postSettlementOrder)
 	r.Post("/finance/settlement-orders/{id}/void", h.voidSettlementOrder)
-	r.Post("/finance/receivables", h.createReceivable)
-	r.Get("/finance/receivables", h.listReceivables)
-	r.Patch("/finance/receivables/{id}", h.updateReceivable)
-	r.Post("/finance/receivables/{id}/void", h.voidReceivable)
-	r.Post("/finance/receipts", h.createReceipt)
-	r.Get("/finance/receipts", h.listReceipts)
-	r.Post("/finance/receipts/{id}/allocate", h.allocateReceipt)
-	r.Post("/finance/payables", h.createPayable)
-	r.Get("/finance/payables", h.listPayables)
-	r.Patch("/finance/payables/{id}", h.updatePayable)
-	r.Post("/finance/payables/{id}/void", h.voidPayable)
-	r.Post("/finance/payments", h.createPayment)
-	r.Get("/finance/payments", h.listPayments)
-	r.Patch("/finance/payments/{id}", h.updatePayment)
-	r.Post("/finance/payments/{id}/void", h.voidPayment)
-	r.Post("/finance/payments/{id}/allocate", h.allocatePayment)
+	// Old semantic ledgers cannot accept writes alongside canonical ERP ledgers.
+	for route, target := range map[string]string{
+		"receivables": "receivable_invoice", "receipts": "incoming_payment",
+		"payables": "payable_invoice", "payments": "outgoing_payment",
+	} {
+		retired := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusGone, map[string]string{
+				"error":       "legacy_finance_api_retired",
+				"replacement": "/ontology/objects/" + target,
+			})
+		})
+		r.Handle("/finance/"+route, retired)
+		r.Handle("/finance/"+route+"/*", retired)
+	}
 }
 
 func (h *Handler) createAdapter(w http.ResponseWriter, r *http.Request) {

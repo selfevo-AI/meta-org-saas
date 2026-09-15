@@ -135,9 +135,8 @@ func TestTenantBusinessClosureRoutesAreMounted(t *testing.T) {
 		"deps.WorkflowHandler.RegisterRoutes",
 		"deps.ProjectHandler.RegisterRoutes",
 		"deps.FinanceHandler.RegisterRoutes",
-		"deps.InventoryHandler.RegisterRoutes",
-		"deps.ProcurementHandler.RegisterRoutes",
-		"deps.SalesHandler.RegisterRoutes",
+		"deps.ErpHandler.RegisterRoutes",
+		"deps.OntologyHandler.RegisterRoutes",
 	} {
 		if !strings.Contains(tenantBlock, snippet) {
 			t.Fatalf("tenant routes should mount business closure API %q", snippet)
@@ -145,6 +144,9 @@ func TestTenantBusinessClosureRoutesAreMounted(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"deps.OrganizationHandler.RegisterRoutes",
+		"deps.InventoryHandler.RegisterRoutes",
+		"deps.ProcurementHandler.RegisterRoutes",
+		"deps.SalesHandler.RegisterRoutes",
 	} {
 		if strings.Contains(tenantBlock, forbidden) {
 			t.Fatalf("tenant routes should not mount platform/AI legacy API %q", forbidden)

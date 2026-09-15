@@ -1,10 +1,38 @@
 package erp
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
+	"math"
 	"testing"
 	"time"
 )
+
+func TestRepositoryRejectsInvalidJSONBeforeQuery(t *testing.T) {
+	repo := NewRepository(nil)
+	table, _ := DefaultCatalog().Table("MPOR")
+	child, _ := table.Child("POR1")
+	input := RecordInput{Key: "1", Data: map[string]any{"Price": math.NaN()}}
+	for name, call := range map[string]func() error{
+		"create": func() error { _, err := repo.CreateRecord(context.Background(), table, input); return err },
+		"update": func() error { _, err := repo.UpdateRecord(context.Background(), table, "1", input); return err },
+		"create child": func() error {
+			_, err := repo.CreateChildRecord(context.Background(), table, child, "1", input)
+			return err
+		},
+		"update child": func() error {
+			_, err := repo.UpdateChildRecord(context.Background(), table, child, "1", "1", input)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := call(); !errors.Is(err, ErrValidation) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
 
 func TestPostgresColumnTypeMapsDocumentTypes(t *testing.T) {
 	cases := []struct {

@@ -259,15 +259,19 @@ docker compose up --build
 
 - PostgreSQL：`localhost:5432`
 - Go API：`http://localhost:8080`
-- API health：`http://localhost:8080/api/v1/health`
-- Next.js 前端：`http://localhost:3000`
+- 同域 API health：`http://localhost:3000/api/v1/health`
+- 应用入口（Caddy → Next.js）：`http://localhost:3000`
 
 默认 Docker 环境变量见 `docker-compose.yml`：
 
 - 数据库：`postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable`
 - 后端端口：`8080`
 - 模型与财务密钥加密：`MODEL_SECRET_KEY=0123456789abcdef0123456789abcdef`
-- 前端 API 地址：`http://localhost:8080/api/v1`
+- 前端 API 路径：`/api/v1`，由 Caddy 转发到 Go 后端。
+
+这套配置用于本地开发。公网 HTTPS 部署使用独立的
+[`docker-compose.production.yml`](docker-compose.production.yml)，设置步骤见
+[部署说明](deploy/README.md)。生产配置只公开 Caddy 的 HTTP/HTTPS 端口。
 
 ## 本地开发
 
@@ -306,11 +310,15 @@ npm run test:e2e
 
 `npm run test:e2e` 使用 Playwright 验证桌面与移动端的平台/租户登录、会话作用域和横向溢出；执行前需启动 `8080` 后端和 `3000` 前端。CI 会自动安装 Chromium 并启动完整测试环境。
 
-前端默认读取：
+浏览器统一请求当前站点的 `/api/v1`。`npm run dev` 会将它代理到后端，
+需要修改本机后端地址时设置：
 
 ```bash
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8080/api/v1
+API_PROXY_TARGET=http://127.0.0.1:8080
 ```
+
+`API_PROXY_TARGET` 只在开发服务器使用，必须是没有路径的 HTTP(S) origin。
+生产版 `npm start` / standalone 服务通过 Caddy 提供 API 转发。
 
 ### Windows 本机重启注意事项
 
@@ -333,7 +341,7 @@ Start-Process -FilePath "powershell" -ArgumentList @(
 Start-Process -FilePath "powershell" -ArgumentList @(
   '-NoProfile',
   '-Command',
-  'Set-Item Env:NEXT_PUBLIC_API_URL http://localhost:8080/api/v1; npm run dev'
+  'Set-Item Env:API_PROXY_TARGET http://127.0.0.1:8080; npm run dev'
  ) -WorkingDirectory "D:\project\meta-org-saas\frontend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org-saas\frontend-dev.log" -RedirectStandardError "D:\project\meta-org-saas\frontend-dev-err.log"
 ```
 
@@ -363,7 +371,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 
 如果 SaaS 管理台在为 `general` 行业组织启用 ERP 或行业方案时出现 `industry module policy denied update: module erp is not allowed by industry general`，说明平台行业包或代码层默认模块白名单未包含 ERP 入口模块。当前规范要求 `general` 可启用基础组织治理模块以及 `erp`、`finance`、`costing`、`inventory`、`procurement`、`sales`、`retail`、`manufacturing` 等 ERP/行业闭环模块；新增行业包时必须同步维护 baseline seed、后端策略校验和 SystemAdmin 前端入口。
 
-如果浏览器显示 `Failed to fetch`，先验证 API 健康接口，再检查后端响应是否包含 `Access-Control-Allow-Origin`。Windows PowerShell 启动后端时，逗号分隔的 `CORS_ORIGINS` 必须作为一个字符串传入。
+如果浏览器显示 `Failed to fetch`，先验证当前应用地址的 `/api/v1/health`，再检查 Caddy 或开发代理是否能访问后端。Windows PowerShell 启动后端时，逗号分隔的 `CORS_ORIGINS` 必须作为一个字符串传入；跨域 API 客户端仍需配置对应 origin。
 5. 打开 Meta Resource 工作区，先执行一次“同步现有资源”，确认 human、agent、external_human、model_channel、tool、capability 资源能进入统一资源视图。
 
 ## 配置
@@ -440,7 +448,7 @@ go run ./cmd/bcrypt-hash
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8080/api/v1` | 浏览器端调用的 API 基础地址。 |
+| `API_PROXY_TARGET` | `http://127.0.0.1:8080` | 仅供 `npm run dev` 使用的后端 origin；浏览器 API 路径固定为 `/api/v1`。 |
 
 ## 项目结构
 
@@ -454,9 +462,10 @@ frontend/
   src/app/                    Next.js App Router 页面和工作台
   src/lib/                    API、认证、i18n、API Workbench 元数据
 migrations/                   PostgreSQL SQL 阶段基线 000、001、002、004
-docs/operations/              生产运维、财务适配器协议和排障文档
+deploy/                       Caddy 网关、生产部署说明和网关验证
 .github/workflows/            GitHub Actions CI
 docker-compose.yml            本地完整环境编排
+docker-compose.production.yml 公网 HTTPS 环境编排
 ```
 
 ## 当前状态与边界

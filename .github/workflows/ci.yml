@@ -12,7 +12,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate Docker Compose
-        run: docker compose config
+        run: docker compose config --quiet
+      - name: Validate production Compose
+        env:
+          APP_DOMAIN: app.example.invalid
+          ACME_EMAIL: ops@example.invalid
+          POSTGRES_PASSWORD: ci-only-postgres
+          PLATFORM_DATABASE_URL: postgres://postgres:ci-only-postgres@postgres:5432/meta_org_saas?sslmode=disable
+          TENANT_DATABASE_ADMIN_URL: postgres://postgres:ci-only-postgres@postgres:5432/postgres?sslmode=disable
+          JWT_SECRET: ci-only-jwt-secret-0123456789abcdef
+          MODEL_SECRET_KEY: '11112222333344445555666677778888'
+          SECURITY_KERNEL_SHARED_SECRET: ci-only-security-kernel-shared-secret
+          META_ORG_PLATFORM_ADMIN_EMAIL: admin@example.invalid
+          META_ORG_PLATFORM_ADMIN_PASSWORD_HASH: $2a$10$/Dou0gOhCVFNGMitu8IUu.92HzEaG6iYWGxTTVUrSA1pkFvogvj22
+        run: docker compose -f docker-compose.production.yml config --quiet
+      - name: Validate production gateway
+        run: >-
+          docker run --rm -e APP_DOMAIN=app.example.invalid -e ACME_EMAIL=ops@example.invalid
+          -v "$PWD/deploy/caddy:/etc/caddy:ro" caddy:2.10.2-alpine
+          caddy validate --config /etc/caddy/Caddyfile.production --adapter caddyfile
+      - name: Verify gateway routing and streaming
+        run: docker compose -f deploy/tests/docker-compose.yml up --abort-on-container-exit --exit-code-from checks
+      - name: Clean up gateway test containers
+        if: always()
+        run: docker compose -f deploy/tests/docker-compose.yml down
 
   backend:
     runs-on: ubuntu-latest
@@ -199,7 +222,7 @@ jobs:
       - name: Start frontend
         working-directory: frontend
         env:
-          NEXT_PUBLIC_API_URL: http://127.0.0.1:8080/api/v1
+          API_PROXY_TARGET: http://127.0.0.1:8080
         run: |
           npm run dev -- -p 3000 > /tmp/meta-org-frontend.log 2>&1 &
           for attempt in {1..60}; do
@@ -212,6 +235,8 @@ jobs:
           exit 1
       - name: Run browser tests
         working-directory: frontend
+        env:
+          PLAYWRIGHT_API_URL: http://127.0.0.1:3000/api/v1
         run: npm run test:e2e
       - name: Print E2E service logs
         if: failure()

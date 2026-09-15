@@ -228,6 +228,7 @@ type InvokeOutput struct {
 	CostBreakdown     CostBreakdown `json:"cost_breakdown"`
 	Currency          string        `json:"currency"`
 	ToolCalls         []ToolCall    `json:"tool_calls,omitempty"`
+	ReasoningContent  string        `json:"reasoning_content,omitempty"`
 	CompletedAt       time.Time     `json:"completed_at"`
 	ProviderType      string        `json:"provider_type"`
 	Model             string        `json:"model"`
@@ -914,6 +915,7 @@ func (s *Service) invokeSync(ctx context.Context, input InvokeInput, accessToken
 		CostBreakdown:     breakdown,
 		Currency:          currency,
 		ToolCalls:         resp.ToolCalls,
+		ReasoningContent:  resp.ReasoningContent,
 		CompletedAt:       completedAt,
 		ProviderType:      target.ProviderType,
 		Model:             target.Model,
@@ -1330,12 +1332,14 @@ func (s *Service) AdapterCatalog() []AdapterDescriptor {
 		{AdapterKey: ProviderOpenAI, DisplayName: "OpenAI", ProviderType: ProviderOpenAI, AdapterMode: "native", DefaultBaseURL: defaultOpenAIBaseURL, SupportedModes: []string{"chat", "stream", "tools"}},
 		{AdapterKey: ProviderAnthropic, DisplayName: "Anthropic", ProviderType: ProviderAnthropic, AdapterMode: "native", DefaultBaseURL: defaultAnthropicBaseURL, SupportedModes: []string{"chat", "stream", "tools"}, RequiresNativeIO: true},
 		{AdapterKey: ProviderGemini, DisplayName: "Gemini", ProviderType: ProviderGemini, AdapterMode: "native", DefaultBaseURL: defaultGeminiBaseURL, SupportedModes: []string{"chat", "stream", "tools"}, RequiresNativeIO: true},
-		{AdapterKey: "deepseek", DisplayName: "DeepSeek", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.deepseek.com", SupportedModels: []string{"deepseek-chat", "deepseek-reasoner"}, SupportedModes: []string{"chat", "stream"}},
-		{AdapterKey: "moonshot", DisplayName: "Moonshot", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.moonshot.cn/v1", SupportedModes: []string{"chat", "stream"}},
-		{AdapterKey: "openrouter", DisplayName: "OpenRouter", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://openrouter.ai/api/v1", SupportedModes: []string{"chat", "stream"}},
-		{AdapterKey: "doubao", DisplayName: "Doubao", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", SupportedModes: []string{"chat", "stream"}},
-		{AdapterKey: "siliconflow", DisplayName: "SiliconFlow", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.siliconflow.cn/v1", SupportedModes: []string{"chat", "stream"}},
-		{AdapterKey: "ollama", DisplayName: "Ollama", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "http://localhost:11434/v1", SupportedModes: []string{"chat", "stream", "embeddings"}},
+		{AdapterKey: "deepseek", DisplayName: "DeepSeek", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.deepseek.com/v1", SupportedModels: []string{"deepseek-chat", "deepseek-reasoner"}, SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "qwen", DisplayName: "Qwen / DashScope", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "moonshot", DisplayName: "Kimi / Moonshot", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.moonshot.cn/v1", SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "grok", DisplayName: "Grok / xAI", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.x.ai/v1", SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "openrouter", DisplayName: "OpenRouter", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://openrouter.ai/api/v1", SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "doubao", DisplayName: "Doubao / Ark", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://ark.cn-beijing.volces.com/api/v3", SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "siliconflow", DisplayName: "SiliconFlow", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "https://api.siliconflow.cn/v1", SupportedModes: []string{"chat", "stream", "tools"}},
+		{AdapterKey: "ollama", DisplayName: "Ollama", ProviderType: ProviderOpenAI, AdapterMode: "openai_compatible", DefaultBaseURL: "http://localhost:11434/v1", SupportedModes: []string{"chat", "stream", "tools"}},
 	}
 }
 
@@ -1468,9 +1472,7 @@ func (s *Service) recordingStream(ctx context.Context, cancel context.CancelFunc
 				if !ok {
 					goto complete
 				}
-				if event.Usage.InputTokens > 0 || event.Usage.OutputTokens > 0 {
-					usage = event.Usage
-				}
+				usage = mergeTokenUsage(usage, event.Usage)
 				if event.Error != "" {
 					failed = event.Error
 				}
@@ -1757,6 +1759,13 @@ func estimateInvocationUsage(input InvokeInput, target ResolvedModel) TokenUsage
 	inputTokens := 0
 	for _, message := range input.Messages {
 		inputTokens += estimateTextTokens(message.Content)
+		for _, attachment := range message.Attachments {
+			// Admission estimates are reconciled to actual provider usage.
+			inputTokens += 4096
+			if attachment.MediaType == "application/pdf" {
+				inputTokens += 32768
+			}
+		}
 	}
 	outputTokens := maxTokens(input.MaxTokens, target.MaxOutputTokens)
 	if outputTokens == 0 {
@@ -1842,7 +1851,7 @@ func validateInvokeInput(input InvokeInput) error {
 	if len(input.Messages) == 0 {
 		return fmt.Errorf("%w: messages are required", ErrValidation)
 	}
-	return nil
+	return validateMessageAttachments(input.Messages)
 }
 
 func applyTenantAttribution(ctx context.Context, input *InvokeInput) error {

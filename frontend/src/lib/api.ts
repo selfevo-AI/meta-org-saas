@@ -3,7 +3,7 @@ import { apiErrorFromResponse, createRequestId } from './api-error'
 import type { SessionScope } from './auth'
 import type { ApiOperation } from './operations'
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8080/api/v1'
+export const API_BASE = '/api/v1'
 
 interface RequestOptions {
   method?: string
@@ -11,6 +11,7 @@ interface RequestOptions {
   token?: string
   organizationId?: string | null
   scope?: SessionScope
+  responseType?: 'json' | 'blob'
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -51,6 +52,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   if (response.status === 204) {
     return undefined as T
   }
+
+  if (options.responseType === 'blob') return response.blob() as Promise<T>
 
   return response.json()
 }

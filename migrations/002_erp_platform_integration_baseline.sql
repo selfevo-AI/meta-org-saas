@@ -250,3 +250,66 @@ ON CONFLICT (operation_key) DO UPDATE SET
 
 SELECT platform.provision_runtime_organization(id)
 FROM public.organizations;
+
+-- Operational Ontology: retire duplicate and quantity-only mutation surfaces.
+UPDATE platform.runtime_operations SET status = 'disabled', assistant_eligible = FALSE,
+    metadata = metadata || '{"operational_status":"legacy_read_only","replacement":"/ontology/types"}'::jsonb,
+    updated_at = NOW()
+WHERE
+    path ~ '^/finance/(receivables|receipts|payables|payments)(/|$)'
+    OR (method <> 'GET' AND (
+        metadata #>> '{workspace,module}' IN ('retail', 'manufacturing')
+        OR path ~ '^/erp/(MBRN|MTER|MMBR|MPRM|MPUB|MRPS|MDRQ|MDSP|MDRC|MDIF|MSTP|MCNT|MSPR|MBOM|MWOR)(/|$)'
+    ));
+
+INSERT INTO platform.runtime_operations (
+    operation_key, domain, title, method, path, auth, path_params, body_template,
+    operation_kind, danger_level, result_view, assistant_eligible, action_type, metadata
+)
+SELECT 'erp.' || lower(code) || '.' || action, 'ERP', 'erp.action.' || action,
+    'POST', '/erp/' || code || '/{key}/actions/' || action, TRUE,
+    '[{"name":"key","label":"ontology.field.key"}]'::jsonb,
+    CASE WHEN action = 'allocate' THEN '{"data":{"TargetKey":"","Amount":0}}'::jsonb ELSE '{"data":{}}'::jsonb END,
+    'contextual', 'high', 'detail', FALSE, 'erp.action',
+    jsonb_build_object('source', 'operational_ontology', 'ontology_type', object_type,
+        'workspace', jsonb_build_object('module', module, 'document_id', document_id,
+            'table_code', code, 'primary_key', 'DocEntry', 'action', action))
+FROM (VALUES
+    ('MPOR','receive','purchase_order','procurement','purchase_order'),
+    ('MPDN','approve','goods_receipt','procurement','goods_receipt_po'),
+    ('MRDR','deliver','sales_order','sales','sales_order'),
+    ('MDLN','approve','delivery','sales','delivery'),
+    ('MPCH','post','payable_invoice','finance','ap_invoice'),
+    ('MVPM','allocate','outgoing_payment','finance','outgoing_payment')
+) AS actions(code, action, object_type, module, document_id)
+ON CONFLICT (operation_key) DO UPDATE SET
+    title = EXCLUDED.title, path = EXCLUDED.path, path_params = EXCLUDED.path_params,
+    body_template = EXCLUDED.body_template, action_type = EXCLUDED.action_type,
+    metadata = platform.runtime_operations.metadata || EXCLUDED.metadata, updated_at = NOW();
+
+-- External-document operations are human-only tenant workflows.
+INSERT INTO platform.runtime_operations (
+    operation_key, domain, title, method, path, auth, path_params, query_params, body_template,
+    operation_kind, danger_level, result_view, assistant_eligible, action_type, metadata
+)
+SELECT 'document_import.' || a.key, 'ERP', 'import.operation.' || a.key,
+    a.method, '/document-imports' || a.suffix, TRUE,
+    CASE WHEN a.key='list' THEN '[]'::jsonb ELSE '[{"name":"id","label":"import.field.id"}]'::jsonb END,
+    CASE WHEN a.key='list' THEN '[{"name":"object_type","label":"import.field.object_type"},{"name":"status","label":"import.field.status"},{"name":"cursor","label":"import.field.cursor"}]'::jsonb ELSE '[]'::jsonb END,
+    a.body::jsonb, 'contextual',
+    CASE WHEN a.method='GET' THEN 'low' ELSE 'high' END,
+    'detail', FALSE, 'document_import.' || a.key,
+    jsonb_build_object('source','ontology_document_import','human_only',TRUE,
+        'title_i18n',jsonb_build_object('zh',a.zh,'en',a.en),
+        'parameter_labels',jsonb_build_object('object_type','import.field.object_type',
+            'id','import.field.id','version','import.field.version','draft','import.field.draft',
+            'confirmed','import.field.confirmed'))
+FROM (VALUES
+ ('list','GET','','{}','查询单据导入','List document imports'),
+ ('get','GET','/{id}','{}','读取单据导入','Get document import'),
+ ('recognize','POST','/{id}/recognize','{"version":1}','识别外部单据','Recognize external document'),
+ ('review','PATCH','/{id}/review','{"version":1,"draft":{"key":"","properties":{},"lines":[]}}','保存单据复核','Save document review'),
+ ('confirm','POST','/{id}/confirm','{"version":1,"draft":{"key":"","properties":{},"lines":[]},"confirmed":false}','确认外部单据','Confirm external document'),
+ ('reject','POST','/{id}/reject','{"version":1}','拒绝外部单据','Reject external document')
+) a(key,method,suffix,body,zh,en)
+ON CONFLICT (operation_key) DO NOTHING;

@@ -1,0 +1,19 @@
+name: meta-org-gateway-test
+
+services:
+  gateway:
+    image: caddy:2.10.2-alpine
+    volumes:
+      - ../caddy/Caddyfile.development:/etc/caddy/Caddyfile:ro
+      - ../caddy/routes.caddy:/etc/caddy/routes.caddy:ro
+
+  checks:
+    image: node:20-alpine
+    command: ["node", "--test", "/checks/gateway.test.mjs"]
+    volumes:
+      - ./gateway.test.mjs:/checks/gateway.test.mjs:ro
+    networks:
+      default:
+        aliases:
+          - backend
+          - frontend

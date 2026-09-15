@@ -19,7 +19,7 @@ const sources = {
   assistant: read('src/app/ai-assistant.tsx'),
   systemAdmin: read('src/app/system-admin-workspace.tsx'),
   i18n: `${read('src/lib/i18n.tsx')}\n${read('src/lib/i18n.en.ts')}`,
-  docs: read('../docs/operations/unified-workbench-governance.md'),
+  docs: read('../docs/ontology-refactor.md'),
 }
 
 const checks = [
@@ -28,9 +28,9 @@ const checks = [
   ['permission normalization', sources.model, 'export function resolveFieldCapability'],
   ['strong field lock', sources.model, "lockedReason: 'strong_business_logic'"],
   ['document component', sources.component, 'export function DocumentWorkbench'],
-  ['embedded operation drawer', sources.component, 'OperationRunnerDrawer'],
+  ['governed action confirmation', sources.component, '<Dialog'],
   ['field capability rendering', sources.component, 'resolveFieldCapability'],
-  ['editable field defaults', sources.component, 'defaultValue={capability.masked'],
+  ['editable field defaults', sources.component, 'defaultValue={initial}'],
   ['header create operation', sources.component, 'onCreateHeader'],
   ['header update operation', sources.component, 'onUpdateHeader'],
   ['header delete operation', sources.component, 'onDeleteHeader'],
@@ -50,7 +50,7 @@ const checks = [
   ['tenant ERP integration', sources.erp, 'buildERPDocumentWorkbenchDefinition'],
   ['tenant ERP render', sources.erp, '<DocumentWorkbench'],
   ['platform console integration', sources.systemAdmin, 'PlatformGovernanceMap'],
-  ['platform deep links', sources.systemAdmin, 'systemAdmin.unifiedWorkbench'],
+  ['platform deep links', sources.systemAdmin, 'ui.admin.workspaceLinks'],
   ['stream scoped auth import', sources.stream, "import { getCurrentOrganizationId, normalizeOrganizationId } from './auth'"],
   ['stream scoped options', sources.stream, 'interface StreamRequestOptions'],
   ['stream tenant organization header', sources.stream, "headers['X-Organization-ID'] = organizationId"],
@@ -60,7 +60,7 @@ const checks = [
   ['document download tenant organization header', sources.projectLifecycle, "headers['X-Organization-ID'] = organizationId"],
   ['english i18n', sources.i18n, "'workbench.unified.title': 'Unified operations workbench'"],
   ['chinese i18n', sources.i18n, "'workbench.unified.title': '统一操作工作台'"],
-  ['documentation', sources.docs, '统一工作台与字段权限治理规范'],
+  ['documentation', sources.docs, 'human workbench'],
 ]
 
 const failures = checks

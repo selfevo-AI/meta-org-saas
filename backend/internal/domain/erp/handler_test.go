@@ -49,7 +49,11 @@ func TestHandlerReturnsActionCatalog(t *testing.T) {
 
 func TestHandlerRunsERPAction(t *testing.T) {
 	router := chi.NewRouter()
-	NewHandler(NewService(&fakeRepository{}, DefaultCatalog())).RegisterRoutes(router)
+	repo := newBusinessFakeRepository()
+	seedCommerceReferences(repo)
+	repo.seed("MPOR", "1001", map[string]any{"CardCode": "SUP", "DocStatus": "O"})
+	repo.seedChild("MPOR", "1001", "POR1", map[string]any{"ItemCode": "I-1", "WhsCode": "W-1", "Quantity": 1, "Price": 10})
+	NewHandler(NewService(repo, DefaultCatalog())).RegisterRoutes(router)
 
 	req := httptest.NewRequest(http.MethodPost, "/erp/MPOR/1001/actions/submit", strings.NewReader(`{"data":{"actor":"u1"}}`))
 	resp := httptest.NewRecorder()
@@ -115,7 +119,7 @@ func TestHandlerCreatesRecordByTableCode(t *testing.T) {
 }
 
 func TestHandlerUpdatesChildRecord(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{records: map[string][]Record{"MPOR": {{Key: "1001", Data: map[string]any{"DocStatus": "O"}}}}}
 	router := chi.NewRouter()
 	NewHandler(NewService(repo, DefaultCatalog())).RegisterRoutes(router)
 
@@ -136,7 +140,7 @@ func TestHandlerUpdatesChildRecord(t *testing.T) {
 }
 
 func TestHandlerDeletesChildRecord(t *testing.T) {
-	repo := &fakeRepository{}
+	repo := &fakeRepository{records: map[string][]Record{"MPOR": {{Key: "1001", Data: map[string]any{"DocStatus": "O"}}}}}
 	router := chi.NewRouter()
 	NewHandler(NewService(repo, DefaultCatalog())).RegisterRoutes(router)
 

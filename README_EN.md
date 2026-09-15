@@ -250,15 +250,20 @@ Service addresses:
 
 - PostgreSQL: `localhost:5432`
 - Go API: `http://localhost:8080`
-- API health: `http://localhost:8080/api/v1/health`
-- Next.js frontend: `http://localhost:3000`
+- Same-origin API health: `http://localhost:3000/api/v1/health`
+- Application entry (Caddy → Next.js): `http://localhost:3000`
 
 Default Docker environment values are defined in `docker-compose.yml`:
 
 - Database: `postgres://postgres:postgres@postgres:5432/meta_org_saas?sslmode=disable`
 - Backend port: `8080`
 - Model and finance secret encryption: `MODEL_SECRET_KEY=0123456789abcdef0123456789abcdef`
-- Frontend API URL: `http://localhost:8080/api/v1`
+- Frontend API path: `/api/v1`, forwarded to the Go backend by Caddy.
+
+This configuration is for local development. Public HTTPS deployments use the
+separate [`docker-compose.production.yml`](docker-compose.production.yml); see
+the [deployment guide](deploy/README_EN.md). Only Caddy's HTTP/HTTPS ports are
+published in production.
 
 ## Local Development
 
@@ -297,11 +302,16 @@ npm run test:e2e
 
 `npm run test:e2e` uses Playwright to verify desktop/mobile platform and tenant login, session scope, and horizontal overflow. Start the backend on `8080` and frontend on `3000` first; CI installs Chromium and starts the full test environment automatically.
 
-The frontend defaults to:
+The browser always requests `/api/v1` on the current origin. `npm run dev`
+proxies these requests to the backend. To change the local backend origin, set:
 
 ```bash
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8080/api/v1
+API_PROXY_TARGET=http://127.0.0.1:8080
 ```
+
+`API_PROXY_TARGET` is only used by the development server and must be an HTTP(S)
+origin without a path. Production `npm start` / standalone servers use Caddy
+for API forwarding.
 
 ### Windows Local Restart Notes
 
@@ -324,7 +334,7 @@ Start-Process -FilePath "powershell" -ArgumentList @(
 Start-Process -FilePath "powershell" -ArgumentList @(
   '-NoProfile',
   '-Command',
-  'Set-Item Env:NEXT_PUBLIC_API_URL http://localhost:8080/api/v1; npm run dev'
+  'Set-Item Env:API_PROXY_TARGET http://127.0.0.1:8080; npm run dev'
  ) -WorkingDirectory "D:\project\meta-org-saas\frontend" -WindowStyle Hidden -RedirectStandardOutput "D:\project\meta-org-saas\frontend-dev.log" -RedirectStandardError "D:\project\meta-org-saas\frontend-dev-err.log"
 ```
 
@@ -347,7 +357,7 @@ After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain ref
 
 If tenant Finance / ERP APIs fail with `relation gl_journal_entries does not exist`, inspect the current organization's `meta_org_xxxx` tenant database. A tenant database created manually with `psql -f migrations/tenant/001_tenant_business_baseline.sql` does not expand `tenantdb:include` and will miss ERP/Finance tables.
 
-If the browser reports `Failed to fetch`, first verify the API health endpoint, then check whether the backend response includes `Access-Control-Allow-Origin`. When starting the backend from Windows PowerShell, pass the comma-separated `CORS_ORIGINS` value as one quoted string.
+If the browser reports `Failed to fetch`, first verify `/api/v1/health` at the application origin, then check whether Caddy or the development proxy can reach the backend. When starting the backend from Windows PowerShell, pass the comma-separated `CORS_ORIGINS` value as one quoted string; cross-origin API clients still need their origins configured.
 
 ## Configuration
 
@@ -421,7 +431,7 @@ Frontend configuration:
 
 | Environment Variable | Default | Description |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | `http://127.0.0.1:8080/api/v1` | Browser-side API base URL. |
+| `API_PROXY_TARGET` | `http://127.0.0.1:8080` | Backend origin used only by `npm run dev`; the browser API path is always `/api/v1`. |
 
 ## Project Structure
 
@@ -435,8 +445,9 @@ frontend/
   src/app/                    Next.js App Router pages and workspaces
   src/lib/                    API, auth, i18n, API Workbench metadata
 docker-compose.yml            Full local environment orchestration
+docker-compose.production.yml Public HTTPS environment orchestration
 migrations/                   PostgreSQL staged SQL baselines 000, 001, 002, 004
-docs/operations/              Production operations and finance adapter protocol docs
+deploy/                       Caddy gateway, production guide, and gateway checks
 .github/workflows/            GitHub Actions CI
 ```
 

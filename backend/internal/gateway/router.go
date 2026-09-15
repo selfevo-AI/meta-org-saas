@@ -14,24 +14,23 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/documentimport"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/identity"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/industry"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/inventory"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaorg"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/monitoringagent"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/ontology"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/procurement"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
@@ -58,10 +57,9 @@ type Dependencies struct {
 	WorkflowHandler         *workflow.Handler
 	ProjectHandler          *project.Handler
 	FinanceHandler          *finance.Handler
-	InventoryHandler        *inventory.Handler
 	IndustryHandler         *industry.Handler
-	ProcurementHandler      *procurement.Handler
-	SalesHandler            *sales.Handler
+	OntologyHandler         *ontology.Handler
+	DocumentImportHandler   *documentimport.Handler
 	RuntimeHandler          *runtime.Handler
 	ToolRuntimeHandler      *toolruntime.Handler
 	SaaSHandler             *saas.Handler
@@ -271,6 +269,12 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	if deps.ErpHandler != nil {
 		deps.ErpHandler.RegisterRoutes(r)
 	}
+	if deps.OntologyHandler != nil {
+		deps.OntologyHandler.RegisterRoutes(r)
+	}
+	if deps.DocumentImportHandler != nil {
+		deps.DocumentImportHandler.RegisterRoutes(r)
+	}
 	if deps.CostingHandler != nil {
 		deps.CostingHandler.RegisterRoutes(r)
 	}
@@ -282,15 +286,6 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	}
 	if deps.FinanceHandler != nil {
 		deps.FinanceHandler.RegisterRoutes(r)
-	}
-	if deps.InventoryHandler != nil {
-		deps.InventoryHandler.RegisterRoutes(r)
-	}
-	if deps.ProcurementHandler != nil {
-		deps.ProcurementHandler.RegisterRoutes(r)
-	}
-	if deps.SalesHandler != nil {
-		deps.SalesHandler.RegisterRoutes(r)
 	}
 }
 

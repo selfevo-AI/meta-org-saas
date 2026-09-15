@@ -1,0 +1,15 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+}
+
+import /etc/caddy/routes.caddy
+
+{$APP_DOMAIN} {
+	import app_routes
+	header Strict-Transport-Security "max-age=31536000"
+	log {
+		output stdout
+		format json
+	}
+}

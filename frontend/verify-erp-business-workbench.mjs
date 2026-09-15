@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 const workspaceSource = readFileSync(`${frontendRoot}src/app/erp-business-module-workspace.tsx`, 'utf8')
+const documentSource = readFileSync(`${frontendRoot}src/app/document-workbench.tsx`, 'utf8')
 const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
 const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
@@ -11,26 +12,18 @@ const englishI18nSource = readFileSync(`${frontendRoot}src/lib/i18n.en.ts`, 'utf
 const packageSource = readFileSync(`${frontendRoot}package.json`, 'utf8')
 
 const requiredWorkspaceSnippets = [
-  'type ERPActionAvailability',
+  'buildERPDocumentWorkbenchDefinition',
   'listERPChildRecords',
-  'childRows',
-  'actionResult',
-  'availableActions',
-  'blockedActions',
-  'businessTimeline',
-  'assistantProposals',
-  'generatedRecords',
-  'isERPActionAvailable',
-  'ERPDocumentDetail',
-  'ERPDocumentTimeline',
-  'listRuntimeOperations',
+  'queryOntologyObjects',
+  'getOntologyHistory',
+  'getOntologyLinks',
+  'executeOntologyAction',
+  'actionAvailable',
   'listERPActionExecutions',
-  'deriveRuntimeDocuments',
-  'runtimeDocuments',
-  'metadata?.workspace',
-  'actionExecutions',
-  "t('erp.business.documentDetail')",
-  "t('erp.business.unavailableActions')",
+  '<DocumentWorkbench',
+  'BusinessAIWorkbench',
+  'TrialBalanceReport',
+  "tableCode: 'MVPM'",
 ]
 
 const requiredApiSnippets = [
@@ -90,6 +83,13 @@ const enDictionary = dictionarySlice('en', 'export default en')
 const zhDictionary = dictionarySlice('zh', 'let englishDictionaryPromise')
 const failures = []
 
+for (const snippet of ['document-header-form', 'document-line-form', 'recordIsImmutable', 'history.map', 'links.map', '<Dialog', 'onLoadMore']) {
+  if (!documentSource.includes(snippet)) failures.push(`Missing shared document behavior: ${snippet}`)
+}
+for (const snippet of ['ERPDocumentDetail', 'ERPDocumentTimeline', 'OperationRunnerDrawer']) {
+  if (workspaceSource.includes(snippet)) failures.push(`Duplicate document UI returned: ${snippet}`)
+}
+
 const missingWorkspaceSnippets = requiredWorkspaceSnippets.filter((snippet) => !workspaceSource.includes(snippet))
 if (missingWorkspaceSnippets.length > 0) {
   failures.push(`Missing ERP business workbench snippets:\n${missingWorkspaceSnippets.map((snippet) => `  - ${snippet}`).join('\n')}`)
@@ -130,4 +130,4 @@ if (failures.length > 0) {
   process.exit(1)
 }
 
-console.log('Verified ERP business workbench document detail, state-gated actions, child rows, generated records, and assistant proposal timeline.')
+console.log('Verified one ERP document workbench, Ontology queries/links/history, state-gated actions, and payment/report integration.')

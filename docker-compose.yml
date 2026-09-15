@@ -101,6 +101,8 @@ services:
       AUDIT_RETENTION_MAX_BATCHES: "20"
       BUSINESS_AI_PROVIDER_TYPE: ${BUSINESS_AI_PROVIDER_TYPE:-}
       BUSINESS_AI_MODEL: ${BUSINESS_AI_MODEL:-}
+      DOCUMENT_IMPORT_PROVIDER_TYPE: ${DOCUMENT_IMPORT_PROVIDER_TYPE:-}
+      DOCUMENT_IMPORT_MODEL: ${DOCUMENT_IMPORT_MODEL:-}
       BUSINESS_AI_MAX_TOKENS: ${BUSINESS_AI_MAX_TOKENS:-1800}
       MIGRATIONS_PATH: "migrations"
       TENANT_MIGRATIONS_PATH: "migrations/tenant"
@@ -127,13 +129,22 @@ services:
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "3000:3000"
-    environment:
-      NEXT_PUBLIC_API_URL: "http://localhost:8080/api/v1"
+    expose:
+      - "3000"
     depends_on:
       backend:
         condition: service_healthy
+
+  gateway:
+    image: caddy:2.10.2-alpine
+    ports:
+      - "3000:80"
+    volumes:
+      - ./deploy/caddy/Caddyfile.development:/etc/caddy/Caddyfile:ro
+      - ./deploy/caddy/routes.caddy:/etc/caddy/routes.caddy:ro
+    depends_on:
+      frontend:
+        condition: service_started
 
 volumes:
   pgdata:

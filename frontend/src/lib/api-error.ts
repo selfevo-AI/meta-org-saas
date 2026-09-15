@@ -2,19 +2,22 @@ export type APIErrorPayload = {
   error?: string
   code?: string
   request_id?: string
+  issues?: Array<{ path: string; code: string }>
 }
 
 export class APIError extends Error {
   readonly status: number
   readonly code: string
   readonly requestId: string
+  readonly issues: Array<{ path: string; code: string }>
 
-  constructor(message: string, status: number, code = 'request_failed', requestId = '') {
+  constructor(message: string, status: number, code = 'request_failed', requestId = '', issues: Array<{ path: string; code: string }> = []) {
     super(message)
     this.name = 'APIError'
     this.status = status
     this.code = code
     this.requestId = requestId
+    this.issues = issues
   }
 }
 
@@ -29,10 +32,16 @@ export async function apiErrorFromResponse(response: Response): Promise<APIError
     response.status,
     payload.code || response.headers.get('X-Error-Code') || 'request_failed',
     payload.request_id || response.headers.get('X-Request-ID') || '',
+    Array.isArray(payload.issues) ? payload.issues : [],
   )
 }
 
 const errorCodeMessageKeys: Record<string, string> = {
+  'document_import.validation': 'import.error.validation',
+  'document_import.forbidden': 'import.error.forbidden',
+  'document_import.not_found': 'import.error.not_found',
+  'document_import.conflict': 'import.error.conflict',
+  'document_import.operation_failed': 'import.error.operation_failed',
   invalid_request: 'apiError.validation',
   validation_error: 'apiError.validation',
   authentication_required: 'apiError.unauthorized',

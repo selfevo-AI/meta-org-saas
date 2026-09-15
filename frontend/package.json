@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node prepare-pdf-assets.mjs",
     "dev": "next dev",
+    "prebuild": "node prepare-pdf-assets.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -18,12 +20,17 @@
     "test:i18n-bundle": "node verify-i18n-code-splitting.mjs",
     "test:routing": "node verify-workspace-routing.mjs",
     "test:e2e": "playwright test",
+    "test:ui": "playwright test --config playwright.ui.config.ts",
+    "test:ontology": "playwright test ontology-commerce.spec.ts",
+    "test:document-imports": "playwright test --config playwright.import.config.ts",
+    "test:document-imports:live": "playwright test --config playwright.import.live.config.ts",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.0",
     "lucide-react": "^0.400.0",
-    "next": "^16.2.9",
+    "next": "^16.3.5",
+    "pdfjs-dist": "5.5.207",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -34,14 +41,14 @@
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.0",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.9",
-    "postcss": "^8.5.10",
+    "eslint-config-next": "^16.3.5",
+    "postcss": "^8.5.28",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.4.0"
   },
   "overrides": {
     "next": {
-      "postcss": "8.5.10"
+      "postcss": "8.5.28"
     }
   }
 }

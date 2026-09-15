@@ -87,6 +87,7 @@ func DefaultCatalog() Catalog {
 		documentTable("MINV", "A/R Invoice", "sale", "INV1"),
 		documentTable("MQUT", "Sales Quotation", "sale", "QUT1"),
 		documentTable("MRCT", "Incoming Payments", "sale", "RCT1"),
+		documentTable("MVPM", "Outgoing Payments", "finance", "VPM1"),
 		documentTable("MRDN", "Returns", "sale", "RDN1"),
 		documentTable("MRDR", "Sales Order", "sale", "RDR1"),
 		documentTable("MRIN", "A/R Credit Memo", "sale", "RIN1"),
@@ -174,6 +175,20 @@ func DefaultCatalog() Catalog {
 	}
 	catalog := buildCatalog(tables)
 	catalog.Modules = defaultModules()
+	actions := DefaultActionRegistry().List()
+	for i := range catalog.Modules {
+		for j := range catalog.Modules[i].Submodules {
+			for k := range catalog.Modules[i].Submodules[j].Documents {
+				document := &catalog.Modules[i].Submodules[j].Documents[k]
+				document.ActionNames = nil
+				for _, action := range actions {
+					if action.TableCode == document.TableCode {
+						document.ActionNames = append(document.ActionNames, action.Action)
+					}
+				}
+			}
+		}
+	}
 	return catalog
 }
 

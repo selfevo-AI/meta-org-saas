@@ -22,9 +22,11 @@ node_modules/
 frontend/node_modules/
 
 # Frontend build output
+*.tsbuildinfo
 .next/
 frontend/.next/
 frontend/out/
+frontend/public/pdfjs/
 coverage/
 frontend/coverage/
 
@@ -39,3 +41,10 @@ backend/main
 frontend/playwright-report/
 frontend/test-results/
 frontend/.playwright/
+.artifacts/
+
+# Local deployment secrets
+.env
+.env.*
+!.env.example
+!.env.*.example

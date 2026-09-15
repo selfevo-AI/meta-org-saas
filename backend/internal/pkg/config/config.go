@@ -72,6 +72,8 @@ type Config struct {
 	BusinessAIProviderType            string
 	BusinessAIModel                   string
 	BusinessAIMaxTokens               int
+	DocumentImportProviderType        string
+	DocumentImportModel               string
 	MigrationsPath                    string
 	MetaOrgMode                       string
 	MetaOrgDistributionMode           string
@@ -159,6 +161,8 @@ func Load() *Config {
 		BusinessAIProviderType:            strings.TrimSpace(getEnv("BUSINESS_AI_PROVIDER_TYPE", "")),
 		BusinessAIModel:                   strings.TrimSpace(getEnv("BUSINESS_AI_MODEL", "")),
 		BusinessAIMaxTokens:               getEnvInt("BUSINESS_AI_MAX_TOKENS", 1800),
+		DocumentImportProviderType:        strings.TrimSpace(getEnv("DOCUMENT_IMPORT_PROVIDER_TYPE", getEnv("BUSINESS_AI_PROVIDER_TYPE", ""))),
+		DocumentImportModel:               strings.TrimSpace(getEnv("DOCUMENT_IMPORT_MODEL", getEnv("BUSINESS_AI_MODEL", ""))),
 		MigrationsPath:                    getEnv("MIGRATIONS_PATH", "migrations"),
 		MetaOrgMode:                       mode,
 		MetaOrgDistributionMode:           normalizedDistributionMode(getEnv("META_ORG_DISTRIBUTION_MODE", mode)),

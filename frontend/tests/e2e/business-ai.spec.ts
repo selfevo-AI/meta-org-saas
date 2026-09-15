@@ -21,7 +21,6 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
     response.request().method() === 'GET' && response.url().endsWith('/api/v1/models')
   ))
   await page.getByTestId('domain-nav-Project').click()
-  await page.getByTestId('erp-document-project').click()
 
   const workbench = page.getByTestId('business-ai-workbench')
   await expect(workbench).toBeVisible()
@@ -95,12 +94,14 @@ test('project workbench runs evidence-based AI analysis', async ({ page }) => {
     candidate.request().method() === 'POST' && candidate.url().endsWith('/submit-proposal')
   ))
   await workbench.getByTestId('business-ai-submit-proposal').click()
+  await page.getByRole('dialog').getByRole('button', { name: /^(Confirm|确认执行)$/ }).click()
   expect((await proposalResponse).status()).toBe(202)
   await expect(workbench.getByTestId('business-ai-proposal-status')).toContainText(/Awaiting approval|等待审批/)
   const approvalResponse = page.waitForResponse((candidate) => (
     candidate.request().method() === 'POST' && candidate.url().includes('/tool-approvals/') && candidate.url().endsWith('/approve')
   ))
   await workbench.getByTestId('business-ai-approve-proposal').click()
+  await page.getByRole('dialog').getByRole('button', { name: /^(Confirm|确认执行)$/ }).click()
   expect((await approvalResponse).status()).toBe(200)
   await expect(workbench.getByTestId('business-ai-proposal-status')).toContainText(/Executed|已执行/, { timeout: 30_000 })
 })

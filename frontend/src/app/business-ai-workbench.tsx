@@ -1,10 +1,11 @@
 'use client'
 
 import { Bot, CheckCircle2, Loader2, Send, XCircle } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { apiRequest } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { Dialog, FeedbackMessage } from './workspace-ui'
 
 type BusinessAIStage = 'plan' | 'do' | 'change' | 'accept' | 'learn'
 
@@ -64,6 +65,11 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
   const [runs, setRuns] = useState<BusinessAIRun[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [reviewAction, setReviewAction] = useState<{ kind: 'submit' | 'approve' | 'reject'; run: BusinessAIRun; projectID: string; projectName: string } | null>(null)
+  const [reviewReason, setReviewReason] = useState('')
+  const [needsAnalysis, setNeedsAnalysis] = useState(false)
+  const reviewLock = useRef(false)
+  const focusInput = useRef<HTMLTextAreaElement>(null)
   const [providers, setProviders] = useState<ModelProvider[]>([])
   const [models, setModels] = useState<AIModel[]>([])
   const [modelSelection, setModelSelection] = useState('')
@@ -154,6 +160,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
       setRuns((current) => [completedRun, ...current.filter((item) => item.id !== completedRun.id)])
       const data = await apiRequest<BusinessAIRun[]>(`/projects/${encodeURIComponent(activeProjectID)}/ai-analyses?limit=30`, { token })
       setRuns(Array.isArray(data) ? data : [])
+      setNeedsAnalysis(false)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
     } finally {
@@ -168,50 +175,59 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
   }
 
   async function submitProposal() {
-    if (!activeProjectID || !latest) return
+    if (!reviewAction || reviewLock.current) return
+    reviewLock.current = true
     setLoading(true)
     setError('')
     try {
-      const run = await apiRequest<BusinessAIRun>(`/projects/${encodeURIComponent(activeProjectID)}/ai-analyses/${latest.id}/submit-proposal`, {
+      const run = await apiRequest<BusinessAIRun>(`/projects/${encodeURIComponent(reviewAction.projectID)}/ai-analyses/${reviewAction.run.id}/submit-proposal`, {
         method: 'POST', token, body: {},
       })
       setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)])
+      setReviewAction(null)
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
     } finally {
+      reviewLock.current = false
       setLoading(false)
     }
   }
 
   async function reviewProposal(decision: 'approve' | 'reject') {
-    if (!latest?.tool_approval_id) return
+    if (!reviewAction?.run.tool_approval_id || reviewLock.current) return
+    reviewLock.current = true
     setLoading(true)
     setError('')
     try {
-      await apiRequest(`/tool-approvals/${latest.tool_approval_id}/${decision}`, {
-        method: 'POST', token, body: { reason: 'business_ai_workspace_review' },
+      await apiRequest(`/tool-approvals/${reviewAction.run.tool_approval_id}/${decision}`, {
+        method: 'POST', token, body: { reason: reviewReason.trim() || t(decision === 'approve' ? 'ui.home.approve' : 'ui.home.reject') },
       })
+      setReviewAction(null)
       await refreshRuns()
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
     } finally {
+      reviewLock.current = false
       setLoading(false)
     }
   }
 
   return (
-    <section data-testid="business-ai-workbench" className="border-t border-slate-200 bg-white px-4 py-5 sm:px-5">
+    <section data-testid="business-ai-workbench" className="ui-card px-5 py-5">
       <div className="flex items-center gap-2">
         <Bot className="h-5 w-5 text-[#AD4714]" />
         <h2 className="text-base font-semibold text-slate-950">{t('businessAI.title')}</h2>
       </div>
+      <p className="mt-2 text-xs ui-muted">{t('ui.assistant.subtitle')}</p>
       <div className="mt-4 grid grid-cols-5 overflow-hidden rounded-md border border-slate-300" role="group" aria-label={t('businessAI.stage')}>
         {stages.map((item) => (
           <button
             key={item}
             type="button"
             data-testid={`business-ai-stage-${item}`}
-            onClick={() => setStage(item)}
+            onClick={() => { setStage(item); if (latest) setNeedsAnalysis(true) }}
+            disabled={loading}
+            aria-pressed={stage === item}
             className={`min-h-10 border-r border-slate-300 px-1 text-xs font-semibold last:border-r-0 sm:px-2 sm:text-sm ${stage === item ? 'bg-slate-950 text-white' : 'bg-white text-slate-700 hover:bg-slate-100'}`}
           >
             {t(`businessAI.stage.${item}`)}
@@ -220,7 +236,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
       </div>
       <label className="mt-4 block max-w-xl">
         <span className="text-sm font-medium text-slate-700">{t('businessAI.project')}</span>
-        <select data-testid="business-ai-project" value={activeProjectID} onChange={(event) => setActiveProjectID(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20">
+        <select data-testid="business-ai-project" value={activeProjectID} disabled={loading} onChange={(event) => { setRuns([]); setNeedsAnalysis(false); setActiveProjectID(event.target.value) }} className="ui-select mt-1">
           {projects.length === 0 && <option value="">{t('businessAI.noProject')}</option>}
           {projects.map((item) => {
             return <option key={item.id} value={item.id}>{item.name} · {item.master_key || item.id}</option>
@@ -229,11 +245,11 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
       </label>
       <label className="mt-4 block">
         <span className="text-sm font-medium text-slate-700">{t('businessAI.focus')}</span>
-        <textarea value={focus} onChange={(event) => setFocus(event.target.value)} className="mt-1 h-20 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20" />
+        <textarea ref={focusInput} value={focus} onChange={(event) => { setFocus(event.target.value); if (latest) setNeedsAnalysis(true) }} disabled={loading} className="ui-input mt-1 min-h-24 resize-y" />
       </label>
       <label className="mt-3 block max-w-md">
         <span className="text-sm font-medium text-slate-700">{t('businessAI.model')}</span>
-        <select value={modelSelection} onChange={(event) => setModelSelection(event.target.value)} className="mt-1 h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20">
+        <select value={modelSelection} disabled={loading} onChange={(event) => { setModelSelection(event.target.value); if (latest) setNeedsAnalysis(true) }} className="ui-select mt-1">
           {models.length === 0 && <option value="">{t('businessAI.noModel')}</option>}
           {models.map((item) => <option key={`${item.provider_id}:${item.model_key}`} value={`${item.provider_id}:${item.model_key}`}>{item.display_name || item.model_key}</option>)}
         </select>
@@ -242,8 +258,9 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
         {t('businessAI.analyze')}
       </button>
+      {needsAnalysis && <p className="mt-3 text-sm ui-muted">{t('ui.review.reanalyzeHint')}</p>}
 
-      {error && <p className="mt-4 border-l-4 border-red-400 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+      {error && !reviewAction && <div className="mt-4"><FeedbackMessage error>{error}</FeedbackMessage></div>}
       {latest?.analysis ? (
         <div className="mt-5 space-y-4 border-t border-slate-200 pt-4">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -251,7 +268,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
               <p className="font-semibold text-slate-950">{latest.analysis.summary}</p>
               <p className="mt-1 text-xs text-slate-500">{t(`businessAI.stage.${latest.stage}`)} · {latest.resolved_model} · {Math.round(latest.analysis.confidence * 100)}%</p>
             </div>
-            <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{latest.status}</span>
+            <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">{t('ui.status.' + latest.status)}</span>
           </div>
           <div className="grid gap-4 lg:grid-cols-3">
             <ResultList title={t('businessAI.findings')} items={latest.analysis.findings.map((item) => ({ title: item.title, detail: `${item.evidence} · ${item.impact}` }))} />
@@ -266,16 +283,16 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
           )}
           <div className="flex flex-wrap items-center gap-2">
             {latest.proposal_status === 'not_submitted' && latest.analysis.proposal.tool_name && (
-              <button data-testid="business-ai-submit-proposal" type="button" onClick={() => void submitProposal()} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-white hover:bg-[#B84F18] disabled:opacity-50">
+              <button data-testid="business-ai-submit-proposal" type="button" onClick={() => { setError(''); setReviewReason(''); setReviewAction({ kind: 'submit', run: latest, projectID: activeProjectID, projectName: projects.find((item) => item.id === activeProjectID)?.name || activeProjectID }) }} disabled={loading || needsAnalysis} className="ui-button ui-button-primary">
                 <Send className="h-4 w-4" />{t('businessAI.submitProposal')}
               </button>
             )}
             {latest.proposal_status === 'approval_required' && latest.tool_approval_id && (
               <>
-                <button data-testid="business-ai-approve-proposal" type="button" onClick={() => void reviewProposal('approve')} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50">
+                <button data-testid="business-ai-approve-proposal" type="button" onClick={() => { setError(''); setReviewReason(''); setReviewAction({ kind: 'approve', run: latest, projectID: activeProjectID, projectName: projects.find((item) => item.id === activeProjectID)?.name || activeProjectID }) }} disabled={loading} className="ui-button ui-button-primary">
                   <CheckCircle2 className="h-4 w-4" />{t('businessAI.approveProposal')}
                 </button>
-                <button type="button" onClick={() => void reviewProposal('reject')} disabled={loading} className="inline-flex h-9 items-center gap-2 rounded-md border border-red-300 px-3 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">
+                <button type="button" onClick={() => { setError(''); setReviewReason(''); setReviewAction({ kind: 'reject', run: latest, projectID: activeProjectID, projectName: projects.find((item) => item.id === activeProjectID)?.name || activeProjectID }) }} disabled={loading} className="ui-button ui-button-secondary">
                   <XCircle className="h-4 w-4" />{t('businessAI.rejectProposal')}
                 </button>
               </>
@@ -284,13 +301,27 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
           </div>
           {latest.proposal_error && <p className="border-l-4 border-red-400 bg-red-50 px-4 py-3 text-sm text-red-700">{latest.proposal_error}</p>}
           {latest.proposal_status === 'completed' && (
-            <pre className="max-h-48 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(latest.proposal_result, null, 2)}</pre>
+            <details className="text-xs ui-muted"><summary className="cursor-pointer">{t('ui.document.viewDetails')}</summary><pre className="mt-2 max-h-48 overflow-auto rounded-md bg-slate-50 p-3">{JSON.stringify(latest.proposal_result, null, 2)}</pre></details>
           )}
           <p className="break-all text-xs text-slate-500">{t('businessAI.audit')}: {latest.invocation_id} · {latest.input_tokens + latest.output_tokens} tokens · {latest.cost_amount.toFixed(6)} {latest.currency}</p>
         </div>
       ) : !error ? (
         <p className="mt-4 border border-dashed border-slate-300 px-4 py-5 text-sm text-slate-500">{t('businessAI.empty')}</p>
       ) : null}
+      <Dialog open={!!reviewAction} title={t('ui.review.title')} description={t('ui.home.reviewHint')} busy={loading} onClose={() => { setReviewAction(null); setError('') }}
+        footer={<>
+          {reviewAction?.kind === 'submit' && <button type="button" className="ui-button ui-button-ghost mr-auto" disabled={loading} onClick={() => { setNeedsAnalysis(true); setReviewAction(null); requestAnimationFrame(() => focusInput.current?.focus()) }}>{t('ui.review.adjust')}</button>}
+          <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel disabled={loading} onClick={() => { setReviewAction(null); setError('') }}>{t('common.cancel')}</button>
+          <button type="button" className="ui-button ui-button-primary" disabled={loading} onClick={() => reviewAction?.kind === 'submit' ? void submitProposal() : reviewAction && void reviewProposal(reviewAction.kind)}><CheckCircle2 size={16} />{t(loading ? 'ui.document.processing' : reviewAction?.kind === 'reject' ? 'ui.home.reject' : 'ontology.confirm')}</button>
+        </>}>
+        {reviewAction && <>
+          <div className="ui-dialog-context"><Bot size={22} /><div><strong>{reviewAction.projectName}</strong><small>{t('businessAI.stage.' + reviewAction.run.stage)}</small></div></div>
+          <p className="document-action-impact">{reviewAction.run.analysis?.proposal.action}</p>
+          <dl className="document-action-summary">{Object.entries(reviewAction.run.analysis?.proposal.arguments ?? {}).map(([name, value]) => <div key={name}><dt>{t('ui.review.parameter', { name })}</dt><dd>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>)}</dl>
+          {reviewAction.kind !== 'submit' && <label className="ui-field"><span className="ui-field-label">{t('ui.home.reviewReason')}</span><textarea className="ui-input min-h-24" value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder={t('ui.home.reviewReasonPlaceholder')} disabled={loading} /></label>}
+          {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+        </>}
+      </Dialog>
     </section>
   )
 }

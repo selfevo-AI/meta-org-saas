@@ -26,6 +26,7 @@ import {
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import { streamSSEPost } from '@/lib/stream'
+import { Dialog, FeedbackMessage } from './workspace-ui'
 
 type AssistantState = 'idle' | 'streaming' | 'approval_required' | 'completed' | 'provider_error' | 'governance_denied' | 'cancelled'
 
@@ -82,6 +83,8 @@ interface AIAssistantProps {
   targetID?: string
   autoModel?: boolean
   hideModelSelector?: boolean
+  hideTitle?: boolean
+  contextLabel?: string
   apiScope?: 'tenant' | 'platform'
   initialIntent?: string
   initialIntentKey?: string
@@ -134,6 +137,8 @@ export function AIAssistant({
   targetID,
   autoModel = false,
   hideModelSelector = false,
+  hideTitle = false,
+  contextLabel,
   apiScope = 'tenant',
   initialIntent,
   initialIntentKey,
@@ -151,11 +156,18 @@ export function AIAssistant({
   const [invocationID, setInvocationID] = useState('')
   const [sessionID, setSessionID] = useState('')
   const [pendingApprovalID, setPendingApprovalID] = useState('')
+  const [approvalDecision, setApprovalDecision] = useState<'approve' | 'reject' | null>(null)
+  const [approvalReason, setApprovalReason] = useState('')
+  const [approvalError, setApprovalError] = useState('')
+  const [approvalBusy, setApprovalBusy] = useState(false)
+  const approvalLock = useRef(false)
   const [steps, setSteps] = useState<AssistantStep[]>([])
   const [usage, setUsage] = useState<AssistantUsage>({})
   const [cost, setCost] = useState<AssistantCost>({ currency: 'CNY' })
   const abortRef = useRef<AbortController | null>(null)
   const consumedIntentRef = useRef('')
+
+  useEffect(() => () => abortRef.current?.abort(), [])
 
   useEffect(() => {
     let cancelled = false
@@ -475,11 +487,15 @@ export function AIAssistant({
   }
 
   async function approvePendingApproval() {
-    if (!pendingApprovalID || state === 'streaming') return
+    if (!pendingApprovalID || state === 'streaming' || approvalLock.current) return
+    approvalLock.current = true
+    setApprovalBusy(true)
+    setApprovalError('')
     setState('streaming')
     try {
       const reviewApproval = apiScope === 'platform' ? approvePlatformToolApproval : approveToolApproval
-      const result = await reviewApproval(token, pendingApprovalID, 'approved from assistant')
+      const result = await reviewApproval(token, pendingApprovalID, approvalReason.trim() || t('ui.home.approve'))
+      setApprovalDecision(null)
       if (result.execution.status !== 'completed') {
         setState('provider_error')
         setMessages((current) => [
@@ -490,20 +506,28 @@ export function AIAssistant({
       }
       await resumeAfterApproval(result.approval.id)
     } catch (err) {
+      setApprovalError(err instanceof Error ? err.message : t('assistant.approvalExecutionFailed'))
       setState('provider_error')
       setMessages((current) => [
         ...current,
         { id: `assistant-approval-error-${Date.now()}`, role: 'assistant', content: err instanceof Error ? err.message : t('assistant.approvalExecutionFailed') },
       ])
+    } finally {
+      approvalLock.current = false
+      setApprovalBusy(false)
     }
   }
 
   async function rejectPendingApproval() {
-    if (!pendingApprovalID || state === 'streaming') return
+    if (!pendingApprovalID || state === 'streaming' || approvalLock.current) return
+    approvalLock.current = true
+    setApprovalBusy(true)
+    setApprovalError('')
     setState('streaming')
     try {
       const reviewRejection = apiScope === 'platform' ? rejectPlatformToolApproval : rejectToolApproval
-      await reviewRejection(token, pendingApprovalID, 'rejected from assistant')
+      await reviewRejection(token, pendingApprovalID, approvalReason.trim() || t('ui.home.reject'))
+      setApprovalDecision(null)
       setPendingApprovalID('')
       setState('cancelled')
       setMessages((current) => [
@@ -511,11 +535,15 @@ export function AIAssistant({
         { id: `assistant-approval-rejected-${Date.now()}`, role: 'assistant', content: t('assistant.approvalRejected') },
       ])
     } catch (err) {
+      setApprovalError(err instanceof Error ? err.message : t('assistant.error'))
       setState('provider_error')
       setMessages((current) => [
         ...current,
         { id: `assistant-approval-error-${Date.now()}`, role: 'assistant', content: err instanceof Error ? err.message : t('assistant.error') },
       ])
+    } finally {
+      approvalLock.current = false
+      setApprovalBusy(false)
     }
   }
 
@@ -532,8 +560,8 @@ export function AIAssistant({
         <div className="flex min-w-0 items-center gap-2">
           <Bot className="h-5 w-5 shrink-0 text-[#AD4714]" />
           <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold text-slate-950">{t('assistant.title')}</h2>
-            <p className="truncate text-xs text-slate-500">{contextType}</p>
+            {!hideTitle && <h2 className="truncate text-base font-semibold text-slate-950">{t('assistant.title')}</h2>}
+            <p className="truncate text-xs text-slate-500">{contextLabel || t('ui.assistant.subtitle')}</p>
           </div>
         </div>
         <div className="flex min-w-0 items-center gap-2">
@@ -624,7 +652,7 @@ export function AIAssistant({
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              onClick={() => void approvePendingApproval()}
+              onClick={() => { setApprovalReason(''); setApprovalError(''); setApprovalDecision('approve') }}
               className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-3 text-sm font-semibold text-white transition hover:bg-emerald-700"
             >
               <CheckCircle2 className="h-4 w-4" />
@@ -632,7 +660,7 @@ export function AIAssistant({
             </button>
             <button
               type="button"
-              onClick={() => void rejectPendingApproval()}
+              onClick={() => { setApprovalReason(''); setApprovalError(''); setApprovalDecision('reject') }}
               className="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100"
             >
               <XCircle className="h-4 w-4" />
@@ -654,6 +682,16 @@ export function AIAssistant({
           </div>
         )}
       </div>
+      <Dialog open={!!approvalDecision} title={t('ui.review.title')} description={t('ui.home.reviewHint')} onClose={() => setApprovalDecision(null)} busy={approvalBusy}
+        footer={<>
+          <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel disabled={approvalBusy} onClick={() => setApprovalDecision(null)}>{t('common.cancel')}</button>
+          <button type="button" className="ui-button ui-button-primary" disabled={approvalBusy || !pendingApprovalID} onClick={() => approvalDecision === 'approve' ? void approvePendingApproval() : void rejectPendingApproval()}><CheckCircle2 size={16} />{t(approvalBusy ? 'ui.document.processing' : approvalDecision === 'approve' ? 'ui.home.approve' : 'ui.home.reject')}</button>
+        </>}>
+        <div className="ui-dialog-context"><Bot size={22} /><div><strong>{contextLabel || t('ui.assistant.title')}</strong><small>{t('ui.home.approval')}</small></div></div>
+        <p className="document-action-impact">{steps.find((step) => step.tool_approval_id === pendingApprovalID)?.summary || messages.filter((message) => message.role === 'assistant').at(-1)?.content || t('ui.document.actionHint')}</p>
+        <label className="ui-field"><span className="ui-field-label">{t('ui.home.reviewReason')}</span><textarea className="ui-input min-h-24" value={approvalReason} onChange={(event) => setApprovalReason(event.target.value)} placeholder={t('ui.home.reviewReasonPlaceholder')} disabled={approvalBusy} /></label>
+        {approvalError && <FeedbackMessage error>{approvalError}</FeedbackMessage>}
+      </Dialog>
     </aside>
   )
 }

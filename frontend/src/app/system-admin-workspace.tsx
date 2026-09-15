@@ -10,8 +10,10 @@ import {
   FileJson,
   Layers3,
   Play,
+  Plus,
   RefreshCw,
   Save,
+  Search,
   Send,
   ShieldCheck,
   Table2,
@@ -20,10 +22,11 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { ChangeEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AIAssistant } from './ai-assistant'
 import { ApiWorkbench } from './api-workbench'
 import { DeveloperToolsWorkspace } from './developer-tools-workspace'
+import { ActionMenu, Dialog, FeedbackMessage } from './workspace-ui'
 import {
   applyIndustrySolutionChange,
   applyIndustryPackageToOrganization,
@@ -118,6 +121,16 @@ interface SystemAdminWorkspaceProps {
   organizations: SessionOrganization[]
   currentOrganizationID?: string | null
   activeSection?: string
+  onNavigate?: (section: string) => void
+}
+
+interface AdminActionReview {
+  title: string
+  description: string
+  subject: string
+  detail?: string
+  danger?: boolean
+  execute: () => Promise<boolean>
 }
 
 type TabID =
@@ -268,7 +281,7 @@ function splitLines(value: string): string[] {
     .filter(Boolean)
 }
 
-export function SystemAdminWorkspace({ token, organizations, currentOrganizationID, activeSection }: SystemAdminWorkspaceProps) {
+export function SystemAdminWorkspace({ token, organizations, currentOrganizationID, activeSection, onNavigate }: SystemAdminWorkspaceProps) {
   const { t } = useI18n()
   const activeSectionID = normalizeTabID(activeSection)
   const [activeTab, setActiveTab] = useState<TabID>(activeSectionID ?? 'assistant')
@@ -339,6 +352,31 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [userSearch, setUserSearch] = useState('')
+  const [userCreateOpen, setUserCreateOpen] = useState(false)
+  const [actionReview, setActionReview] = useState<AdminActionReview | null>(null)
+  const [confirmingAction, setConfirmingAction] = useState(false)
+  const confirmationLock = useRef(false)
+  const visibleUsers = platformUsers.filter((user) => `${user.name} ${user.email}`.toLocaleLowerCase().includes(userSearch.trim().toLocaleLowerCase()))
+
+  function reviewAdminAction(action: AdminActionReview) {
+    setError('')
+    setActionReview(action)
+  }
+
+  async function confirmAdminAction() {
+    if (!actionReview || confirmationLock.current) return
+    confirmationLock.current = true
+    setConfirmingAction(true)
+    try {
+      if (await actionReview.execute()) setActionReview(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      confirmationLock.current = false
+      setConfirmingAction(false)
+    }
+  }
 
   const managementOrganizations = useMemo(() => {
     const byID = new Map<string, SessionOrganization>()
@@ -810,8 +848,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       await action()
       setNotice(t(successKey))
       await loadTargets()
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      return false
     } finally {
       setLoading(false)
     }
@@ -825,8 +865,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       await action()
       setNotice(t(successKey))
       await loadOrganizationSaaSDetails()
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      return false
     } finally {
       setLoading(false)
     }
@@ -910,8 +952,8 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function applySelectedIndustryPackage() {
-    if (!activeOrganizationID || !selectedIndustryPackage) return
-    await run(async () => {
+    if (!activeOrganizationID || !selectedIndustryPackage) return false
+    return run(async () => {
       const adoption = await applyIndustryPackageToOrganization(token, selectedIndustryPackage.id, activeOrganizationID, industryModuleDraft)
       setIndustryAdoption(adoption)
       await loadIndustryManagement()
@@ -948,9 +990,8 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function deleteSelectedIndustryPackage() {
-    if (!selectedIndustryPackage || !canPlatform('industry.solution.manage')) return
-    if (typeof window !== 'undefined' && !window.confirm(t('systemAdmin.deleteIndustryPackageConfirm'))) return
-    await run(async () => {
+    if (!selectedIndustryPackage || !canPlatform('industry.solution.manage')) return false
+    return run(async () => {
       await deleteIndustryPackage(token, selectedIndustryPackage.id)
       setSelectedPackageID('')
       setIndustryPackageDraft(industryPackageDraftFrom(null))
@@ -1049,7 +1090,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
 
   async function createUser() {
     if (!platformUserDraft.name.trim() || !platformUserDraft.email.trim()) return
-    await run(async () => {
+    const created = await run(async () => {
       const result = await createPlatformUser(token, {
         name: platformUserDraft.name.trim(),
         email: platformUserDraft.email.trim(),
@@ -1060,10 +1101,11 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setPlatformUserDraft({ name: '', email: '', roles: 'operator' })
       await loadPlatformUsers()
     }, 'systemAdmin.platformUserCreated')
+    if (created) setUserCreateOpen(false)
   }
 
   async function resetUserPassword(userID: string) {
-    await run(async () => {
+    return run(async () => {
       const result = await resetPlatformUserPassword(token, userID)
       setTemporaryCredential(result.temporary_password)
       setTemporaryCredentialScope('platform')
@@ -1072,7 +1114,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function disableUser(userID: string) {
-    await run(async () => {
+    return run(async () => {
       await disablePlatformUser(token, userID)
       await loadPlatformUsers()
     }, 'systemAdmin.platformUserDisabled')
@@ -1094,8 +1136,8 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function resetTenantAccountPassword(userID: string) {
-    if (!activeOrganizationID || !canPlatform('organization.manage')) return
-    await runSaaS(async () => {
+    if (!activeOrganizationID || !canPlatform('organization.manage')) return false
+    return runSaaS(async () => {
       const result = await resetOrganizationAccountPassword(token, activeOrganizationID, userID)
       setTemporaryCredential(result.temporary_password)
       setTemporaryCredentialScope('organization')
@@ -1181,7 +1223,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   async function closeOrganization() {
-    if (!activeOrganizationID || !canPlatform('organization.close')) return
+    if (!activeOrganizationID || !canPlatform('organization.close')) return false
     setLoading(true)
     setError('')
     setNotice('')
@@ -1197,8 +1239,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setInvitations([])
       setCloseReason('')
       setNotice(t('systemAdmin.organizationClosed'))
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      return false
     } finally {
       setLoading(false)
     }
@@ -1294,9 +1338,9 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
   }
 
   return (
-    <div data-testid="system-admin-workspace" className="space-y-5">
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        {activeTabDefinition && (
+    <div data-testid="system-admin-workspace" className="admin-workspace space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        {activeTabDefinition && !activeSectionID && (
           <div className="flex min-w-0 items-center gap-2">
             <ActiveTabIcon className="h-5 w-5 text-slate-500" />
             <h2 className="truncate text-base font-semibold text-slate-950">{t(activeTabDefinition.label)}</h2>
@@ -1326,18 +1370,14 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         </button>
       </div>
 
-      {(notice || error) && (
-        <p className={`rounded-lg border px-4 py-3 text-sm ${error ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-          {error || notice}
-        </p>
-      )}
+      {(notice || error) && !actionReview && !userCreateOpen && <FeedbackMessage error={!!error}>{error || notice}</FeedbackMessage>}
 
-      <PlatformGovernanceMap
+      {effectiveActiveTab !== 'models' && <PlatformGovernanceMap
         organizationName={selectedOrganization?.name}
         target={selectedTarget}
         permissionsEnabled={Object.values(platformPermissions?.permissions ?? {}).filter(Boolean).length}
-        onOpen={setActiveTab}
-      />
+        onOpen={(tab) => onNavigate ? onNavigate(tab) : setActiveTab(tab)}
+      />}
 
       {effectiveActiveTab === 'assistant' && (
         <div className="grid gap-5 xl:grid-cols-[360px_1fr]">
@@ -1559,24 +1599,28 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   {t('systemAdmin.saveOrganizationProfile')}
                 </button>
               </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
-                <input
-                  value={closeReason}
-                  onChange={(event) => setCloseReason(event.target.value)}
-                  placeholder={t('systemAdmin.closeOrganizationReason')}
-                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.close')}
-                  className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                />
-                <button
-                  type="button"
-                  onClick={() => void closeOrganization()}
-                  disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.close')}
-                  className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ShieldCheck className="h-4 w-4" />
-                  {t('systemAdmin.closeOrganization')}
-                </button>
-              </div>
+              <details className="mt-4 border-t border-slate-200 pt-3">
+                <summary className="cursor-pointer text-xs ui-muted">{t('ui.admin.organizationActions')}</summary>
+                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <input
+                    value={closeReason}
+                    onChange={(event) => setCloseReason(event.target.value)}
+                    placeholder={t('systemAdmin.closeOrganizationReason')}
+                    aria-label={t('systemAdmin.closeOrganizationReason')}
+                    disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.close')}
+                    className="h-10 rounded-lg border border-slate-300 px-3 text-sm text-slate-900 outline-none focus:border-[#AD4714] focus:ring-2 focus:ring-[#DF6A24]/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => reviewAdminAction({ title: t('systemAdmin.closeOrganization'), description: t('ui.admin.closeHint'), subject: selectedOrganization?.name || '', detail: closeReason, danger: true, execute: closeOrganization })}
+                    disabled={!activeOrganizationID || selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.close')}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-red-200 bg-red-50 px-3 text-sm font-semibold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                    {t('systemAdmin.closeOrganization')}
+                  </button>
+                </div>
+              </details>
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -1691,7 +1735,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void resetTenantAccountPassword(account.user_id)}
+                                onClick={() => reviewAdminAction({ title: t('systemAdmin.resetPassword'), description: t('ui.admin.resetPasswordHint'), subject: account.name, detail: account.email, danger: true, execute: () => resetTenantAccountPassword(account.user_id) })}
                                 disabled={selectedOrganization?.status === 'closed' || loading || !canPlatform('organization.manage')}
                                 className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-300 px-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                               >
@@ -1953,7 +1997,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   </button>
                   <button
                     type="button"
-                    onClick={() => void deleteSelectedIndustryPackage()}
+                    onClick={() => reviewAdminAction({ title: t('systemAdmin.deleteIndustryPackage'), description: t('systemAdmin.deleteIndustryPackageConfirm'), subject: selectedIndustryPackage?.name || '', danger: true, execute: deleteSelectedIndustryPackage })}
                     disabled={!selectedIndustryPackage || loading || !canPlatform('industry.solution.manage')}
                     className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-red-200 bg-white px-3 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -1981,7 +2025,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               </div>
               <button
                 type="button"
-                onClick={() => void applySelectedIndustryPackage()}
+                onClick={() => reviewAdminAction({ title: t('systemAdmin.applyIndustry'), description: t('ui.admin.applyPackageHint'), subject: selectedIndustryPackage?.name || '', detail: [selectedOrganization?.name, ...industryModuleDraft.map((key) => t('saas.module.' + key))].filter(Boolean).join(' · '), execute: applySelectedIndustryPackage })}
                 disabled={!activeOrganizationID || !selectedIndustryPackage || loading}
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -2454,12 +2498,12 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
 
       {effectiveActiveTab === 'users' && (
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.platformUsers')}</h2>
               <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.platformUsersSummary')}</p>
             </div>
-            <Users className="h-5 w-5 text-slate-500" />
+            <button type="button" className="ui-button ui-button-primary" disabled={loading || !canPlatform('platform.user.manage')} onClick={() => { setError(''); setUserCreateOpen(true) }}><Plus size={16} />{t('systemAdmin.createPlatformUser')}</button>
           </div>
           {temporaryCredentialScope === 'platform' && temporaryCredential && (
             <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
@@ -2482,40 +2526,10 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
               </pre>
             </div>
           )}
-          <div className="mt-5 grid gap-4 xl:grid-cols-[320px_1fr]">
-            <aside className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <h3 className="text-sm font-semibold text-slate-950">{t('systemAdmin.createPlatformUser')}</h3>
-              <div className="mt-3 space-y-2">
-                <input
-                  value={platformUserDraft.name}
-                  onChange={(event) => setPlatformUserDraft((current) => ({ ...current, name: event.target.value }))}
-                  placeholder={t('systemAdmin.name')}
-                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
-                />
-                <input
-                  value={platformUserDraft.email}
-                  onChange={(event) => setPlatformUserDraft((current) => ({ ...current, email: event.target.value }))}
-                  placeholder={t('systemAdmin.email')}
-                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
-                />
-                <input
-                  value={platformUserDraft.roles}
-                  onChange={(event) => setPlatformUserDraft((current) => ({ ...current, roles: event.target.value }))}
-                  placeholder={t('systemAdmin.roles')}
-                  className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm"
-                />
-                <button
-                  type="button"
-                  onClick={() => void createUser()}
-                  disabled={loading || !canPlatform('platform.user.manage')}
-                  className="inline-flex h-9 w-full items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white disabled:opacity-50"
-                >
-                  {t('systemAdmin.createPlatformUser')}
-                </button>
-              </div>
-            </aside>
-            <div className="overflow-hidden rounded-lg border border-slate-200">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
+          <div className="mt-5 space-y-4">
+            <label className="admin-user-search"><Search size={16} /><input className="ui-input" value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder={t('ui.admin.searchUsers')} aria-label={t('ui.admin.searchUsers')} /></label>
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="admin-user-table min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
                   <tr>
                     <th className="px-3 py-2">{t('systemAdmin.user')}</th>
@@ -2525,7 +2539,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {platformUsers.map((user) => (
+                  {visibleUsers.map((user) => (
                     <tr key={user.user_id}>
                       <td className="px-3 py-3">
                         <p className="font-medium text-slate-900">{user.name}</p>
@@ -2536,30 +2550,16 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
                         <StatusBadge label={user.account_status} />
                       </td>
                       <td className="px-3 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void resetUserPassword(user.user_id)}
-                            disabled={loading || !canPlatform('platform.user.manage')}
-                            className="inline-flex h-8 items-center rounded-md border border-slate-300 px-2 text-xs font-semibold text-slate-700 disabled:opacity-50"
-                          >
-                            {t('systemAdmin.resetPassword')}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void disableUser(user.user_id)}
-                            disabled={loading || user.account_status === 'disabled' || !canPlatform('platform.user.manage')}
-                            className="inline-flex h-8 items-center rounded-md border border-red-200 bg-red-50 px-2 text-xs font-semibold text-red-700 disabled:opacity-50"
-                          >
-                            {t('systemAdmin.disableUser')}
-                          </button>
-                        </div>
+                        <ActionMenu label={t('common.actions')} items={[
+                          { id: 'reset-password', label: t('systemAdmin.resetPassword'), icon: <ShieldCheck size={15} />, disabled: loading || !canPlatform('platform.user.manage'), onSelect: () => reviewAdminAction({ title: t('systemAdmin.resetPassword'), description: t('ui.admin.resetPasswordHint'), subject: user.name, detail: user.email, danger: true, execute: () => resetUserPassword(user.user_id) }) },
+                          { id: 'disable', label: t('systemAdmin.disableUser'), icon: <Users size={15} />, danger: true, disabled: loading || user.account_status === 'disabled' || !canPlatform('platform.user.manage'), onSelect: () => reviewAdminAction({ title: t('systemAdmin.disableUser'), description: t('ui.admin.disableHint'), subject: user.name, detail: user.email, danger: true, execute: () => disableUser(user.user_id) }) },
+                        ]} />
                       </td>
                     </tr>
                   ))}
-                  {platformUsers.length === 0 && (
+                  {visibleUsers.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">{t('systemAdmin.noPlatformUsers')}</td>
+                      <td colSpan={4} className="px-3 py-6 text-center text-slate-500">{t(userSearch ? 'ui.admin.noUsers' : 'systemAdmin.noPlatformUsers')}</td>
                     </tr>
                   )}
                 </tbody>
@@ -2665,14 +2665,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       )}
 
       {effectiveActiveTab === 'models' && (
-        <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-5 flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.modelAndApiSettings')}</h2>
-              <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.modelAndApiSettingsSummary')}</p>
-            </div>
-            <Table2 className="h-5 w-5 text-slate-500" />
-          </div>
+        <section className="min-w-0">
           <DeveloperToolsWorkspace token={token} apiScope="platform" />
         </section>
       )}
@@ -3090,6 +3083,26 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
           </aside>
         </div>
       )}
+      <Dialog open={userCreateOpen} title={t('systemAdmin.createPlatformUser')} onClose={() => setUserCreateOpen(false)} busy={loading} size="sm"
+        footer={<>
+          <button type="button" className="ui-button ui-button-secondary" disabled={loading} onClick={() => setUserCreateOpen(false)}>{t('common.cancel')}</button>
+          <button type="submit" form="create-platform-user-form" className="ui-button ui-button-primary" disabled={loading || !canPlatform('platform.user.manage')}><Plus size={16} />{t('ontology.create')}</button>
+        </>}>
+        <form id="create-platform-user-form" className="space-y-4" onSubmit={(event) => { event.preventDefault(); void createUser() }}>
+          <label className="ui-field"><span className="ui-field-label">{t('systemAdmin.name')}</span><input data-autofocus className="ui-input" value={platformUserDraft.name} onChange={(event) => setPlatformUserDraft((current) => ({ ...current, name: event.target.value }))} required disabled={loading} autoComplete="name" /></label>
+          <label className="ui-field"><span className="ui-field-label">{t('systemAdmin.email')}</span><input type="email" className="ui-input" value={platformUserDraft.email} onChange={(event) => setPlatformUserDraft((current) => ({ ...current, email: event.target.value }))} required disabled={loading} autoComplete="email" /></label>
+          <label className="ui-field"><span className="ui-field-label">{t('systemAdmin.roles')}</span><input className="ui-input" value={platformUserDraft.roles} onChange={(event) => setPlatformUserDraft((current) => ({ ...current, roles: event.target.value }))} required disabled={loading} /></label>
+        </form>
+        {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+      </Dialog>
+      <Dialog open={!!actionReview} title={actionReview?.title ?? ''} description={actionReview?.description} onClose={() => setActionReview(null)} busy={confirmingAction} danger={actionReview?.danger} size="sm"
+        footer={<>
+          <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel disabled={confirmingAction} onClick={() => setActionReview(null)}>{t('common.cancel')}</button>
+          <button type="button" className={'ui-button ' + (actionReview?.danger ? 'ui-button-danger' : 'ui-button-primary')} disabled={confirmingAction} onClick={() => void confirmAdminAction()}>{t(confirmingAction ? 'ui.document.processing' : 'ui.admin.confirm')}</button>
+        </>}>
+        <div className="ui-dialog-context"><ShieldCheck size={22} /><div><strong>{actionReview?.subject}</strong>{actionReview?.detail && <small>{actionReview.detail}</small>}</div></div>
+        {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+      </Dialog>
     </div>
   )
 }
@@ -3115,14 +3128,8 @@ function PlatformGovernanceMap({
   ]
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-slate-950">{t('systemAdmin.unifiedWorkbench')}</h2>
-          <p className="mt-1 text-sm text-slate-500">{t('systemAdmin.unifiedWorkbenchSummary')}</p>
-        </div>
-        <StatusBadge label="active" />
-      </div>
+    <details className="admin-related-pages rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+      <summary className="cursor-pointer text-sm ui-secondary">{t('ui.admin.workspaceLinks')}</summary>
       <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         {items.map((item) => {
           const Icon = item.icon
@@ -3142,7 +3149,7 @@ function PlatformGovernanceMap({
           )
         })}
       </div>
-    </section>
+    </details>
   )
 }
 

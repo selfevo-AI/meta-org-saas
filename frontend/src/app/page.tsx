@@ -2,9 +2,13 @@
 
 import {
   Activity,
+  ArrowRight,
   ArrowDown,
   ArrowUp,
   Bot,
+  CalendarDays,
+  ClipboardCheck,
+  FileText,
   Boxes,
   BrainCircuit,
   BriefcaseBusiness,
@@ -25,6 +29,7 @@ import {
   MoreHorizontal,
   PackageCheck,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   SlidersHorizontal,
@@ -38,7 +43,7 @@ import {
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { usePathname, useRouter } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
   activateAssistantSkill,
@@ -102,8 +107,9 @@ import {
 } from '@/lib/auth'
 import type { SessionScope } from '@/lib/auth'
 import { APIError } from '@/lib/api-error'
+import { ActionMenu, Dialog, FeedbackMessage, NavigationSearch, StatusBadge, UnsavedChangesDialog, WorkspaceInteractionProvider, lockPageScroll, useWorkspaceInteraction } from './workspace-ui'
 import { useI18n } from '@/lib/i18n'
-import { apiOperations, getOperationProfile, operationDomains } from '@/lib/operations'
+import { apiOperations, getOperationProfile } from '@/lib/operations'
 import type { ApiOperation } from '@/lib/operations'
 import { parseWorkspacePath, workspacePath } from '@/lib/workspace-routes'
 import type { WorkspaceView } from '@/lib/workspace-routes'
@@ -172,7 +178,7 @@ const domainLabels: Record<string, string> = {
   FinanceReceivables: '应收',
   FinancePayables: '应付',
   FinanceCostAccounting: '成本核算',
-  MetaResource: 'Meta 资源',
+  MetaResource: 'MetaResource',
   Inventory: '库存',
   Procurement: '采购',
   Sales: '销售',
@@ -396,19 +402,6 @@ type WorkspaceLayoutWidths = {
 type WorkspaceLayoutPane = keyof WorkspaceLayoutWidths
 
 const lifecycleDomains = ['Requirement', 'Project', 'Delivery', 'Cost', 'Feedback']
-const virtualDomains = ['Costing', 'MetaResource', 'Retail', 'Manufacturing', 'SystemAdmin']
-const platformOnlyDomainSet = new Set([
-  'Capability',
-  'Governance',
-  'Evolution',
-  'Verification',
-  'SystemAdmin',
-  'DeveloperTools',
-  'Identity',
-  'Layer',
-  'Observability',
-])
-const tenantOnlyDomains = [...operationDomains, ...virtualDomains].filter((domain) => !platformOnlyDomainSet.has(domain))
 const dedicatedDomains = new Set([
   'MetaResource',
   'SystemAdmin',
@@ -472,14 +465,21 @@ const defaultMenuGroups: MenuGroup[] = [
   {
     id: 'supplyChain',
     label: 'nav.group.supplyChain',
-    domains: ['Procurement', 'Sales', 'Inventory', 'Manufacturing', 'Retail'],
+    domains: ['Procurement', 'Sales', 'Inventory'],
   },
   {
     id: 'finance',
     label: '财务',
     domains: ['FinanceAccounting', 'FinanceReceivables', 'FinancePayables', 'FinanceCostAccounting'],
   },
+  {
+    id: 'archive',
+    label: 'nav.group.archive',
+    domains: ['Manufacturing', 'Retail'],
+  },
 ]
+
+const tenantOnlyDomains = Array.from(new Set(defaultMenuGroups.flatMap((group) => group.domains)))
 
 const platformMenuGroups: MenuGroup[] = [
   {
@@ -599,6 +599,7 @@ const tenantDocumentMenuItems: Record<string, TenantDocumentMenuItem[]> = {
   ],
   FinancePayables: [
     { id: 'finance:ap_invoice', domain: 'FinancePayables', documentID: 'ap_invoice', label: 'erp.document.apInvoice', targetType: 'finance_payable' },
+    { id: 'finance:outgoing_payment', domain: 'FinancePayables', documentID: 'outgoing_payment', label: 'erp.document.outgoingPayment', targetType: 'finance_settlement' },
   ],
   FinanceCostAccounting: [
     { id: 'finance:cost_center', domain: 'FinanceCostAccounting', documentID: 'cost_center', label: 'erp.document.costCenter', targetType: 'cost_ledger_entry' },
@@ -657,12 +658,12 @@ function normalizeWorkspaceLayoutWidths(value?: Record<string, unknown>): Worksp
   )
 }
 
-function workspaceLayoutStyle(widths: WorkspaceLayoutWidths): CSSProperties {
+function workspaceLayoutStyle(widths: WorkspaceLayoutWidths, includeStatus = true): CSSProperties {
   return {
-    '--workspace-grid-lg': `${widths.menu}px 8px ${widths.business}px 8px minmax(520px, 1fr)`,
-    '--workspace-grid-xl': `${widths.menu}px 8px ${widths.business}px 8px minmax(520px, 1fr) 8px ${widths.status}px`,
-    '--workspace-overview-grid-lg': `${widths.menu}px 8px minmax(520px, 1fr)`,
-    '--workspace-overview-grid-xl': `${widths.menu}px 8px minmax(520px, 1fr) 8px ${widths.status}px`,
+    '--workspace-grid-lg': `${widths.menu}px 6px ${widths.business}px 6px minmax(0, 1fr)`,
+    '--workspace-grid-xl': `${widths.menu}px 6px ${widths.business}px 6px minmax(0, 1fr)${includeStatus ? ` 6px ${widths.status}px` : ''}`,
+    '--workspace-overview-grid-lg': `${widths.menu}px 6px minmax(0, 1fr)`,
+    '--workspace-overview-grid-xl': `${widths.menu}px 6px minmax(0, 1fr)${includeStatus ? ` 6px ${widths.status}px` : ''}`,
   } as CSSProperties
 }
 
@@ -1177,7 +1178,8 @@ function normalizeMenuGroups(input?: MenuGroup[]): MenuGroup[] {
     if (!target) return
     sourceGroup.domains.forEach((domain) => {
       if (!knownDomains.has(domain) || assigned.has(domain)) return
-      target.domains.push(domain)
+      const destination = domain === 'Manufacturing' || domain === 'Retail' ? groupByID.get('archive')! : target
+      destination.domains.push(domain)
       assigned.add(domain)
     })
   })
@@ -1194,7 +1196,7 @@ function normalizeMenuGroups(input?: MenuGroup[]): MenuGroup[] {
 }
 
 function defaultExpandedGroups(): Record<string, boolean> {
-  return Object.fromEntries(defaultMenuGroups.map((group) => [group.id, true]))
+  return Object.fromEntries(defaultMenuGroups.map((group) => [group.id, group.id !== 'archive']))
 }
 
 function loadMenuGroups(): MenuGroup[] {
@@ -1231,7 +1233,7 @@ function loadExpandedGroups(): Record<string, boolean> {
 
 function loadThemeMode(): ThemeMode {
   if (typeof window === 'undefined') return 'dark'
-  return window.localStorage.getItem(themeStorageKey) === 'light' ? 'light' : 'dark'
+  return window.localStorage.getItem(themeStorageKey) === 'dark' ? 'dark' : 'light'
 }
 
 function assistantModuleForDomain(domain: string): string {
@@ -1448,9 +1450,15 @@ function agentIntentForOperation(operation: ApiOperation, context: Record<string
 }
 
 export default function Home() {
+  return <WorkspaceInteractionProvider><WorkspaceApplication /></WorkspaceInteractionProvider>
+}
+
+function WorkspaceApplication() {
   const { locale, setLocale, t } = useI18n()
+  const { requestNavigation } = useWorkspaceInteraction()
   const pathname = usePathname()
   const router = useRouter()
+  const [workspaceNavigating, startWorkspaceNavigation] = useTransition()
   const [ready, setReady] = useState(false)
   const [mode, setMode] = useState<AuthMode>('login')
   const [loginSurface, setLoginSurface] = useState<LoginSurface>('tenant')
@@ -1462,6 +1470,7 @@ export default function Home() {
   const [newOwnPassword, setNewOwnPassword] = useState('')
   const [confirmOwnPassword, setConfirmOwnPassword] = useState('')
   const [passwordChanging, setPasswordChanging] = useState(false)
+  const [passwordError, setPasswordError] = useState('')
   const [token, setToken] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [userType, setUserType] = useState<string | null>(null)
@@ -1480,10 +1489,11 @@ export default function Home() {
   const [overviewLoading, setOverviewLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('overview')
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>(() => parseWorkspacePath(pathname)?.view ?? 'overview')
   const [menuGroups, setMenuGroups] = useState<MenuGroup[]>(() => normalizeMenuGroups())
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => defaultExpandedGroups())
-  const [themeMode, setThemeMode] = useState<ThemeMode>('dark')
+  const [themeMode, setThemeMode] = useState<ThemeMode>('light')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [menuReady, setMenuReady] = useState(false)
   const [draggedDomain, setDraggedDomain] = useState<string | null>(null)
@@ -1506,7 +1516,10 @@ export default function Home() {
   const [businessNodesByDomain, setBusinessNodesByDomain] = useState<Record<string, BusinessTreeNode[]>>({})
   const [businessSelection, setBusinessSelection] = useState<BusinessSelection | null>(null)
   const [currentSupplyChainFunctionID, setCurrentSupplyChainFunctionID] = useState<SupplyChainFunctionID | null>(null)
-  const [activeTenantDocumentID, setActiveTenantDocumentID] = useState<string | null>(null)
+  const [activeTenantDocumentID, setActiveTenantDocumentID] = useState<string | null>(() => {
+    const domain = parseWorkspacePath(pathname)?.view.replace('domain:', '') ?? ''
+    return buildTenantDocumentMenuItems(domain)[0]?.documentID ?? null
+  })
   const [businessTreeLoading, setBusinessTreeLoading] = useState(false)
   const [businessTreeError, setBusinessTreeError] = useState<string | null>(null)
   const [mobileBusinessOpen, setMobileBusinessOpen] = useState(false)
@@ -1532,6 +1545,56 @@ export default function Home() {
   const activeSessionScope: SessionScope = isPlatformAdminSession || loginSurface === 'platform' ? 'platform' : 'tenant'
   const isPlatformSession = activeSessionScope === 'platform'
   const visibleMenuGroups = isPlatformSession ? platformMenuGroups : menuGroups
+
+  useEffect(() => {
+    if (!token) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setSearchOpen((current) => !current)
+      }
+      if (event.key === 'Escape' && !document.querySelector('dialog[open]')) {
+        setMobileMenuOpen(false)
+        setMobileBusinessOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [token])
+
+  useEffect(() => {
+    if (!mobileMenuOpen || window.innerWidth >= 1024) return
+    const navigation = document.getElementById('workspace-navigation')
+    if (!navigation) return
+    const previousFocus = document.activeElement as HTMLElement | null
+    const unlock = lockPageScroll()
+    const focusable = () => Array.from(navigation.querySelectorAll<HTMLElement>('button:not(:disabled), input, a[href], select, [tabindex="0"]')).filter((element) => element.getClientRects().length > 0)
+    focusable()[0]?.focus()
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || document.querySelector('dialog[open]')) return
+      const elements = focusable()
+      const first = elements[0]
+      const last = elements[elements.length - 1]
+      if (event.shiftKey && (document.activeElement === first || !navigation.contains(document.activeElement))) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && (document.activeElement === last || !navigation.contains(document.activeElement))) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    window.addEventListener('keydown', trapFocus)
+    return () => {
+      unlock()
+      window.removeEventListener('keydown', trapFocus)
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+    }
+  }, [mobileMenuOpen])
+
+  useEffect(() => {
+    const domain = parseWorkspacePath(pathname)?.view.replace('domain:', '') ?? ''
+    return deferStateUpdate(() => setActiveTenantDocumentID(buildTenantDocumentMenuItems(domain)[0]?.documentID ?? null))
+  }, [pathname])
 
   useEffect(() => {
     if (!ready) return
@@ -1856,13 +1919,6 @@ export default function Home() {
     token,
   ])
 
-  const healthRatio = useMemo(() => {
-    if (!overview) return 0
-    const active = overview.health.active_projects
-    const total = Math.max(overview.health.active_projects + overview.health.open_requirements, 1)
-    return active / total
-  }, [overview])
-
   const handleOperationContextChange = useCallback((context: Record<string, string>) => {
     setOperationContext((current) => ({ ...current, ...context }))
   }, [])
@@ -2041,16 +2097,24 @@ export default function Home() {
     router.replace('/')
   }
 
+  function closePasswordDialog() {
+    if (passwordChanging) return
+    setChangePasswordOpen(false)
+    setCurrentOwnPassword('')
+    setNewOwnPassword('')
+    setConfirmOwnPassword('')
+    setPasswordError('')
+  }
+
   async function handleOwnPasswordChange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!token) return
+    if (!token || passwordChanging) return
     if (newOwnPassword !== confirmOwnPassword) {
-      setError(t('account.passwordMismatch'))
+      setPasswordError(t('account.passwordMismatch'))
       return
     }
     setPasswordChanging(true)
-    setError(null)
-    setNotice(null)
+    setPasswordError('')
     try {
       await changeOwnPassword(token, currentOwnPassword, newOwnPassword)
       setCurrentOwnPassword('')
@@ -2059,7 +2123,9 @@ export default function Home() {
       setChangePasswordOpen(false)
       setNotice(t('account.passwordChanged'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('account.passwordChangeFailed'))
+      setPasswordError(err instanceof APIError && err.status === 401
+        ? t('ui.account.currentPasswordIncorrect')
+        : t('account.passwordChangeFailed'))
     } finally {
       setPasswordChanging(false)
     }
@@ -2281,14 +2347,7 @@ export default function Home() {
     setCurrentSupplyChainFunctionID(selectedSupplyChainFunction?.id ?? null)
     setActiveTenantDocumentID(item.documentID)
     navigateToWorkspace(view)
-    setBusinessSelection({
-      id: item.id,
-      domain: item.domain,
-      targetType: item.targetType,
-      targetID: item.documentID,
-      label: t(item.label),
-      description: t('workbench.unified.title'),
-    })
+    setBusinessSelection(null)
     setMobileMenuOpen(false)
     setMobileBusinessOpen(false)
   }
@@ -2341,27 +2400,30 @@ export default function Home() {
         : null
     const target = workspacePath(activeSessionScope, navigationOrganizationID, view)
     if (target === '/') return
-    setWorkspaceView(view)
-    if (target !== pathname) router.push(target)
+    startWorkspaceNavigation(() => {
+      setWorkspaceView(view)
+      if (target !== pathname) router.push(target)
+    })
   }
 
-  async function handleToolApproval(id: string, decision: 'approve' | 'reject') {
+  async function handleToolApproval(id: string, decision: 'approve' | 'reject', reason?: string) {
     if (!token) return
     setOverviewLoading(true)
     setError(null)
     try {
       if (decision === 'approve') {
         const approve = isPlatformSession ? approvePlatformToolApproval : approveToolApproval
-        await approve(token, id)
+        await approve(token, id, reason || t('ui.home.approve'))
         setNotice(t('agent.approvalApproved'))
       } else {
         const reject = isPlatformSession ? rejectPlatformToolApproval : rejectToolApproval
-        await reject(token, id)
+        await reject(token, id, reason || t('ui.home.reject'))
         setNotice(t('agent.approvalRejected'))
       }
       await loadOverview(token)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      throw err
     } finally {
       setOverviewLoading(false)
     }
@@ -2377,140 +2439,82 @@ export default function Home() {
       : apiOperations.filter((operation) => operation.domain === activeDomain).length
   const activeOperations = apiOperations.filter((operation) => operation.domain === (isOverview ? 'MetaOrg' : activeDomain))
   const activeBusinessSelection = businessSelection?.domain === activeDomain ? businessSelection : null
+  const showStatusPanel = !isOverview && !isPlatformSession && !!activeBusinessSelection && buildTenantDocumentMenuItems(activeDomain).length === 0
   const assistantModule = isOverview ? selectedOverviewFunction.moduleKey : assistantModuleForDomain(activeDomain)
   const assistantTargetType = isOverview ? selectedOverviewFunction.targetType : activeBusinessSelection?.targetType
   const assistantTargetID = isOverview ? undefined : activeBusinessSelection?.targetID
   const activeBusinessNodes = isOverview ? buildOperationNodes('MetaOrg') : businessNodesByDomain[businessTreeCacheKey] ?? []
 
+  const searchItems = [
+    { id: 'overview', label: t('ui.nav.home'), group: t('app.product'), icon: <HomeIcon size={17} />, onSelect: () => requestNavigation(() => handleViewChange('overview')) },
+    ...visibleMenuGroups.flatMap((group) => group.domains.flatMap((domain) => {
+      const Icon = domainIcons[domain] ?? FolderKanban
+      const groupLabel = t(`nav.group.${group.id}`)
+      return [
+        { id: domain, label: t(domainLabels[domain] ?? domain), group: groupLabel, keywords: domain, icon: <Icon size={17} />, onSelect: () => requestNavigation(() => handleViewChange(`domain:${domain}`)) },
+        ...buildTenantDocumentMenuItems(domain).map((item) => ({ id: item.id, label: t(item.label), group: `${groupLabel} / ${t(domainLabels[domain] ?? domain)}`, keywords: item.documentID, icon: <FileText size={17} />, onSelect: () => requestNavigation(() => handleTenantDocumentSelect(item)) })),
+      ]
+    })),
+  ]
+
   return (
     <main className={`app-dark ${themeMode === 'light' ? 'theme-light' : ''}`}>
+      {token && <a className="shell-skip" href="#main-workspace">{t('ui.shell.skip')}</a>}
+      <UnsavedChangesDialog />
+      <NavigationSearch open={searchOpen && !!token} onClose={() => setSearchOpen(false)} items={searchItems} />
       {!token ? (
-        <div data-testid="login-shell" className="mx-auto grid min-h-screen max-w-6xl gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[360px_1fr] lg:items-center lg:px-8">
-          <section className="studio-panel rounded-lg p-5">
-            <div className="mb-8 flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-[#DF6A24]/25 bg-[#DF6A24]/10">
-                <Sparkles className="h-6 w-6 text-[#F6A66A]" />
-              </div>
-              <div>
-                <p className="text-xs font-bold uppercase text-[#F6A66A]">{t('shell.breadcrumbRoot')}</p>
-                <h1 className="text-2xl font-semibold text-white">{t('app.title')}</h1>
-              </div>
+        <div data-testid="login-shell" className="login-shell">
+          <section className="ui-card login-form">
+            <div className="sidebar-brand">
+              <span className="sidebar-brand-mark"><Boxes size={23} strokeWidth={1.8} /></span>
+              <div><strong>{t('app.product')}</strong><small>{t('ui.brand.tagline')}</small></div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                data-testid="login-surface-tenant"
-                onClick={() => handleLoginSurfaceChange('tenant')}
-                title={t('auth.organizationLogin')}
-                className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition ${
-                  loginSurface === 'tenant'
-                    ? 'border-[#DF6A24] bg-[#DF6A24]/15 text-[#fffaf5]'
-                    : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-slate-500'
-                }`}
-              >
-                <Users className="h-4 w-4" />
-                {t('auth.tenantConsole')}
+            <h1>{t(mode === 'login' ? 'ui.login.formTitle' : 'auth.createAccount')}</h1>
+            <p className="login-form-hint">{t('ui.login.formHint')}</p>
+            <div className="login-surface-switch">
+              <button type="button" data-testid="login-surface-tenant" onClick={() => handleLoginSurfaceChange('tenant')} aria-pressed={loginSurface === 'tenant'} title={t('auth.organizationLogin')}>
+                <Users size={16} />{t('auth.tenantConsole')}
               </button>
-              <button
-                type="button"
-                data-testid="login-surface-platform"
-                onClick={() => handleLoginSurfaceChange('platform')}
-                title={t('auth.platformLogin')}
-                className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border text-sm font-semibold transition ${
-                  loginSurface === 'platform'
-                    ? 'border-[#DF6A24] bg-[#DF6A24]/15 text-[#fffaf5]'
-                    : 'border-slate-700 bg-slate-950/40 text-slate-300 hover:border-slate-500'
-                }`}
-              >
-                <ShieldCheck className="h-4 w-4" />
-                {t('auth.platformAdmin')}
+              <button type="button" data-testid="login-surface-platform" onClick={() => handleLoginSurfaceChange('platform')} aria-pressed={loginSurface === 'platform'} title={t('auth.platformLogin')}>
+                <ShieldCheck size={16} />{t('auth.platformAdmin')}
               </button>
             </div>
-            <div className="mt-3 flex rounded-lg bg-slate-100 p-1">
-              <button
-                type="button"
-                onClick={() => setMode('login')}
-                className={`h-9 flex-1 rounded-md text-sm font-medium transition ${
-                  mode === 'login' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                {t('auth.login')}
-              </button>
-              {loginSurface === 'tenant' && (
-                <button
-                  type="button"
-                  onClick={() => setMode('register')}
-                  className={`h-9 flex-1 rounded-md text-sm font-medium transition ${
-                    mode === 'register' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  {t('auth.register')}
-                </button>
-              )}
-            </div>
-
-            <form className="mt-5 space-y-4" onSubmit={handleAuth}>
-              {loginSurface === 'tenant' && mode === 'register' && (
-                <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('auth.name')}</span>
-                  <input
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                    autoComplete="name"
-                    required
-                  />
-                </label>
-              )}
-              <label className="block">
-                <span className="text-sm font-medium text-slate-700">{t('auth.email')}</span>
-                <input
-                  data-testid="auth-email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                  autoComplete="email"
-                  type="email"
-                  required
-                />
+            <form className="mt-6 space-y-5" onSubmit={handleAuth}>
+              {loginSurface === 'tenant' && mode === 'register' && <label className="ui-field"><span className="ui-field-label">{t('auth.name')}</span>
+                <input value={name} onChange={(event) => setName(event.target.value)} className="ui-input" autoComplete="name" required />
+              </label>}
+              <label className="ui-field"><span className="ui-field-label">{t('auth.email')}</span>
+                <input data-testid="auth-email" value={email} onChange={(event) => setEmail(event.target.value)} className="ui-input" autoComplete="email" type="email" required />
               </label>
-              <label className="block">
-                <span className="text-sm font-medium text-slate-700">{t('auth.password')}</span>
-                <input
-                  data-testid="auth-password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className="mt-1 h-11 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  type="password"
-                  required
-                />
+              <label className="ui-field"><span className="ui-field-label">{t('auth.password')}</span>
+                <input data-testid="auth-password" value={password} onChange={(event) => setPassword(event.target.value)} className="ui-input" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" required />
               </label>
-
-              {error && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  {error}
-                </div>
-              )}
-              {notice && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {notice}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                data-testid="auth-submit"
-                disabled={loading}
-                className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#AD4714] px-4 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <KeyRound className="h-4 w-4" />
-                {loading ? t('auth.processing') : mode === 'login' ? t('auth.signIn') : t('auth.createAccount')}
+              {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+              {notice && <FeedbackMessage>{notice}</FeedbackMessage>}
+              <button type="submit" data-testid="auth-submit" disabled={loading} className="ui-button ui-button-primary w-full">
+                {loading ? <RefreshCw size={16} className="animate-spin" /> : <ArrowRight size={16} />}
+                {t(loading ? 'auth.processing' : mode === 'login' ? 'auth.signIn' : 'auth.createAccount')}
               </button>
             </form>
+            {loginSurface === 'tenant' && <button type="button" className="ui-button ui-button-link mt-3 w-full" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>{t(mode === 'login' ? 'auth.register' : 'auth.login')}</button>}
+            <div className="login-language"><div className="shell-language">
+              <button type="button" onClick={() => setLocale('zh')} aria-pressed={locale === 'zh'}>中文</button>
+              <button type="button" onClick={() => setLocale('en')} aria-pressed={locale === 'en'}>EN</button>
+            </div></div>
           </section>
-
-          <RoleDirectory roles={roles} />
+          <section className="login-intro">
+            <span className="login-intro-label"><Boxes size={17} />{t('ui.brand.tagline')}</span>
+            <h2>{t('ui.login.welcome')}</h2>
+            <p>{t('ui.login.subtitle')}</p>
+            <div className="login-features">
+              {[
+                { key: 'work', icon: FolderKanban }, { key: 'review', icon: ClipboardCheck }, { key: 'ai', icon: Sparkles },
+              ].map(({ key, icon: Icon }) => <div className="login-feature" key={key}>
+                <span><Icon size={20} strokeWidth={1.7} /></span>
+                <div><strong>{t('ui.login.feature.' + key)}</strong><p>{t('ui.login.feature.' + key + 'Hint')}</p></div>
+              </div>)}
+            </div>
+          </section>
         </div>
       ) : onboardingRequired ? (
         <div className="mx-auto grid min-h-screen max-w-5xl gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[380px_1fr] lg:items-center lg:px-8">
@@ -2607,8 +2611,14 @@ export default function Home() {
           </section>
         </div>
       ) : (
-        <div className={`workspace-shell grid min-h-screen ${shellUsesOverviewLayout ? 'workspace-shell-overview' : ''}`} style={workspaceLayoutStyle(workspaceLayoutWidths)}>
+        <div className={`workspace-shell grid min-h-screen ${shellUsesOverviewLayout ? 'workspace-shell-overview' : ''}`} style={workspaceLayoutStyle(workspaceLayoutWidths, showStatusPanel)}>
           <div
+            id="workspace-navigation"
+            data-testid="workspace-navigation"
+            data-open={mobileMenuOpen}
+            role={mobileMenuOpen ? 'dialog' : undefined}
+            aria-modal={mobileMenuOpen || undefined}
+            aria-label={t('ui.nav.label')}
             className={`workspace-sidebar-pane fixed inset-y-0 left-0 z-40 w-[248px] transform transition lg:static lg:w-auto lg:translate-x-0 ${
               mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
             }`}
@@ -2617,21 +2627,22 @@ export default function Home() {
               workspaceView={effectiveWorkspaceView}
               groups={visibleMenuGroups}
               expandedGroups={expandedGroups}
-              onViewChange={handleViewChange}
+              onViewChange={(view) => { setMobileMenuOpen(false); requestNavigation(() => handleViewChange(view)) }}
               onToggleGroup={toggleMenuGroup}
               onDragStart={handleDomainDragStart}
               onDropDomain={handleDomainDrop}
               onReset={resetMenuLayout}
               currentSupplyChainFunctionID={activeSupplyChainFunction?.id ?? null}
-              onSupplyChainFunctionChange={handleSupplyChainFunctionChange}
+              onSupplyChainFunctionChange={(id) => { setMobileMenuOpen(false); requestNavigation(() => handleSupplyChainFunctionChange(id)) }}
               currentTenantDocumentID={activeTenantDocumentID}
-              onTenantDocumentSelect={handleTenantDocumentSelect}
+              onTenantDocumentSelect={(item) => { setMobileMenuOpen(false); requestNavigation(() => handleTenantDocumentSelect(item)) }}
+              onClose={() => setMobileMenuOpen(false)}
             />
           </div>
           {mobileMenuOpen && (
             <button
               type="button"
-              aria-label="Close menu"
+              aria-label={t('nav.close')}
               className="fixed inset-0 z-30 bg-black/60 lg:hidden"
               onClick={() => setMobileMenuOpen(false)}
             />
@@ -2655,71 +2666,34 @@ export default function Home() {
               overview={overview}
               overviewLoading={overviewLoading}
               onRefresh={() => loadOverview()}
-              onOpenChangePassword={() => setChangePasswordOpen(true)}
-              onSignOut={handleSignOut}
+              onOpenChangePassword={() => { setPasswordError(''); setChangePasswordOpen(true) }}
+              onSignOut={() => requestNavigation(handleSignOut)}
               onOpenMenu={() => setMobileMenuOpen(true)}
+              menuOpen={mobileMenuOpen}
+              navigating={workspaceNavigating}
               showBusinessControl={showBusinessChrome}
               onOpenBusiness={() => setMobileBusinessOpen(true)}
               onResetLayout={handleResetWorkspaceLayout}
+              onOpenSearch={() => setSearchOpen(true)}
             />
-            {changePasswordOpen && (
-              <div className="absolute right-4 top-[68px] z-30 w-[min(92vw,360px)] rounded-lg border border-slate-700 bg-slate-950 p-4 shadow-2xl shadow-black/40">
-                <form className="space-y-3" onSubmit={handleOwnPasswordChange}>
-                  <div className="flex items-center justify-between gap-3">
-                    <h2 className="text-sm font-semibold text-slate-100">{t('account.changePassword')}</h2>
-                    <button
-                      type="button"
-                      onClick={() => setChangePasswordOpen(false)}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-700 text-slate-300 transition hover:border-slate-500 hover:text-white"
-                      aria-label={t('common.close')}
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    {t('account.currentPassword')}
-                    <input
-                      type="password"
-                      value={currentOwnPassword}
-                      onChange={(event) => setCurrentOwnPassword(event.target.value)}
-                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-[#F6A66A]"
-                      autoComplete="current-password"
-                      required
-                    />
-                  </label>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    {t('account.newPassword')}
-                    <input
-                      type="password"
-                      value={newOwnPassword}
-                      onChange={(event) => setNewOwnPassword(event.target.value)}
-                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-[#F6A66A]"
-                      autoComplete="new-password"
-                      required
-                    />
-                  </label>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    {t('account.confirmNewPassword')}
-                    <input
-                      type="password"
-                      value={confirmOwnPassword}
-                      onChange={(event) => setConfirmOwnPassword(event.target.value)}
-                      className="mt-1 h-10 w-full rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-[#F6A66A]"
-                      autoComplete="new-password"
-                      required
-                    />
-                  </label>
-                  <button
-                    type="submit"
-                    disabled={passwordChanging || !currentOwnPassword || !newOwnPassword || !confirmOwnPassword}
-                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-[#AD4714] px-3 text-sm font-semibold text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <ShieldCheck className="h-4 w-4" />
-                    {passwordChanging ? t('common.loading') : t('common.save')}
-                  </button>
-                </form>
-              </div>
-            )}
+            <Dialog open={changePasswordOpen} title={t('account.changePassword')} onClose={closePasswordDialog} busy={passwordChanging} size="sm"
+              footer={<>
+                <button type="button" className="ui-button ui-button-secondary" disabled={passwordChanging} onClick={closePasswordDialog}>{t('common.cancel')}</button>
+                <button type="submit" form="change-own-password-form" disabled={passwordChanging || !currentOwnPassword || !newOwnPassword || !confirmOwnPassword} className="ui-button ui-button-primary"><ShieldCheck size={16} />{t(passwordChanging ? 'common.loading' : 'common.save')}</button>
+              </>}>
+              <form id="change-own-password-form" className="space-y-4" onSubmit={handleOwnPasswordChange}>
+                <label className="ui-field"><span className="ui-field-label">{t('account.currentPassword')}</span>
+                  <input data-autofocus type="password" value={currentOwnPassword} onChange={(event) => setCurrentOwnPassword(event.target.value)} className="ui-input" autoComplete="current-password" required disabled={passwordChanging} />
+                </label>
+                <label className="ui-field"><span className="ui-field-label">{t('account.newPassword')}</span>
+                  <input type="password" value={newOwnPassword} onChange={(event) => setNewOwnPassword(event.target.value)} className="ui-input" autoComplete="new-password" required disabled={passwordChanging} />
+                </label>
+                <label className="ui-field"><span className="ui-field-label">{t('account.confirmNewPassword')}</span>
+                  <input type="password" value={confirmOwnPassword} onChange={(event) => setConfirmOwnPassword(event.target.value)} className="ui-input" autoComplete="new-password" required disabled={passwordChanging} />
+                </label>
+              </form>
+              {passwordError && <FeedbackMessage error>{passwordError}</FeedbackMessage>}
+            </Dialog>
           </div>
 
           {/* BusinessTreePanelRemoved: tenant documents now expand under the main navigation menu. */}
@@ -2735,7 +2709,7 @@ export default function Home() {
                 selectedID={activeBusinessSelection?.id}
                 loading={businessTreeLoading}
                 error={businessTreeError}
-                onSelect={handleBusinessSelect}
+                onSelect={(node) => requestNavigation(() => handleBusinessSelect(node))}
               />
             </div>
           )}
@@ -2752,8 +2726,8 @@ export default function Home() {
             <WorkspaceLayoutResizer pane="business" label={t('layout.resizeBusiness')} onResizeStart={handleLayoutResizeStart} className="workspace-business-resizer lg:flex" />
           )}
 
-          <section className="workspace-main-pane min-w-0">
-            <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
+          <section id="main-workspace" tabIndex={-1} className="workspace-main-pane min-w-0">
+            <div className="workspace-content">
               {!isOverview && (
                 <WorkspaceHeader
                   title={activeBusinessSelection?.label ?? t(domainLabels[activeDomain] ?? activeDomain)}
@@ -2771,17 +2745,13 @@ export default function Home() {
                   }}
                 />
               )}
-              {error && (
-                <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {error}
-                </div>
-              )}
+              {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+              {notice && <FeedbackMessage>{notice}</FeedbackMessage>}
               {effectiveWorkspaceView === 'overview' ? (
                 overview ? (
                   <OverviewAssistantHome
                     overview={overview}
                     inbox={inbox}
-                    healthRatio={healthRatio}
                     businessFunctions={orderedOverviewFunctions}
                     selectedFunctionID={selectedOverviewFunction.id}
                     onSelectFunction={handleOverviewFunctionSelect}
@@ -2805,7 +2775,8 @@ export default function Home() {
                       openAssistantWithIntent(intent)
                     }}
                     onOpenAssistant={openAssistantWithoutIntent}
-                    onReviewApproval={(id, decision) => void handleToolApproval(id, decision)}
+                    onReviewApproval={handleToolApproval}
+                    onNavigate={(view) => requestNavigation(() => handleViewChange(view))}
                     apiScope={activeSessionScope}
                   />
                 ) : (
@@ -2848,6 +2819,7 @@ export default function Home() {
 						organizations={organizations}
 						currentOrganizationID={currentOrganizationID}
 						activeSection={platformAdminSection}
+						onNavigate={(section) => requestNavigation(() => handleViewChange(`domain:PlatformAdmin:${section}`))}
 					/>
 				) : effectiveWorkspaceView === 'domain:Costing' || effectiveWorkspaceView === 'domain:FinanceCostAccounting' ? (
 					<CostingWorkspace token={token} />
@@ -2871,11 +2843,11 @@ export default function Home() {
                 <AgentOnlyWorkspace domain={effectiveWorkspaceView.replace('domain:', '')} onAssistantOpen={() => setAssistantOpen(true)} />
               )}
               <div className="xl:hidden">
-                {!isPlatformSession && <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />}
+                {showStatusPanel && <BusinessStatusPanel token={token} selection={activeBusinessSelection} operations={activeOperations} />}
               </div>
             </div>
           </section>
-          {!isPlatformSession && (
+          {showStatusPanel && (
             <>
               <WorkspaceLayoutResizer pane="status" label={t('layout.resizeStatus')} onResizeStart={handleLayoutResizeStart} className="workspace-status-resizer xl:flex" />
               <aside className="workspace-status-pane hidden min-w-0 border-l border-slate-800 bg-[#121317] xl:block">
@@ -2946,44 +2918,20 @@ export default function Home() {
               </section>
             </div>
           )}
-          {assistantOpen && (
-            <div className="fixed inset-0 z-50">
-              <button
-                type="button"
-                className="absolute inset-0 bg-black/55"
-                aria-label={t('common.close')}
-                onClick={() => {
-                  setAssistantOpen(false)
-                  setAssistantIntent('')
-                  setAssistantIntentKey('')
-                }}
-              />
-              <aside className="absolute right-0 top-0 h-full w-full max-w-xl shadow-2xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAssistantOpen(false)
-                    setAssistantIntent('')
-                    setAssistantIntentKey('')
-                  }}
-                  className="absolute right-3 top-3 z-10 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-                  aria-label={t('common.close')}
-                >
-                  <X className="h-4 w-4" />
-                </button>
-                <AIAssistant
-                  token={token}
-                  contextType={assistantModule}
-                  targetType={assistantTargetType}
-                  targetID={assistantTargetID}
-                  initialIntent={assistantIntent}
-                  initialIntentKey={assistantIntentKey}
-                  autoRunInitialIntent={Boolean(assistantIntent)}
-                  apiScope={activeSessionScope}
-                />
-              </aside>
-            </div>
-          )}
+          <Dialog open={assistantOpen} title={t('ui.assistant.title')} className="ui-assistant-drawer" onClose={() => { setAssistantOpen(false); setAssistantIntent(''); setAssistantIntentKey('') }}>
+            <AIAssistant
+              token={token}
+              contextType={assistantModule}
+              contextLabel={isOverview ? t(selectedOverviewFunction.label) : activeBusinessSelection?.label ?? t(domainLabels[activeDomain] ?? activeDomain)}
+              hideTitle
+              targetType={assistantTargetType}
+              targetID={assistantTargetID}
+              initialIntent={assistantIntent}
+              initialIntentKey={assistantIntentKey}
+              autoRunInitialIntent={Boolean(assistantIntent)}
+              apiScope={activeSessionScope}
+            />
+          </Dialog>
         </div>
       )}
     </main>
@@ -3015,26 +2963,9 @@ function WorkspaceLayoutResizer({
 }
 
 function Topbar({
-  activeTitle,
-  activeDomain,
-  locale,
-  setLocale,
-  themeMode,
-  setThemeMode,
-  sessionScope,
-  userType,
-  platformRole,
-  organizations,
-  currentOrganizationID,
-  overview,
-  overviewLoading,
-  onRefresh,
-  onOpenChangePassword,
-  onSignOut,
-  onOpenMenu,
-  showBusinessControl,
-  onOpenBusiness,
-  onResetLayout,
+  activeTitle, locale, setLocale, themeMode, setThemeMode, sessionScope, platformRole,
+  organizations, currentOrganizationID, overviewLoading, onRefresh, onOpenChangePassword,
+  onSignOut, onOpenMenu, menuOpen, navigating, showBusinessControl, onOpenBusiness, onResetLayout, onOpenSearch,
 }: {
   activeTitle: string
   activeDomain: string
@@ -3053,149 +2984,55 @@ function Topbar({
   onOpenChangePassword: () => void
   onSignOut: () => void
   onOpenMenu: () => void
+  menuOpen: boolean
+  navigating: boolean
   showBusinessControl: boolean
   onOpenBusiness: () => void
   onResetLayout: () => void
+  onOpenSearch: () => void
 }) {
   const { t } = useI18n()
-  const activeWork = overview?.health.active_projects ?? 0
-  const unexportedCost = overview ? formatMoney(overview.health.unexported_cost, overview.health.currency) : 'CNY 0.00'
-
+  const organization = organizations.find((item) => item.id === currentOrganizationID)
+  const accountTitle = platformRole ? t(platformRole === 'system_owner' ? 'ui.shell.owner' : 'ui.shell.admin') : organization?.name || t('ui.shell.employee')
   return (
-    <header className="sticky top-0 z-20 border-b border-slate-800/80 bg-[#121317]/88 backdrop-blur-xl">
-      <div className="flex h-[60px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-        <div className="flex min-w-0 items-center gap-3">
-          <button
-            type="button"
-            data-testid="mobile-menu-open"
-            onClick={onOpenMenu}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 lg:hidden"
-          >
-            <Menu className="h-4 w-4" />
-          </button>
-          {showBusinessControl && (
-            <button
-              type="button"
-              onClick={onOpenBusiness}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 lg:hidden"
-              aria-label={t('businessTree.open')}
-            >
-              <GitBranch className="h-4 w-4" />
+    <header>
+      <div className="shell-topbar">
+        <div data-testid="workspace-breadcrumb" className="shell-breadcrumb">
+          <div className="lg:hidden">
+            <button type="button" data-testid="mobile-menu-open" onClick={onOpenMenu} disabled={navigating}
+              aria-label={t('nav.open')} title={t('nav.open')} aria-controls="workspace-navigation" aria-expanded={menuOpen} className="ui-icon-button">
+              <Menu size={18} />
             </button>
-          )}
-          <div className="min-w-0 text-xs font-semibold">
-            <span className="text-[#F6A66A]">{t('shell.breadcrumbRoot')}</span>
-            <span className="px-2 text-slate-500">/</span>
-            <span className="truncate text-slate-400">{activeTitle}</span>
           </div>
+          {showBusinessControl && <div className="lg:hidden"><button type="button" className="ui-icon-button" onClick={onOpenBusiness} aria-label={t('businessTree.open')}><GitBranch size={17} /></button></div>}
+          <span>{t('app.product')}</span><ChevronRight size={13} /><span title={activeTitle}>{activeTitle}</span>
         </div>
-
-        <div className="flex min-w-0 items-center justify-end gap-2">
-          <div className="hidden items-center gap-2 text-xs font-semibold text-slate-400 xl:flex">
-            <span>{t('shell.liveBounties', { count: activeWork })}</span>
-            <span className="text-slate-600">·</span>
-            <span>{t('shell.escrow', { amount: unexportedCost })}</span>
-            <span className="text-slate-600">·</span>
-            <span>{activeDomain}</span>
+        <button type="button" className="shell-search" onClick={onOpenSearch} aria-label={t('ui.search.placeholder')} title={t('ui.search.title') + ' · Ctrl+K'}>
+          <Search size={16} /><span>{t('ui.search.placeholder')}</span><kbd>Ctrl K</kbd>
+        </button>
+        <div data-testid="workspace-controls" className="shell-controls">
+          <div data-testid="session-scope" data-scope={sessionScope} className="shell-scope" title={accountTitle}>
+            {sessionScope === 'platform' ? <ShieldCheck size={14} /> : <Users size={14} />}
+            <span>{t(sessionScope === 'platform' ? 'scope.platform' : 'scope.tenant')}</span>
           </div>
-          <div
-            data-testid="session-scope"
-            data-scope={sessionScope}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-0 text-xs font-bold sm:w-auto sm:px-3 ${
-              sessionScope === 'platform'
-                ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
-                : 'border-emerald-500/35 bg-emerald-500/10 text-emerald-100'
-            }`}
-            title={t(sessionScope === 'platform' ? 'scope.platformHint' : 'scope.tenantHint')}
-          >
-            {sessionScope === 'platform' ? <ShieldCheck className="h-3.5 w-3.5" /> : <Users className="h-3.5 w-3.5" />}
-            <span className="hidden sm:inline">{t(sessionScope === 'platform' ? 'scope.platform' : 'scope.tenant')}</span>
+          <div className="shell-language">
+            <button type="button" onClick={() => setLocale('zh')} aria-pressed={locale === 'zh'}>中文</button>
+            <button type="button" onClick={() => setLocale('en')} aria-pressed={locale === 'en'}>EN</button>
           </div>
-          {!platformRole && organizations.length > 0 && (
-            <div className="hidden max-w-64 items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/40 px-2 text-xs font-semibold text-slate-400 md:flex">
-              <span>{t('organization.current')}</span>
-              <span className="truncate text-slate-100">
-                {organizations.find((organization) => organization.id === currentOrganizationID)?.name ?? organizations[0]?.name}
-              </span>
-            </div>
-          )}
-          {platformRole && <StatusPill label={platformRole} tone="green" />}
-          {userType && <StatusPill label={t(userType === 'ai' ? 'actor.ai' : 'actor.human')} tone="blue" />}
-          <button
-            type="button"
-            onClick={onResetLayout}
-            className="hidden h-9 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-bold text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200 lg:inline-flex"
-            aria-label={t('layout.resetWidths')}
-            title={t('layout.resetWidths')}
-          >
-            <SlidersHorizontal className="h-3.5 w-3.5" />
-            <span className="hidden 2xl:inline">{t('layout.resetWidths')}</span>
+          <button type="button" className="ui-icon-button" onClick={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
+            aria-label={t(themeMode === 'dark' ? 'ui.shell.themeLight' : 'ui.shell.themeDark')} title={t(themeMode === 'dark' ? 'ui.shell.themeLight' : 'ui.shell.themeDark')}>
+            {themeMode === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
           </button>
-          {overview && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              disabled={overviewLoading}
-              className="hidden h-9 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200 disabled:opacity-60 sm:inline-flex"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${overviewLoading ? 'animate-spin' : ''}`} />
-              {formatDate(overview.generated_at)}
-            </button>
-          )}
-          <a
-            href={projectGithubURL}
-            target="_blank"
-            rel="noreferrer"
-            aria-label={t('shell.githubLink')}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-bold text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200"
-          >
-            <Github className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">GitHub</span>
-          </a>
-          <div className="inline-flex h-9 items-center rounded-lg border border-slate-700 bg-slate-950/40 p-1">
-            <button
-              type="button"
-              onClick={() => setLocale('zh')}
-              className={`h-7 rounded-md px-2 text-xs font-bold transition ${
-                locale === 'zh' ? 'bg-slate-100 text-slate-950' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              中文
-            </button>
-            <button
-              type="button"
-              onClick={() => setLocale('en')}
-              className={`h-7 rounded-md px-2 text-xs font-bold transition ${
-                locale === 'en' ? 'bg-slate-100 text-slate-950' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              EN
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={() => setThemeMode(themeMode === 'dark' ? 'light' : 'dark')}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-700 px-3 text-xs font-bold uppercase text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200"
-          >
-            {themeMode === 'dark' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
-            <span className="hidden sm:inline">{themeMode === 'dark' ? t('shell.theme.dark') : t('shell.theme.light')}</span>
-          </button>
-          <button
-            type="button"
-            onClick={onOpenChangePassword}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200"
-            aria-label={t('account.changePassword')}
-            title={t('account.changePassword')}
-          >
-            <KeyRound className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-700 text-slate-300 transition hover:border-blue-400/60 hover:text-blue-200"
-          >
-            <LogOut className="h-4 w-4" />
-          </button>
+          <ActionMenu className="shell-account" label={t('ui.shell.account')} testId="account-menu"
+            icon={<span className="shell-avatar"><Users size={16} /></span>}
+            items={[
+              { id: 'password', label: t('account.changePassword'), icon: <KeyRound size={16} />, onSelect: onOpenChangePassword },
+              { id: 'refresh', label: t('common.refresh'), icon: <RefreshCw size={16} />, onSelect: onRefresh, disabled: overviewLoading },
+              { id: 'layout', label: t('layout.resetWidths'), icon: <SlidersHorizontal size={16} />, onSelect: onResetLayout },
+              { id: 'source', label: t('ui.shell.source'), icon: <Github size={16} />, onSelect: () => window.open(projectGithubURL, '_blank', 'noopener,noreferrer') },
+              { id: 'signout', label: t('common.signOut'), icon: <LogOut size={16} />, onSelect: onSignOut, danger: true },
+            ]}
+          />
         </div>
       </div>
     </header>
@@ -3203,18 +3040,8 @@ function Topbar({
 }
 
 function NavigationSidebar({
-  workspaceView,
-  groups,
-  expandedGroups,
-  onViewChange,
-  onToggleGroup,
-  onDragStart,
-  onDropDomain,
-  onReset,
-  currentSupplyChainFunctionID,
-  onSupplyChainFunctionChange,
-  currentTenantDocumentID,
-  onTenantDocumentSelect,
+  workspaceView, groups, expandedGroups, onViewChange, onToggleGroup, onDragStart, onDropDomain, onReset,
+  currentSupplyChainFunctionID, onSupplyChainFunctionChange, currentTenantDocumentID, onTenantDocumentSelect, onClose,
 }: {
   workspaceView: WorkspaceView
   groups: MenuGroup[]
@@ -3228,162 +3055,79 @@ function NavigationSidebar({
   onSupplyChainFunctionChange: (functionID: SupplyChainFunctionID) => void
   currentTenantDocumentID?: string | null
   onTenantDocumentSelect: (item: TenantDocumentMenuItem) => void
+  onClose: () => void
 }) {
   const { t } = useI18n()
+  const [query, setQuery] = useState('')
+  const search = query.toLocaleLowerCase().trim()
+  const matches = (value: string) => value.toLocaleLowerCase().includes(search)
+  const filteredGroups = groups.map((group) => ({
+    ...group,
+    domains: group.domains.filter((domain) => matches(t(domainLabels[domain] ?? domain)) || matches(domain)
+      || matches(t(`nav.group.${group.id}`)) || buildTenantDocumentMenuItems(domain).some((item) => matches(t(item.label)))),
+  })).filter((group) => group.domains.length > 0)
   return (
-    <aside className="studio-sidebar flex h-full min-h-screen flex-col px-3 py-4">
-      <div className="flex items-center gap-3 px-2 pb-6">
-        <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#DF6A24]/25 bg-[#DF6A24]/10">
-          <Sparkles className="h-6 w-6 text-[#F6A66A]" />
-        </div>
-        <div className="min-w-0">
-          <p className="text-xl font-extrabold leading-none tracking-normal text-white">META-ORG</p>
-          <p className="mt-1 text-[9px] font-bold uppercase tracking-[0.18em] text-[#F6A66A]">AI Operating System</p>
-        </div>
+    <aside className="studio-sidebar">
+      <div className="sidebar-brand">
+        <span className="sidebar-brand-mark"><Boxes size={23} strokeWidth={1.8} /></span>
+        <div className="min-w-0 flex-1"><strong>{t('app.product')}</strong><small>{t('ui.brand.tagline')}</small></div>
+        <div className="lg:hidden"><button type="button" className="ui-icon-button" onClick={onClose} aria-label={t('nav.close')}><X size={17} /></button></div>
       </div>
-
-      <div className="space-y-1">
-        <SidebarButton
-          active={workspaceView === 'overview'}
-          icon={HomeIcon}
-          label={t('nav.item.home')}
-          onClick={() => onViewChange('overview')}
-        />
-      </div>
-
-      <div className="mt-6 flex-1 space-y-5 overflow-y-auto pr-1">
-        {groups.map((group) => {
-          const expanded = expandedGroups[group.id] ?? true
-          const groupOperations = group.domains.reduce(
-            (sum, domain) => sum + apiOperations.filter((operation) => operation.domain === domain).length,
-            0,
-          )
-
-          return (
-            <div
-              key={group.id}
-              className="space-y-1"
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => onDropDomain(event, group.id)}
-            >
-              <button
-                type="button"
-                onClick={() => onToggleGroup(group.id)}
-                className="flex h-9 w-full items-center justify-between px-2 text-left text-base font-semibold tracking-normal text-slate-300"
-              >
-                <span className="inline-flex min-w-0 items-center gap-2">
-                  {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
-                  <span className="truncate">{t(`nav.group.${group.id}`)}</span>
-                </span>
-                <span className="text-xs font-bold text-slate-500">{groupOperations}</span>
-              </button>
-
-              {expanded && (
-                <div className="space-y-1">
-                  {group.domains.map((domain) => {
-                    const menuKey = `domain:${domain}` as const
-                    const count = apiOperations.filter((operation) => operation.domain === domain).length
-                    const Icon = domainIcons[domain] ?? FolderKanban
-                    const supplyChainFunctions = supplyChainFunctionsForDomain(domain)
-                    const firstSupplyChainFunction = supplyChainFunctions[0]
-                    const tenantDocuments = buildTenantDocumentMenuItems(domain)
-
-                    return (
-                      <div key={domain} className="space-y-1">
-                        <SidebarButton
-                          active={workspaceView === menuKey}
-                          icon={Icon}
-                          label={t(domainLabels[domain] ?? domain)}
-                          testId={`domain-nav-${domain}`}
-                          count={count}
-                          onClick={() => {
-                            if (tenantDocuments[0]) {
-                              onTenantDocumentSelect(tenantDocuments[0])
-                              return
-                            }
-                            if (firstSupplyChainFunction) {
-                              onSupplyChainFunctionChange(firstSupplyChainFunction.id)
-                              return
-                            }
-                            onViewChange(menuKey)
-                          }}
-                          draggable
-                          onDragStart={(event) => onDragStart(event, domain)}
-                        />
-                        {tenantDocuments.length > 0 && workspaceView === menuKey && (
-                          <div className="space-y-1 pl-7">
-                            {tenantDocuments.map((item) => (
-                              <button
-                                key={item.id}
-                                type="button"
-                                onClick={() => onTenantDocumentSelect(item)}
-                                className={`flex h-8 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs font-semibold transition ${
-                                  currentTenantDocumentID === item.documentID
-                                    ? 'border border-[#DF6A24]/35 bg-[#DF6A24]/10 text-white'
-                                    : 'border border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-950/40 hover:text-slate-200'
-                                }`}
-                              >
-                                <span className="truncate">{t(item.label)}</span>
-                                <span className="text-[10px] font-bold text-slate-500">{item.documentID}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {tenantDocuments.length === 0 && supplyChainFunctions.length > 0 && workspaceView === menuKey && (
-                          <div className="space-y-1 pl-7">
-                            {supplyChainFunctions.map((item) => (
-                              <button
-                                key={item.id}
-                                type="button"
-                                onClick={() => onSupplyChainFunctionChange(item.id)}
-                                className={`flex h-8 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs font-semibold transition ${
-                                  currentSupplyChainFunctionID === item.id
-                                    ? 'border border-[#DF6A24]/35 bg-[#DF6A24]/10 text-white'
-                                    : 'border border-transparent text-slate-400 hover:border-slate-700 hover:bg-slate-950/40 hover:text-slate-200'
-                                }`}
-                              >
-                                <span className="truncate">{t(item.label)}</span>
-                                <span className="text-[10px] font-bold text-slate-500">{item.targetTypes.length}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                  {group.domains.length === 0 && <p className="px-3 py-2 text-sm text-slate-500">{t('nav.empty')}</p>}
-                </div>
-              )}
-            </div>
-          )
+      <label className="sidebar-filter">
+        <Search size={15} className="shrink-0" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('ui.nav.search')} aria-label={t('ui.nav.search')} />
+      </label>
+      <SidebarButton active={workspaceView === 'overview'} icon={HomeIcon} label={t('ui.nav.home')} testId="workspace-home" onClick={() => onViewChange('overview')} />
+      <nav className="sidebar-groups" aria-label={t('ui.nav.label')}>
+        {filteredGroups.map((group) => {
+          const expanded = !!search || (expandedGroups[group.id] ?? true)
+          return <div key={group.id} className="sidebar-group" onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDropDomain(event, group.id)}>
+            <button type="button" className="sidebar-group-title" onClick={() => onToggleGroup(group.id)} aria-expanded={expanded}>
+              <span>{t(`nav.group.${group.id}`)}</span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+            {expanded && group.domains.map((domain) => {
+              const menuKey = `domain:${domain}` as const
+              const Icon = domainIcons[domain] ?? FolderKanban
+              const supplyChainFunctions = supplyChainFunctionsForDomain(domain)
+              const tenantDocuments = buildTenantDocumentMenuItems(domain)
+              const active = workspaceView === menuKey
+              const matchingDocuments = search && !matches(t(domainLabels[domain] ?? domain))
+                ? tenantDocuments.filter((item) => matches(t(item.label)))
+                : tenantDocuments
+              return <div key={domain}>
+                <SidebarButton active={active} icon={Icon} label={t(domainLabels[domain] ?? domain)} testId={`domain-nav-${domain}`}
+                  onClick={() => {
+                    if (tenantDocuments[0]) onTenantDocumentSelect(tenantDocuments[0])
+                    else if (supplyChainFunctions[0]) onSupplyChainFunctionChange(supplyChainFunctions[0].id)
+                    else onViewChange(menuKey)
+                  }}
+                  draggable onDragStart={(event) => onDragStart(event, domain)}
+                />
+                {tenantDocuments.length > 0 && (active || search) && <div className="sidebar-submenu">
+                  {matchingDocuments.map((item) => <button key={item.id} type="button" data-testid={`tenant-document-${item.id}`}
+                    aria-current={active && currentTenantDocumentID === item.documentID ? 'page' : undefined} onClick={() => onTenantDocumentSelect(item)}>
+                    <span className="truncate">{t(item.label)}</span>
+                  </button>)}
+                </div>}
+                {tenantDocuments.length === 0 && supplyChainFunctions.length > 0 && active && <div className="sidebar-submenu">
+                  {supplyChainFunctions.map((item) => <button key={item.id} type="button" aria-current={currentSupplyChainFunctionID === item.id ? 'page' : undefined} onClick={() => onSupplyChainFunctionChange(item.id)}>
+                    <span className="truncate">{t(item.label)}</span>
+                  </button>)}
+                </div>}
+              </div>
+            })}
+          </div>
         })}
-      </div>
-
-      <div className="mt-5 border-t border-slate-800 pt-3">
-        <button
-          type="button"
-          onClick={onReset}
-          className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-slate-800 text-xs font-bold text-slate-400 transition hover:border-blue-400/50 hover:text-blue-200"
-        >
-          <SlidersHorizontal className="h-3.5 w-3.5" />
-          {t('nav.reset')}
-        </button>
-      </div>
+        {filteredGroups.length === 0 && <p className="px-3 py-5 text-xs ui-muted">{t('ui.nav.noResults')}</p>}
+      </nav>
+      {!groups.some((group) => group.id === 'platformAdmin') && <div className="sidebar-footer">
+        <button type="button" onClick={onReset} className="ui-button ui-button-ghost"><SlidersHorizontal size={15} />{t('ui.nav.reset')}</button>
+      </div>}
     </aside>
   )
 }
 
-function SidebarButton({
-  active,
-  icon: Icon,
-  label,
-  badge,
-  count,
-  onClick,
-  testId,
-  draggable,
-  onDragStart,
-}: {
+function SidebarButton({ active, icon: Icon, label, onClick, testId, draggable, onDragStart }: {
   active: boolean
   icon: typeof Gauge
   label: string
@@ -3395,27 +3139,9 @@ function SidebarButton({
   onDragStart?: (event: DragEvent<HTMLButtonElement>) => void
 }) {
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      draggable={draggable}
-      onDragStart={onDragStart}
-      onClick={onClick}
-      className={`studio-nav-item flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-transparent px-3 text-left text-sm font-semibold transition ${
-        active ? 'studio-nav-item-active' : ''
-      }`}
-    >
-      <span className="inline-flex min-w-0 items-center gap-3">
-        <Icon className={`h-4 w-4 shrink-0 ${active ? 'text-[#F6A66A]' : 'text-slate-500'}`} />
-        <span className="truncate">{label}</span>
-      </span>
-      {badge ? (
-        <span className="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-          {badge}
-        </span>
-      ) : count !== undefined ? (
-        <span className="text-[11px] text-slate-500">{count}</span>
-      ) : null}
+    <button type="button" data-testid={testId} draggable={draggable} onDragStart={onDragStart} onClick={onClick}
+      aria-current={active ? 'page' : undefined} className={`studio-nav-item ${active ? 'studio-nav-item-active' : ''}`}>
+      <span className="inline-flex min-w-0 items-center gap-3"><Icon size={17} className="shrink-0" strokeWidth={1.7} /><span className="truncate">{label}</span></span>
     </button>
   )
 }
@@ -3609,17 +3335,7 @@ function BusinessTreeNodeButton({
   )
 }
 
-function WorkspaceHeader({
-  title,
-  domain,
-  groupLabel,
-  selection,
-  operationCount,
-  operations,
-  dedicated,
-  onOperationSelect,
-  onAssistantOpen,
-}: {
+function WorkspaceHeader({ title, groupLabel, selection, operations, dedicated, onOperationSelect, onAssistantOpen }: {
   title: string
   domain: string
   groupLabel: string
@@ -3631,84 +3347,17 @@ function WorkspaceHeader({
   onAssistantOpen: () => void
 }) {
   const { t } = useI18n()
-  const [moreOpen, setMoreOpen] = useState(false)
-  const prioritizedOperations = [...operations].sort((left, right) => {
-    const order = { direct: 0, contextual: 1, agent_assisted: 2, admin: 3 }
-    return order[getOperationProfile(left).kind] - order[getOperationProfile(right).kind]
-  })
-  const primaryOperations = prioritizedOperations.slice(0, 4)
-  const overflowOperations = prioritizedOperations.slice(4)
   return (
-    <section className="studio-panel rounded-lg p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">{t(groupLabel)}</p>
-          <h2 className="mt-1 truncate text-xl font-semibold text-white">{t(title)}</h2>
-          {selection?.description && <p className="mt-1 truncate text-sm text-slate-400">{t(selection.description)}</p>}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="studio-badge inline-flex h-8 items-center rounded-md px-2.5 text-xs font-semibold">
-            {domain}
-          </span>
-          {operationCount > 0 && (
-            <span className="inline-flex h-8 items-center rounded-md border border-slate-700 bg-slate-950/30 px-2.5 text-xs font-semibold text-slate-300">
-              {operationCount} {t('agent.actions')}
-            </span>
-          )}
-          <span
-            className={`inline-flex h-8 items-center rounded-md border px-2.5 text-xs font-semibold ${
-              dedicated
-                ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-300'
-                : 'border-[#DF6A24]/25 bg-[#DF6A24]/10 text-[#F6A66A]'
-            }`}
-          >
-            {dedicated ? t('workspace.workspace') : t('workspace.api')}
-          </span>
-          {primaryOperations.map((operation) => (
-            <OperationButton key={operation.id} operation={operation} onClick={() => onOperationSelect(operation)} />
-          ))}
-          {overflowOperations.length > 0 && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setMoreOpen((current) => !current)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-700 bg-slate-950/30 px-2.5 text-xs font-semibold text-slate-200 transition hover:border-[#DF6A24]/50 hover:text-[#F6A66A]"
-              >
-                <MoreHorizontal className="h-3.5 w-3.5" />
-                {t('operation.more')}
-              </button>
-              {moreOpen && (
-                <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-slate-700 bg-slate-950 p-2 shadow-xl">
-                  {overflowOperations.map((operation) => (
-                    <button
-                      key={operation.id}
-                      type="button"
-                      onClick={() => {
-                        setMoreOpen(false)
-                        onOperationSelect(operation)
-                      }}
-                      className="flex h-10 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs font-semibold text-slate-300 transition hover:bg-[#DF6A24]/10 hover:text-[#F6A66A]"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate">{t(operation.title)}</span>
-                        <span className="block truncate text-[10px] font-medium text-slate-500">{t(`operation.kind.${getOperationProfile(operation).kind}`)}</span>
-                      </span>
-                      <span className="text-[10px] text-slate-500">{t('agent.delegate')}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={onAssistantOpen}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#AD4714] px-2.5 text-xs font-bold text-[#fffaf5] transition hover:bg-[#B84F18]"
-          >
-            <Bot className="h-3.5 w-3.5" />
-            {t('assistant.title')}
-          </button>
-        </div>
+    <section className="workspace-page-header">
+      <div className="min-w-0">
+        {t(groupLabel) !== t(title) && <p className="ui-eyebrow">{t(groupLabel)}</p>}
+        <h1>{t(title)}</h1>
+        {selection?.description && <p>{t(selection.description)}</p>}
+      </div>
+      <div className="workspace-header-actions">
+        {!dedicated && operations.length > 0 && <ActionMenu label={t('agent.delegate')} icon={<MoreHorizontal size={16} />}
+          items={operations.map((operation) => ({ id: operation.id, label: t(operation.title), onSelect: () => onOperationSelect(operation) }))} />}
+        <button type="button" onClick={onAssistantOpen} className="ui-button ui-button-secondary"><Bot size={17} />{t('assistant.title')}</button>
       </div>
     </section>
   )
@@ -3903,35 +3552,12 @@ function AgentOnlyWorkspace({ domain, onAssistantOpen }: { domain: string; onAss
 }
 
 function OverviewAssistantHome({
-  overview,
-  inbox,
-  healthRatio,
-  businessFunctions,
-  selectedFunctionID,
-  onSelectFunction,
-  models,
-  selectedModelID,
-  selectedModel,
-  onModelChange,
-  skills,
-  selectedSkillID,
-  selectedSkill,
-  onSkillChange,
-  onImportSkill,
-  controlsLoading,
-  controlNotice,
-  controlError,
-  prompt,
-  onPromptChange,
-  onSubmitPrompt,
-  onQuickPrompt,
-  onOpenAssistant,
-  onReviewApproval,
-  apiScope,
+  overview, inbox, businessFunctions, selectedFunctionID, onSelectFunction, models, selectedModelID,
+  onModelChange, skills, selectedSkillID, onSkillChange, onImportSkill, controlsLoading, controlNotice, controlError,
+  prompt, onPromptChange, onSubmitPrompt, onOpenAssistant, onReviewApproval, onNavigate, apiScope,
 }: {
   overview: MetaOrgOverview
   inbox: InboxItem[]
-  healthRatio: number
   businessFunctions: OverviewBusinessFunction[]
   selectedFunctionID: string
   onSelectFunction: (functionID: string) => void
@@ -3952,216 +3578,175 @@ function OverviewAssistantHome({
   onSubmitPrompt: () => void
   onQuickPrompt: (intent: string) => void
   onOpenAssistant: () => void
-  onReviewApproval: (id: string, decision: 'approve' | 'reject') => void
+  onReviewApproval: (id: string, decision: 'approve' | 'reject', reason?: string) => Promise<void>
+  onNavigate: (view: WorkspaceView) => void
   apiScope: 'tenant' | 'platform'
 }) {
-  const { t } = useI18n()
-  const modes = [
-    ['overview.mode.code', 'overview.mode.codeIntent', Code2],
-    ['overview.mode.office', 'overview.mode.officeIntent', BriefcaseBusiness],
-    ['overview.mode.design', 'overview.mode.designIntent', Sparkles],
-  ] as const
-  const pendingInbox = inbox.slice(0, 3)
-  const selectedBusinessFunction = businessFunctions.find((item) => item.id === selectedFunctionID) ?? businessFunctions[0]
+  const { t, locale } = useI18n()
+  const [inboxFilter, setInboxFilter] = useState<'all' | 'approvals' | 'other'>('all')
+  const [reviewRequest, setReviewRequest] = useState<InboxItem | null>(null)
+  const [reviewReason, setReviewReason] = useState('')
+  const [reviewError, setReviewError] = useState('')
+  const [reviewing, setReviewing] = useState(false)
+  const approvals = inbox.filter((item) => item.type === 'tool_approval' && item.status === 'pending')
+  const otherItems = inbox.filter((item) => item.type !== 'tool_approval')
+  const visibleInbox = inboxFilter === 'all' ? inbox : inboxFilter === 'approvals' ? approvals : otherItems
+  const contextFunctions = apiScope === 'platform' ? businessFunctions.filter((item) => item.id === 'meta_org') : businessFunctions
+  const shortcuts = apiScope === 'platform'
+    ? [
+      ['PlatformAdmin:saas', 'saas'], ['PlatformAdmin:users', 'users'], ['PlatformAdmin:models', 'models'],
+      ['PlatformAdmin:permissions', 'permissions'], ['PlatformAdmin:industry', 'industry'], ['PlatformAdmin:monitoring', 'monitoring'],
+    ]
+    : [
+      ['Project', 'project'], ['Procurement', 'procurement'], ['Sales', 'sales'],
+      ['Inventory', 'inventory'], ['FinanceAccounting', 'finance'], ['Organization', 'organization'],
+    ]
+  const formatLocalDate = (value: string, full = false) => {
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return '—'
+    return new Intl.DateTimeFormat(locale === 'zh' ? 'zh-CN' : 'en-US', full
+      ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+      : { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' }).format(date)
+  }
+  const activityTitle = (event: MetaOrgOverview['activity'][number]) => {
+    if (event.type === 'tool_execution') return t('ui.home.toolActivity')
+    if (event.type === 'ai_invocation') return t(event.title.startsWith('business_stage_ai ') ? 'ui.home.projectAnalysis' : 'ui.home.modelActivity')
+    return event.title
+  }
+
+  async function review(decision: 'approve' | 'reject') {
+    if (!reviewRequest || reviewing) return
+    setReviewing(true)
+    setReviewError('')
+    try {
+      await onReviewApproval(reviewRequest.id, decision, reviewReason.trim())
+      setReviewRequest(null)
+      setReviewReason('')
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : t('common.operationFailed'))
+    } finally {
+      setReviewing(false)
+    }
+  }
 
   return (
-    <div className="overview-assistant-home space-y-5">
-      <section className="space-y-5">
-        <div className="flex items-center gap-4 border-b border-slate-800 pb-5">
-          <div className="relative shrink-0">
-            <div className="flex h-14 w-14 items-center justify-center rounded-lg border border-slate-800 bg-slate-950/45">
-              <Bot className="h-7 w-7 text-slate-300" />
-            </div>
-            <button
-              type="button"
-              onClick={onOpenAssistant}
-              aria-label={t('assistant.title')}
-              className="absolute -bottom-1 -right-1 inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-700 bg-slate-900 text-slate-300 transition hover:border-[#DF6A24]/50 hover:text-[#F6A66A]"
-            >
-              <Sparkles className="h-3 w-3" />
-            </button>
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-bold text-white sm:text-2xl">{t('overview.workspaceTitle')}</h1>
-            <p className="mt-1 max-w-3xl text-sm leading-5 text-slate-400">{t('overview.workspaceSubtitle')}</p>
-          </div>
-        </div>
-
-        <div className="inline-flex max-w-full items-center gap-1 self-start rounded-lg bg-slate-200/10 p-1">
-          {modes.map(([label, intent, Icon], index) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => onQuickPrompt(t(intent))}
-              className={`inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-bold transition ${
-                index === 1 ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-300 hover:bg-slate-900/70 hover:text-white'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              {t(label)}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-slate-800 bg-slate-950/25 sm:grid-cols-4">
-          {[
-            [t('meta.activeProjects'), formatNumber(overview.health.active_projects)],
-            [t('meta.pendingWork'), formatNumber(inbox.length)],
-            [t('meta.activeAgents'), `${formatNumber(overview.agents.active)} / ${formatNumber(overview.agents.total)}`],
-            [t('overview.operationalHealth'), formatPercent(healthRatio)],
-          ].map(([label, value]) => (
-            <div key={label} className="border-b border-r border-slate-800 px-4 py-3 last:border-r-0 sm:border-b-0">
-              <p className="text-[11px] font-semibold text-slate-500">{label}</p>
-              <p className="mt-1 text-lg font-bold text-slate-100">{value}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="w-full">
-          <div className="mb-3 flex gap-2 overflow-x-auto pb-2">
-            {businessFunctions.map((item) => {
-              const Icon = item.icon
-              const selected = item.id === selectedFunctionID
-              return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onSelectFunction(item.id)}
-                title={t(item.intentKey)}
-                className={`inline-flex h-9 shrink-0 items-center gap-2 rounded-md border px-3 text-sm font-semibold transition ${
-                  selected ? 'border-[#DF6A24]/60 bg-[#DF6A24]/15 text-white' : 'border-slate-800 bg-slate-950/35 text-slate-300 hover:border-slate-700 hover:text-white'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {t(item.label)}
-              </button>
-              )
-            })}
-          </div>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              onSubmitPrompt()
-            }}
-            className="rounded-lg border border-slate-800 bg-[#17181d] p-3 text-left"
-          >
-            <textarea
-              value={prompt}
-              onChange={(event) => onPromptChange(event.target.value)}
-              placeholder={t('overview.promptPlaceholder')}
-              className="min-h-16 w-full resize-none border-0 bg-transparent px-2 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500"
-            />
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-1 pt-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <label className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-700 bg-slate-950/45 px-3 text-xs font-semibold text-slate-300">
-                  <span>{t('overview.model')}</span>
-                  <select
-                    value={selectedModelID}
-                    onChange={(event) => onModelChange(event.target.value)}
-                    className="max-w-[190px] bg-transparent text-sm font-semibold text-slate-100 outline-none"
-                    aria-label={t('overview.model')}
-                  >
-                    {models.length === 0 ? (
-                      <option value="">{t('overview.noModels')}</option>
-                    ) : (
-                      models.map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.display_name || model.model_key}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                </label>
-                <label className="inline-flex h-9 items-center gap-2 rounded-full border border-slate-700 bg-slate-950/45 px-3 text-xs font-semibold text-slate-300">
-                  <span>{t('overview.technique')}</span>
-                  <select
-                    value={selectedSkillID}
-                    onChange={(event) => {
-                      if (event.target.value === '__import__') {
-                        onImportSkill()
-                        return
-                      }
-                      onSkillChange(event.target.value)
-                    }}
-                    className="max-w-[190px] bg-transparent text-sm font-semibold text-slate-100 outline-none"
-                    aria-label={t('overview.technique')}
-                  >
-                    <option value="">{controlsLoading ? t('common.loading') : t('overview.noSkills')}</option>
-                    {skills.map((skill) => (
-                      <option key={skill.id} value={skill.id}>
-                        {skill.name} · {t(skill.status)}
-                      </option>
-                    ))}
-                    <option value="__import__">{t('overview.importSkill')}</option>
-                  </select>
-                </label>
-                <StatusPill label={formatMoney(overview.health.unexported_cost, overview.health.currency)} tone="amber" />
-              </div>
-              <button
-                type="submit"
-                disabled={!prompt.trim()}
-                className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-full bg-[#AD4714] text-[#fffaf5] transition hover:bg-[#B84F18] disabled:cursor-not-allowed disabled:opacity-45"
-                aria-label={t('overview.send')}
-              >
-                <Send className="h-4 w-4" />
-              </button>
-            </div>
-          </form>
-          <div className="mt-2 flex flex-wrap gap-2 text-xs">
-            <StatusPill label={`${t('overview.business.currentContext')}: ${selectedBusinessFunction ? t(selectedBusinessFunction.label) : t('common.none')}`} tone="blue" />
-            {selectedModel && <StatusPill label={selectedModel.display_name || selectedModel.model_key} tone="green" />}
-            {selectedSkill && <StatusPill label={selectedSkill.name} tone="amber" />}
-            {(controlNotice || controlError) && (
-              <span className={`inline-flex min-h-7 items-center rounded-full px-3 font-semibold ${controlError ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                {controlError || controlNotice}
-              </span>
-            )}
-          </div>
-        </div>
+    <div className="overview-assistant-home" data-testid="employee-home">
+      <div className="workspace-page-header">
+        <div><h1>{t(apiScope === 'platform' ? 'ui.home.platformTitle' : 'ui.home.title')}</h1><p>{t(apiScope === 'platform' ? 'ui.home.platformSubtitle' : 'ui.home.subtitle')}</p></div>
+        <time dateTime={overview.generated_at} className="home-date"><CalendarDays size={15} />{formatLocalDate(overview.generated_at)}</time>
+      </div>
+      <section className="home-metrics" aria-label={t('nav.overview')}>
+        {[
+          { label: 'ui.home.activeWork', value: formatNumber(overview.health.active_projects), hint: 'ui.home.activeWorkHint', icon: FolderKanban, tone: '' },
+          { label: 'ui.home.pendingCount', value: formatNumber(inbox.length), hint: 'ui.home.pendingCountHint', icon: ClipboardCheck, tone: 'amber' },
+          { label: 'ui.home.agents', value: `${formatNumber(overview.agents.active)} / ${formatNumber(overview.agents.total)}`, hint: 'ui.home.agentsHint', icon: Bot, tone: '' },
+          { label: 'ui.home.openRequirements', value: formatNumber(overview.health.open_requirements), hint: 'ui.home.openRequirementsHint', icon: BriefcaseBusiness, tone: 'green' },
+        ].map(({ label, value, hint, icon: Icon, tone }) => <div className="ui-card home-metric" key={label}>
+          <div className="min-w-0"><p className="home-metric-label">{t(label)}</p><strong className="home-metric-value">{value}</strong><p className="home-metric-hint">{t(hint)}</p></div>
+          <span className={`home-metric-icon ${tone}`}><Icon size={19} strokeWidth={1.8} /></span>
+        </div>)}
       </section>
-
-      {pendingInbox.length > 0 && (
-        <section className="w-full rounded-lg border border-slate-800 bg-slate-950/25 p-3">
-          <div className="flex items-center justify-between gap-3 px-1">
-            <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">{t('overview.pending')}</p>
-            <StatusPill label={formatNumber(inbox.length)} tone="blue" />
+      <div className="home-grid">
+        <section className="ui-card" id="workspace-inbox">
+          <div className="home-card-header">
+            <div><h2><ClipboardCheck size={18} />{t('ui.home.pending')}</h2><p>{t('ui.home.pendingHint')}</p></div>
+            <StatusBadge tone={inbox.length ? 'amber' : 'neutral'}>{formatNumber(inbox.length)}</StatusBadge>
           </div>
-          <div className="mt-2 divide-y divide-slate-800">
-            {pendingInbox.map((item) => (
-              <div key={`${item.type}-${item.id}`} className="grid gap-2 py-3 sm:grid-cols-[1fr_auto]">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-100">{item.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {item.type} · {item.source || t('common.none')} · {formatDate(item.created_at)}
-                  </p>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <StatusPill label={item.priority} tone={item.priority === 'high' || item.priority === 'critical' ? 'amber' : 'blue'} />
-                  <StatusPill label={item.status} tone="green" />
-                  {item.type === 'tool_approval' && item.status === 'pending' && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => onReviewApproval(item.id, 'approve')}
-                        className="inline-flex h-7 items-center rounded-md bg-emerald-600 px-2.5 text-xs font-semibold text-white transition hover:bg-emerald-700"
-                      >
-                        {t('agent.approve')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onReviewApproval(item.id, 'reject')}
-                        className="inline-flex h-7 items-center rounded-md border border-red-500/30 bg-red-500/10 px-2.5 text-xs font-semibold text-red-200 transition hover:bg-red-500/20"
-                      >
-                        {t('agent.reject')}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="home-inbox-tabs" role="tablist" aria-label={t('ui.home.pending')} onKeyDown={(event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            event.preventDefault()
+            const tabs = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+            const current = tabs.indexOf(document.activeElement as HTMLButtonElement)
+            const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+            tabs[next]?.click()
+            tabs[next]?.focus()
+          }}>
+            {(['all', 'approvals', 'other'] as const).map((filter) => <button type="button" key={filter} role="tab" id={`inbox-tab-${filter}`} aria-controls="inbox-panel" aria-selected={inboxFilter === filter} tabIndex={inboxFilter === filter ? 0 : -1} onClick={() => setInboxFilter(filter)}>
+              {t('ui.home.' + filter)}<small>{filter === 'all' ? inbox.length : filter === 'approvals' ? approvals.length : otherItems.length}</small>
+            </button>)}
+          </div>
+          <div className="home-inbox-list" id="inbox-panel" role="tabpanel" aria-labelledby={`inbox-tab-${inboxFilter}`}>
+            {visibleInbox.map((item) => <div key={item.type + item.id} className="home-inbox-row">
+              <span className="home-inbox-row-icon">{item.type === 'tool_approval' ? <ClipboardCheck size={17} /> : <FileText size={17} />}</span>
+              <div className="min-w-0 flex-1"><h3 title={item.title}>{item.title}</h3><p>{t(item.type === 'tool_approval' ? 'ui.home.approval' : 'ui.home.task')} · {formatLocalDate(item.created_at, true)}</p></div>
+              <button type="button" className="ui-button ui-button-link" onClick={() => { setReviewError(''); setReviewReason(''); setReviewRequest(item) }}>{t('ui.home.review')}<ArrowRight size={14} /></button>
+            </div>)}
+            {visibleInbox.length === 0 && <div className="ui-empty"><CheckCircle2 size={25} /><strong>{t('ui.home.empty')}</strong><p>{t('ui.home.emptyHint')}</p></div>}
           </div>
         </section>
-      )}
+        <section className="ui-card">
+          <div className="home-card-header"><div><h2><Boxes size={18} />{t('ui.home.quickAccess')}</h2><p>{t('ui.home.quickAccessHint')}</p></div></div>
+          <div className="home-shortcuts">
+            {shortcuts.map(([domain, hint]) => {
+              const Icon = domainIcons[domain] ?? FolderKanban
+              return <button type="button" key={domain} data-testid={`quick-access-${domain}`} onClick={() => onNavigate(`domain:${domain}`)}>
+                <span className="home-shortcut-icon"><Icon size={19} strokeWidth={1.7} /></span>
+                <span className="min-w-0"><strong>{t(domainLabels[domain] ?? domain)}</strong><small>{t('ui.quick.' + hint)}</small></span>
+              </button>
+            })}
+          </div>
+        </section>
+      </div>
+      <div className="home-grid">
+        <section className="ui-card home-assistant">
+          <div className="home-card-header">
+            <div><h2><Sparkles size={18} />{t('ui.assistant.title')}</h2><p>{t('ui.assistant.subtitle')}</p></div>
+            <button type="button" className="ui-icon-button" onClick={onOpenAssistant} aria-label={t('assistant.title')} title={t('assistant.title')}><ArrowRight size={16} /></button>
+          </div>
+          <form className="home-assistant-form" onSubmit={(event) => { event.preventDefault(); onSubmitPrompt() }}>
+            <textarea aria-label={t('ui.assistant.placeholder')} value={prompt} onChange={(event) => onPromptChange(event.target.value)} placeholder={t('ui.assistant.placeholder')} />
+            <div className="home-assistant-toolbar">
+              <label><span>{t('ui.assistant.context')}</span><select value={selectedFunctionID} onChange={(event) => onSelectFunction(event.target.value)} aria-label={t('ui.assistant.context')}>
+                {contextFunctions.map((item) => <option key={item.id} value={item.id}>{t(item.label)}</option>)}
+              </select></label>
+              <button type="submit" className="ui-button ui-button-primary" disabled={!prompt.trim()}><Send size={15} />{t('ui.assistant.start')}</button>
+            </div>
+          </form>
+          <details className="home-assistant-settings">
+            <summary>{t('ui.assistant.settings')}</summary>
+            <div className="home-assistant-settings-grid">
+              <label className="ui-field"><span className="ui-field-label">{t('overview.model')}</span>
+                <select className="ui-select" value={selectedModelID} onChange={(event) => onModelChange(event.target.value)}>
+                  {models.length === 0 ? <option value="">{t('overview.noModels')}</option> : models.map((model) => <option key={model.id} value={model.id}>{model.display_name || model.model_key}</option>)}
+                </select>
+              </label>
+              <label className="ui-field"><span className="ui-field-label">{t('overview.technique')}</span>
+                <select className="ui-select" value={selectedSkillID} onChange={(event) => event.target.value === '__import__' ? onImportSkill() : onSkillChange(event.target.value)}>
+                  <option value="">{controlsLoading ? t('common.loading') : t('overview.noSkills')}</option>
+                  {skills.map((skill) => <option key={skill.id} value={skill.id}>{skill.name}</option>)}
+                  <option value="__import__">{t('overview.importSkill')}</option>
+                </select>
+              </label>
+            </div>
+          </details>
+          {(controlError || controlNotice) && <div className="mx-5 mb-5"><FeedbackMessage error={!!controlError}>{controlError || controlNotice}</FeedbackMessage></div>}
+        </section>
+        <section className="ui-card">
+          <div className="home-card-header"><div><h2><Activity size={18} />{t('ui.home.activity')}</h2><p>{t('ui.home.activityHint')}</p></div></div>
+          {overview.activity.length > 0 ? <ol className="home-activity">
+            {overview.activity.slice(0, 4).map((event) => <li key={event.id}>{activityTitle(event)}<small>{formatLocalDate(event.created_at, true)}</small></li>)}
+          </ol> : <div className="ui-empty"><Activity size={23} /><p>{t('ui.home.noActivity')}</p></div>}
+        </section>
+      </div>
+      <Dialog open={!!reviewRequest} title={t('ui.home.reviewTitle')} description={reviewRequest?.type === 'tool_approval' ? t('ui.home.reviewHint') : undefined} busy={reviewing} onClose={() => setReviewRequest(null)}
+        footer={reviewRequest?.type === 'tool_approval' && reviewRequest.status === 'pending' ? <>
+          <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel disabled={reviewing} onClick={() => setReviewRequest(null)}>{t('common.cancel')}</button>
+          <button type="button" className="ui-button ui-button-secondary" disabled={reviewing} onClick={() => void review('reject')}>{t('ui.home.reject')}</button>
+          <button type="button" className="ui-button ui-button-primary" disabled={reviewing} onClick={() => void review('approve')}><CheckCircle2 size={16} />{t(reviewing ? 'ui.document.processing' : 'ui.home.approve')}</button>
+        </> : <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel onClick={() => setReviewRequest(null)}>{t('common.close')}</button>}>
+        {reviewRequest && <>
+          <div className="ui-dialog-context"><ClipboardCheck size={22} /><div><strong>{reviewRequest.title}</strong><small>{t(reviewRequest.type === 'tool_approval' ? 'ui.home.approval' : 'ui.home.task')}</small></div></div>
+          <dl className="document-action-summary">
+            <div><dt>{t('ui.home.source')}</dt><dd>{reviewRequest.source || '—'}</dd></div>
+            <div><dt>{t('ui.home.createdAt')}</dt><dd>{formatLocalDate(reviewRequest.created_at, true)}</dd></div>
+            <div><dt>{t('ui.home.requestStatus')}</dt><dd><StatusBadge tone="amber">{t('ui.status.' + (['pending', 'completed', 'failed', 'approved', 'closed'].includes(reviewRequest.status) ? reviewRequest.status : 'pending'))}</StatusBadge></dd></div>
+          </dl>
+          {reviewRequest.type === 'tool_approval' && reviewRequest.status === 'pending' && <label className="ui-field">
+            <span className="ui-field-label">{t('ui.home.reviewReason')}</span><textarea className="ui-input min-h-24" value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} placeholder={t('ui.home.reviewReasonPlaceholder')} disabled={reviewing} />
+          </label>}
+          {reviewError && <FeedbackMessage error>{reviewError}</FeedbackMessage>}
+        </>}
+      </Dialog>
     </div>
   )
 }

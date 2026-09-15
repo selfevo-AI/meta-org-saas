@@ -724,13 +724,21 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 	}
 	toolDefinitions := []map[string]any{
 		{
+			"tool_key":    "ontology.action.execute",
+			"entrypoint":  "/ontology/objects/{object_type}/{key}/actions/{action}",
+			"policy":      "toolruntime.mandatory_reviewer_approval",
+			"permissions": []string{"erp:action"},
+			"observed_by": []string{"tool_execution", "erp_action", "audit_log"},
+			"risk_level":  "high",
+		},
+		{
 			"tool_key":    "erp.action.execute",
 			"entrypoint":  "/erp/{tableCode}/{key}/actions/{action}",
-			"policy":      "toolruntime.approval_required_for_high_risk",
+			"policy":      "toolruntime.mandatory_reviewer_approval",
 			"permissions": []string{"erp:action"},
 			"observed_by": []string{"tool_execution", "erp_action", "audit_log"},
 			"idempotency": "table_code:key:action",
-			"risk_level":  "medium",
+			"risk_level":  "high",
 		},
 		{
 			"tool_key":    "industry.solution.change.preview",
@@ -754,25 +762,18 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 			"risk_level":  "high",
 		},
 	}
-	for _, action := range actions {
-		entrypoint := fmt.Sprintf("/erp/%s/{key}/actions/%s", action.TableCode, action.Action)
-		policy := "erp_action_state_gate"
-		riskLevel := "medium"
-		if action.TableCode == "MGLR" && action.Action == "run" {
-			entrypoint = "/finance/gl/trial-balance"
-			policy = "erp_report_read"
-			riskLevel = "low"
-		}
+	for _, query := range []struct{ name, path string }{
+		{"ontology.types.list", "/ontology/types"},
+		{"ontology.objects.query", "/ontology/objects/{object_type}"},
+		{"ontology.objects.get", "/ontology/objects/{object_type}/{key}"},
+		{"ontology.objects.links", "/ontology/objects/{object_type}/{key}/links"},
+	} {
 		toolDefinitions = append(toolDefinitions, map[string]any{
-			"tool_key":    fmt.Sprintf("erp.%s.%s", strings.ToLower(action.TableCode), action.Action),
-			"table_code":  action.TableCode,
-			"action":      action.Action,
-			"entrypoint":  entrypoint,
-			"policy":      policy,
-			"permissions": []string{"erp:action"},
-			"idempotency": fmt.Sprintf("%s:key:%s", action.TableCode, action.Action),
-			"next_tables": action.NextTables,
-			"risk_level":  riskLevel,
+			"tool_key":    query.name,
+			"entrypoint":  query.path,
+			"policy":      "tenant_scoped_read",
+			"permissions": []string{"erp:read"},
+			"risk_level":  "low",
 		})
 	}
 	return IndustrySolutionManifest{
@@ -800,8 +801,8 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 				"business_functions": businessFunctions,
 				"process_loops": []map[string]any{
 					{"key": "requirement_to_project", "steps": []string{"MREQ.analyze", "MREQ.approve", "MREQ.convert-to-project", "MPRJ.refresh-cost", "MPRJ.close-feedback"}},
-					{"key": "procure_to_pay", "steps": []string{"MPOR.submit", "MPOR.approve", "MPDN.post", "MPCH"}},
-					{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
+					{"key": "procure_to_pay", "steps": []string{"MPOR.submit", "MPOR.approve", "MPOR.receive", "MPDN.approve", "MPDN.post", "MPCH.post", "MVPM.allocate"}},
+					{"key": "order_to_cash", "steps": []string{"MRDR.confirm", "MRDR.approve", "MRDR.deliver", "MDLN.approve", "MDLN.post", "MINV.post", "MRCT.allocate"}},
 					{"key": "inventory_to_finance", "steps": []string{"MIGN.post", "MIGE.post", "MJDT.post"}},
 					{"key": "finance_close", "steps": []string{"MACT", "MPRC", "MJDT.post", "MGLR.run"}},
 				},
@@ -814,7 +815,7 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 					{
 						"key":                  "erp_document_state_context",
 						"scope":                "erp",
-						"source_tables":        []string{"MREQ", "MPRJ", "MPOR", "MPDN", "MRDR", "MDLN", "MINV", "MRCT", "MIGN", "MIGE", "MACT", "MPRC", "MJDT", "MGLR"},
+						"source_tables":        []string{"MREQ", "MPRJ", "MPOR", "MPDN", "MPCH", "MVPM", "MRDR", "MDLN", "MINV", "MRCT", "MIGN", "MIGE", "MACT", "MPRC", "MJDT", "MGLR"},
 						"required_permissions": []string{"erp:read"},
 						"workflow_stages":      []string{"draft", "submitted", "approved", "posted", "closed"},
 						"attention_budget":     "document_timeline",
@@ -822,7 +823,7 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 					{
 						"key":                  "erp_finance_validation_context",
 						"scope":                "finance",
-						"source_tables":        []string{"MCST", "MINV", "MPCH", "MRCT", "MACT", "MPRC", "MJDT", "MGLR"},
+						"source_tables":        []string{"MCST", "MINV", "MPCH", "MRCT", "MVPM", "MACT", "MPRC", "MJDT", "MGLR"},
 						"required_permissions": []string{"erp:read", "assistant:erp"},
 						"workflow_stages":      []string{"cost_refresh", "invoice_posting", "payment_allocation", "journal_posting", "trial_balance"},
 						"attention_budget":     "finance_close",
@@ -842,25 +843,25 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 						"skill_key":     "erp_requirement_to_project",
 						"targets":       []string{"requirement", "project"},
 						"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
-						"allowed_tools": []string{"erp.mreq.analyze", "erp.mreq.approve", "erp.mreq.convert-to-project", "erp.mprj.refresh-cost"},
+						"allowed_tools": []string{"ontology.types.list", "ontology.objects.query", "ontology.objects.get", "ontology.objects.links", "ontology.action.execute"},
 					},
 					{
 						"skill_key":     "erp_source_to_pay",
-						"targets":       []string{"purchase_order", "ap_invoice"},
+						"targets":       []string{"purchase_order", "goods_receipt", "ap_invoice", "outgoing_payment"},
 						"context_rules": []string{"erp_document_state_context", "erp_governance_approval_context"},
-						"allowed_tools": []string{"erp.mpor.submit", "erp.mpor.approve", "erp.mpdn.post"},
+						"allowed_tools": []string{"ontology.types.list", "ontology.objects.query", "ontology.objects.get", "ontology.objects.links", "ontology.action.execute"},
 					},
 					{
 						"skill_key":     "erp_order_to_cash",
 						"targets":       []string{"sales_order", "ar_invoice"},
 						"context_rules": []string{"erp_document_state_context", "erp_finance_validation_context"},
-						"allowed_tools": []string{"erp.mrdr.confirm", "erp.mrdr.approve", "erp.mdln.post", "erp.minv.post", "erp.mrct.allocate"},
+						"allowed_tools": []string{"ontology.types.list", "ontology.objects.query", "ontology.objects.get", "ontology.objects.links", "ontology.action.execute"},
 					},
 					{
 						"skill_key":     "erp_finance_close",
 						"targets":       []string{"gl_account", "cost_center", "journal_entry", "trial_balance"},
 						"context_rules": []string{"erp_finance_validation_context"},
-						"allowed_tools": []string{"erp.mjdt.post", "erp.mglr.run"},
+						"allowed_tools": []string{"ontology.types.list", "ontology.objects.query", "ontology.objects.get", "ontology.action.execute", "erp.action.execute"},
 					},
 					{
 						"skill_key":     "industry_solution_change_reviewer",
@@ -894,12 +895,12 @@ func BuildERPSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionMani
 					},
 					{
 						"scenario_key": "source_to_pay_smoke",
-						"steps":        []string{"MPOR.submit", "MPOR.approve", "MPDN.post"},
-						"expected":     []string{"MIGN", "MPCH"},
+						"steps":        []string{"MPOR.submit", "MPOR.approve", "MPOR.receive", "MPDN.approve", "MPDN.post", "MPCH.post", "MVPM.allocate"},
+						"expected":     []string{"MIGN", "MPCH", "MVPM", "MJDT", "settled_payable", "balanced_debits_credits"},
 					},
 					{
 						"scenario_key": "order_to_cash_smoke",
-						"steps":        []string{"MRDR.confirm", "MRDR.approve", "MDLN.post", "MINV.post", "MRCT.allocate"},
+						"steps":        []string{"MRDR.confirm", "MRDR.approve", "MRDR.deliver", "MDLN.approve", "MDLN.post", "MINV.post", "MRCT.allocate"},
 						"expected":     []string{"MIGE", "MINV", "MRCT", "MJDT"},
 					},
 					{
@@ -968,6 +969,7 @@ func BuildRetailDistributionSolutionManifest(input ERPSolutionFlowRequest) Indus
 			"allowed_tools": []string{"erp.mstp.replenish", "erp.mdrq.submit", "erp.mdrq.approve", "erp.mdrq.auto-allocate", "erp.mdsp.ship", "erp.mdrc.receive", "erp.mrps.close", "erp.mcnt.post-adjustment", "erp.mspr.convert-to-purchase-order"},
 		},
 	)
+	archiveUnavailableERPWorkflows(manifest.Metadata)
 	assetManifest := buildIndustryAssetManifest(input, manifest.Metadata)
 	assetManifest.Dependencies = append(assetManifest.Dependencies, "erp.retail_code_tables")
 	setIndustryAssetManifest(&manifest, assetManifest)
@@ -1016,6 +1018,7 @@ func BuildERPNextManufacturingSolutionManifest(input ERPSolutionFlowRequest) Ind
 			"allowed_tools": []string{"erp.mbom.approve", "erp.mbom.make-work-order", "erp.mwor.release", "erp.mwor.issue-material", "erp.mwor.complete"},
 		},
 	)
+	archiveUnavailableERPWorkflows(manifest.Metadata)
 	assetManifest := buildIndustryAssetManifest(input, manifest.Metadata)
 	assetManifest.Dependencies = append(assetManifest.Dependencies, "erp.erpnext_manufacturing_code_tables")
 	setIndustryAssetManifest(&manifest, assetManifest)
@@ -1052,11 +1055,11 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		{Module: "project", DocumentID: "deliverable", LabelKey: "erp.document.delivery", SubmoduleKey: "erp.submodule.deliveries", TableCode: "MDLN", Actions: []string{"post"}, SortOrder: 30},
 		{Module: "project", DocumentID: "cost", LabelKey: "erp.document.cost", SubmoduleKey: "erp.submodule.costs", TableCode: "MCST", SortOrder: 40},
 		{Module: "project", DocumentID: "feedback", LabelKey: "erp.document.feedback", SubmoduleKey: "erp.submodule.feedback", TableCode: "MFDB", SortOrder: 50},
-		{Module: "procurement", DocumentID: "purchase_order", LabelKey: "erp.document.purchaseOrder", SubmoduleKey: "erp.submodule.purchaseOrders", TableCode: "MPOR", Actions: []string{"submit", "approve"}, SortOrder: 10},
-		{Module: "procurement", DocumentID: "goods_receipt_po", LabelKey: "erp.document.goodsReceiptPO", SubmoduleKey: "erp.submodule.goodsReceiptPO", TableCode: "MPDN", Actions: []string{"post"}, SortOrder: 20},
-		{Module: "procurement", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 30},
-		{Module: "sales", DocumentID: "sales_order", LabelKey: "erp.document.salesOrder", SubmoduleKey: "erp.submodule.salesOrders", TableCode: "MRDR", Actions: []string{"confirm", "approve"}, SortOrder: 10},
-		{Module: "sales", DocumentID: "delivery", LabelKey: "erp.document.delivery", SubmoduleKey: "erp.submodule.deliveries", TableCode: "MDLN", Actions: []string{"post"}, SortOrder: 20},
+		{Module: "procurement", DocumentID: "purchase_order", LabelKey: "erp.document.purchaseOrder", SubmoduleKey: "erp.submodule.purchaseOrders", TableCode: "MPOR", Actions: []string{"submit", "approve", "receive"}, SortOrder: 10},
+		{Module: "procurement", DocumentID: "goods_receipt_po", LabelKey: "erp.document.goodsReceiptPO", SubmoduleKey: "erp.submodule.goodsReceiptPO", TableCode: "MPDN", Actions: []string{"approve", "post"}, SortOrder: 20},
+		{Module: "procurement", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", Actions: []string{"post"}, SortOrder: 30},
+		{Module: "sales", DocumentID: "sales_order", LabelKey: "erp.document.salesOrder", SubmoduleKey: "erp.submodule.salesOrders", TableCode: "MRDR", Actions: []string{"confirm", "approve", "deliver"}, SortOrder: 10},
+		{Module: "sales", DocumentID: "delivery", LabelKey: "erp.document.delivery", SubmoduleKey: "erp.submodule.deliveries", TableCode: "MDLN", Actions: []string{"approve", "post"}, SortOrder: 20},
 		{Module: "sales", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 30},
 		{Module: "sales", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 40},
 		{Module: "inventory", DocumentID: "business_partner", LabelKey: "erp.document.businessPartner", SubmoduleKey: "erp.submodule.partners", TableCode: "MCRD", SortOrder: 10},
@@ -1070,8 +1073,9 @@ func buildERPStandardRuntimeOperations(catalog erp.Catalog, actions []erp.Action
 		{Module: "finance", DocumentID: "journal_entry", LabelKey: "erp.document.journalEntry", SubmoduleKey: "erp.submodule.journalEntries", TableCode: "MJDT", Actions: []string{"post"}, SortOrder: 30},
 		{Module: "finance", DocumentID: "trial_balance", LabelKey: "erp.document.trialBalance", SubmoduleKey: "erp.submodule.trialBalance", TableCode: "MGLR", Actions: []string{"run"}, SortOrder: 40},
 		{Module: "finance", DocumentID: "ar_invoice", LabelKey: "erp.document.arInvoice", SubmoduleKey: "erp.submodule.arInvoices", TableCode: "MINV", Actions: []string{"post"}, SortOrder: 50},
-		{Module: "finance", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", SortOrder: 60},
+		{Module: "finance", DocumentID: "ap_invoice", LabelKey: "erp.document.apInvoice", SubmoduleKey: "erp.submodule.apInvoices", TableCode: "MPCH", Actions: []string{"post"}, SortOrder: 60},
 		{Module: "finance", DocumentID: "incoming_payment", LabelKey: "erp.document.incomingPayment", SubmoduleKey: "erp.submodule.incomingPayments", TableCode: "MRCT", Actions: []string{"allocate"}, SortOrder: 70},
+		{Module: "finance", DocumentID: "outgoing_payment", LabelKey: "erp.document.outgoingPayment", SubmoduleKey: "erp.submodule.outgoingPayments", TableCode: "MVPM", Actions: []string{"allocate"}, SortOrder: 80},
 		{Module: "retail", DocumentID: "store", LabelKey: "erp.document.store", SubmoduleKey: "erp.submodule.stores", TableCode: "MBRN", SortOrder: 10},
 		{Module: "retail", DocumentID: "pos_terminal", LabelKey: "erp.document.posTerminal", SubmoduleKey: "erp.submodule.pos", TableCode: "MTER", SortOrder: 20},
 		{Module: "retail", DocumentID: "member", LabelKey: "erp.document.member", SubmoduleKey: "erp.submodule.membersPromotions", TableCode: "MMBR", SortOrder: 30},

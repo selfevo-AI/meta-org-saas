@@ -17,24 +17,23 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/capability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/costing"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/dashboard"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/documentimport"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/finance"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/governance"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/identity"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/industry"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/inventory"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/layer"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaorg"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/metaresource"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/monitoringagent"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/ontology"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/organization"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/procurement"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	domainruntime "github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/sales"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
@@ -344,26 +343,6 @@ func main() {
 	financeSvc := finance.NewService(financeRepo, finance.WithCostPoster(projectSvc), finance.WithObservability(obsSvc))
 	financeHandler := finance.NewHandler(financeSvc)
 
-	inventoryRepo := inventory.NewRepository(tenantBusinessDB)
-	inventorySvc := inventory.NewService(inventoryRepo)
-	inventoryHandler := inventory.NewHandler(inventorySvc)
-
-	procurementRepo := procurement.NewRepository(tenantBusinessDB)
-	procurementSvc := procurement.NewService(
-		procurementRepo,
-		procurement.WithInventoryPoster(inventorySvc),
-		procurement.WithFinancePoster(financeSvc),
-	)
-	procurementHandler := procurement.NewHandler(procurementSvc)
-
-	salesRepo := sales.NewRepository(tenantBusinessDB)
-	salesSvc := sales.NewService(
-		salesRepo,
-		sales.WithInventoryPoster(inventorySvc),
-		sales.WithFinancePoster(financeSvc),
-	)
-	salesHandler := sales.NewHandler(salesSvc)
-
 	runtimeRepo := domainruntime.NewRepository(db)
 	runtimeSvc := domainruntime.NewService(runtimeRepo, domainruntime.WithOperationAdapter(
 		domainruntime.ActionFinanceGLTrialBalance,
@@ -374,6 +353,11 @@ func main() {
 	erpRepo := erp.NewRepository(tenantBusinessDB)
 	erpSvc := erp.NewService(erpRepo, erp.DefaultCatalog())
 	erpHandler := erp.NewHandler(erpSvc)
+	ontologySvc := ontology.NewService(erpSvc, ontology.NewRepository(tenantBusinessDB))
+	ontologyHandler := ontology.NewHandler(ontologySvc)
+	documentImportSvc := documentimport.NewService(documentimport.NewRepository(tenantBusinessDB), ontologySvc, erpSvc,
+		documentimport.NewGatewayRecognizer(aiSvc, documentimport.RecognitionConfig{ProviderType: cfg.DocumentImportProviderType, Model: cfg.DocumentImportModel}))
+	documentImportHandler := documentimport.NewHandler(documentImportSvc)
 
 	toolRepo := toolruntime.NewRepository(db)
 	toolSvc := toolruntime.NewService(
@@ -381,6 +365,7 @@ func main() {
 		govSvc,
 		toolruntime.InternalToolsWithPlatform(projectSvc, financeSvc, evoSvc, toolruntime.PlatformToolServices{
 			ERP:                      erpSvc,
+			Ontology:                 ontologySvc,
 			IndustrySolutionVerifier: systemAdminSvc,
 			Runtime:                  runtimeSvc,
 		}),
@@ -440,10 +425,7 @@ func main() {
 		WorkflowHandler:                      wfHandler,
 		ProjectHandler:                       projectHandler,
 		FinanceHandler:                       financeHandler,
-		InventoryHandler:                     inventoryHandler,
 		IndustryHandler:                      industryHandler,
-		ProcurementHandler:                   procurementHandler,
-		SalesHandler:                         salesHandler,
 		RuntimeHandler:                       runtimeHandler,
 		ToolRuntimeHandler:                   toolHandler,
 		SaaSHandler:                          saasHandler,
@@ -456,6 +438,8 @@ func main() {
 		EvolutionHandler:                     evoHandler,
 		MonitoringAgentHandler:               monitoringHandler,
 		ErpHandler:                           erpHandler,
+		OntologyHandler:                      ontologyHandler,
+		DocumentImportHandler:                documentImportHandler,
 		TenantPoolStatsProvider:              tenantBusinessDB,
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,

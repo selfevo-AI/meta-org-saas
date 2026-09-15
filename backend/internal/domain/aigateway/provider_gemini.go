@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 type GeminiAdapter struct {
@@ -28,7 +29,8 @@ func NewGeminiAdapter(baseURL string, apiKey string, client *http.Client) *Gemin
 }
 
 func (a *GeminiAdapter) Invoke(ctx context.Context, req ProviderRequest) (*ProviderResponse, error) {
-	resp, err := postProviderJSON(ctx, a.client, a.endpoint(req.Model, false), nil, a.payload(req))
+	req, names := prepareProviderTools(req)
+	resp, err := postProviderJSON(ctx, a.client, a.endpoint(req.Model, false), map[string]string{"x-goog-api-key": a.apiKey}, a.payload(req))
 	if err != nil {
 		return nil, err
 	}
@@ -37,21 +39,29 @@ func (a *GeminiAdapter) Invoke(ctx context.Context, req ProviderRequest) (*Provi
 	if err := decodeProviderJSON("gemini", resp, &decoded); err != nil {
 		return nil, err
 	}
-	providerResp := decoded.toProviderResponse()
+	if err := decoded.validate(); err != nil {
+		return nil, err
+	}
+	if len(decoded.Candidates) == 0 {
+		return nil, fmt.Errorf("gemini response contains no candidates")
+	}
+	providerResp := restoreToolNames(decoded.toProviderResponse(), names)
 	providerResp.ProviderRequestID = resp.Header.Get("x-request-id")
 	return providerResp, nil
 }
 
 func (a *GeminiAdapter) Stream(ctx context.Context, req ProviderRequest) (<-chan StreamEvent, error) {
-	resp, err := postProviderJSON(ctx, a.client, a.endpoint(req.Model, true), nil, a.payload(req))
+	req, names := prepareProviderTools(req)
+	resp, err := postProviderJSON(ctx, a.client, a.endpoint(req.Model, true), map[string]string{"x-goog-api-key": a.apiKey}, a.payload(req))
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		return nil, providerHTTPError("gemini", resp)
 	}
-	return streamProviderEvents(ctx, resp.Body, geminiStreamEvents), nil
+	state := &geminiStreamState{}
+	return streamProviderEvents(ctx, resp.Body, restoreStreamToolNames(state.convert, names)), nil
 }
 
 func (a *GeminiAdapter) endpoint(model string, stream bool) string {
@@ -59,17 +69,26 @@ func (a *GeminiAdapter) endpoint(model string, stream bool) string {
 	if stream {
 		action = "streamGenerateContent"
 	}
-	path := fmt.Sprintf("/v1beta/models/%s:%s", url.PathEscape(model), action)
-	values := url.Values{"key": []string{a.apiKey}}
+	endpoint := providerEndpoint(a.baseURL, "v1beta", "models/"+strings.TrimPrefix(model, "models/")+":"+action)
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return endpoint
+	}
+	values := u.Query()
+	values.Del("key")
 	if stream {
 		values.Set("alt", "sse")
 	}
-	return joinEndpoint(a.baseURL, path) + "?" + values.Encode()
+	u.RawQuery = values.Encode()
+	return u.String()
 }
 
 func (a *GeminiAdapter) payload(req ProviderRequest) map[string]any {
 	payload := map[string]any{
 		"contents": geminiContents(req.Messages),
+	}
+	if system := providerSystemPrompt(req.Messages); system != "" {
+		payload["systemInstruction"] = map[string]any{"parts": []map[string]any{{"text": system}}}
 	}
 	if req.Temperature != nil || req.MaxTokens > 0 {
 		config := map[string]any{}
@@ -90,6 +109,9 @@ func (a *GeminiAdapter) payload(req ProviderRequest) map[string]any {
 func geminiContents(messages []Message) []map[string]any {
 	result := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
+		if msg.Role == "system" || msg.Role == "developer" {
+			continue
+		}
 		role := "user"
 		if msg.Role == "assistant" || msg.Role == "model" {
 			role = "model"
@@ -103,6 +125,7 @@ func geminiContents(messages []Message) []map[string]any {
 			parts = append(parts, map[string]any{
 				"functionResponse": map[string]any{
 					"name":     name,
+					"id":       msg.ToolCallID,
 					"response": map[string]any{"result": msg.Content},
 				},
 			})
@@ -110,17 +133,27 @@ func geminiContents(messages []Message) []map[string]any {
 			if msg.Content != "" {
 				parts = append(parts, map[string]any{"text": msg.Content})
 			}
-			for _, call := range msg.ToolCalls {
-				parts = append(parts, map[string]any{
+			parts = append(parts, geminiAttachments(msg.Attachments)...)
+			for index, call := range msg.ToolCalls {
+				part := map[string]any{
 					"functionCall": map[string]any{
 						"name": call.Name,
+						"id":   call.normalizedID(index),
 						"args": copyMap(call.Arguments),
 					},
-				})
+				}
+				if call.ThoughtSignature != "" {
+					part["thoughtSignature"] = call.ThoughtSignature
+				}
+				parts = append(parts, part)
 			}
 		}
 		if len(parts) == 0 {
 			parts = append(parts, map[string]any{"text": ""})
+		}
+		if len(result) > 0 && result[len(result)-1]["role"] == role {
+			result[len(result)-1]["parts"] = append(result[len(result)-1]["parts"].([]map[string]any), parts...)
+			continue
 		}
 		result = append(result, map[string]any{
 			"role":  role,
@@ -144,13 +177,21 @@ func geminiTools(tools []ToolDefinition) []map[string]any {
 
 type geminiResponse struct {
 	Candidates []struct {
-		Content geminiContent `json:"content"`
+		Content      geminiContent `json:"content"`
+		FinishReason string        `json:"finishReason"`
 	} `json:"candidates"`
 	UsageMetadata struct {
 		PromptTokenCount     int `json:"promptTokenCount"`
 		CandidatesTokenCount int `json:"candidatesTokenCount"`
 		TotalTokenCount      int `json:"totalTokenCount"`
+		ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
 	} `json:"usageMetadata"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
+	PromptFeedback struct {
+		BlockReason string `json:"blockReason"`
+	} `json:"promptFeedback"`
 }
 
 type geminiContent struct {
@@ -158,8 +199,11 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text         string `json:"text"`
-	FunctionCall *struct {
+	Text             string `json:"text"`
+	Thought          bool   `json:"thought"`
+	ThoughtSignature string `json:"thoughtSignature"`
+	FunctionCall     *struct {
+		ID   string         `json:"id"`
 		Name string         `json:"name"`
 		Args map[string]any `json:"args"`
 	} `json:"functionCall"`
@@ -169,16 +213,23 @@ func (r geminiResponse) toProviderResponse() *ProviderResponse {
 	resp := &ProviderResponse{
 		Usage: TokenUsage{
 			InputTokens:  r.UsageMetadata.PromptTokenCount,
-			OutputTokens: r.UsageMetadata.CandidatesTokenCount,
+			OutputTokens: r.UsageMetadata.CandidatesTokenCount + r.UsageMetadata.ThoughtsTokenCount,
 		},
 	}
-	for _, candidate := range r.Candidates {
+	for index, candidate := range r.Candidates {
+		if index != 0 {
+			break
+		}
 		for _, part := range candidate.Content.Parts {
-			resp.Content += part.Text
+			if !part.Thought {
+				resp.Content += part.Text
+			}
 			if part.FunctionCall != nil {
 				resp.ToolCalls = append(resp.ToolCalls, ToolCall{
-					Name:      part.FunctionCall.Name,
-					Arguments: copyMap(part.FunctionCall.Args),
+					ID:               part.FunctionCall.ID,
+					Name:             part.FunctionCall.Name,
+					Arguments:        copyMap(part.FunctionCall.Args),
+					ThoughtSignature: part.ThoughtSignature,
 				})
 			}
 		}
@@ -186,10 +237,41 @@ func (r geminiResponse) toProviderResponse() *ProviderResponse {
 	return resp
 }
 
-func geminiStreamEvents(raw RawSSEEvent) []StreamEvent {
+func (r geminiResponse) validate() error {
+	if r.Error != nil {
+		return fmt.Errorf("gemini: %s", r.Error.Message)
+	}
+	if r.PromptFeedback.BlockReason != "" {
+		return fmt.Errorf("gemini prompt blocked: %s", r.PromptFeedback.BlockReason)
+	}
+	for _, candidate := range r.Candidates {
+		if candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
+			return fmt.Errorf("gemini generation incomplete: %s", candidate.FinishReason)
+		}
+	}
+	return nil
+}
+
+type geminiStreamState struct{ finished bool }
+
+func (s *geminiStreamState) convert(raw RawSSEEvent) []StreamEvent {
+	if raw.Event == "eof" || raw.Done {
+		if !s.finished {
+			return []StreamEvent{{Type: "error", Error: "gemini stream ended before completion"}}
+		}
+		return []StreamEvent{{Type: "done", Done: true}}
+	}
 	var chunk geminiResponse
 	if err := json.Unmarshal([]byte(raw.Data), &chunk); err != nil {
 		return []StreamEvent{{Type: "error", Error: fmt.Sprintf("decode gemini stream: %v", err)}}
+	}
+	if err := chunk.validate(); err != nil {
+		return []StreamEvent{{Type: "error", Error: err.Error()}}
+	}
+	for _, candidate := range chunk.Candidates {
+		if candidate.FinishReason == "STOP" {
+			s.finished = true
+		}
 	}
 	events := []StreamEvent{}
 	resp := chunk.toProviderResponse()

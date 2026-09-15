@@ -106,16 +106,19 @@ func TestBuildRetailDistributionSolutionFlowBuildsCodeTablePackage(t *testing.T)
 		}
 	}
 	for _, loopKey := range []string{"retail_replenishment_to_distribution", "retail_pos_to_cash", "retail_count_to_adjustment", "retail_special_procurement"} {
-		if !manifestHasProcessLoop(manifest, loopKey) {
-			t.Fatalf("manifest missing process loop %s", loopKey)
+		if manifestHasProcessLoop(manifest, loopKey) {
+			t.Fatalf("manifest exposes retired process loop %s", loopKey)
 		}
 	}
-	if !manifestHasRuntimeWorkspace(manifest, "retail", "pos_sale", "MRPS", "close") {
-		t.Fatalf("manifest missing POS close runtime workspace")
+	if len(mapSliceFromAny(result.SolutionManifest.Metadata["archived_process_loops"])) != 4 {
+		t.Fatal("historical retail loops must remain in the archive")
+	}
+	if manifestHasRuntimeWorkspace(manifest, "retail", "pos_sale", "MRPS", "close") {
+		t.Fatalf("manifest exposes retired quantity-only POS action")
 	}
 }
 
-func TestBuildERPNextManufacturingSolutionFlowBuildsClosedLoopPackage(t *testing.T) {
+func TestBuildERPNextManufacturingSolutionFlowRetainsHistoricalTables(t *testing.T) {
 	repo := &fakeRepository{role: "system_owner"}
 	service := NewService(repo)
 	organizationID := uuid.New()
@@ -141,11 +144,14 @@ func TestBuildERPNextManufacturingSolutionFlowBuildsClosedLoopPackage(t *testing
 			t.Fatalf("manifest missing ERPNext manufacturing code-table %s", tableCode)
 		}
 	}
-	if !manifestHasProcessLoop(manifest, "erpnext_manufacturing_bom_to_completion") {
-		t.Fatalf("manifest missing manufacturing process loop")
+	if manifestHasProcessLoop(manifest, "erpnext_manufacturing_bom_to_completion") {
+		t.Fatalf("manifest exposes retired manufacturing process loop")
 	}
-	if !manifestHasRuntimeWorkspace(manifest, "manufacturing", "work_order", "MWOR", "complete") {
-		t.Fatalf("manifest missing work order complete runtime workspace")
+	if len(mapSliceFromAny(result.SolutionManifest.Metadata["archived_process_loops"])) != 1 {
+		t.Fatal("historical manufacturing loop must remain in the archive")
+	}
+	if manifestHasRuntimeWorkspace(manifest, "manufacturing", "work_order", "MWOR", "complete") {
+		t.Fatalf("manifest exposes retired quantity-only manufacturing action")
 	}
 }
 
