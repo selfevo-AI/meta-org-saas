@@ -207,8 +207,18 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 - 租户业务库中的采购、销售、库存、仓库和零售行业方案统一以 ERP code-table 工作台为主模型。
 - 采购订单使用 `MPOR/POR1`，销售订单使用 `MRDR/RDR1`，仓库库存余额使用 `MITW/ITW1`，库存收发使用 `MIGN/IGN1` 和 `MIGE/IGE1`。
 - 零售配送闭环使用 `MRPS/RPS1`、`MDRQ/DRQ1`、`MDSP/DSP1`、`MDRC/DRC1`、`MDIF/DIF1`、`MSTP/STP1`、`MCNT/CNT1` 和 `MSPR/SPR1`。
+- SMT 电子制造行业方案使用 `MLIN/LIN1`、`MMAC/MAC1`、`MFSB/FSB1`、`MOPR`、`MROU/ROU1`、`MPRD/PRD1`、`MCPM`、`MREL/REL1`、`MSWO/SWO1`、`MRQN/RQN1`、`MLOD/LOD1`、`MVER`、`MLWA`、`MUNT/UNT1`、`MPNL/PNL1`、`MDFC`、`MUDF`、`MINS/INS1`、`MAND/AND1`、`MDWN`、`MSET`。
 - fresh tenant baseline 不再创建旧语义供应链表，例如 `inventory_counts`、`inventory_transfers`、`purchase_orders`、`sales_shipments`、`inventory_balances`、`sales_orders`。
 - 旧库存/采购/销售语义 API 若继续保留，只能作为兼容层或迁移入口；新增行业方案、UI 工作台、Agent API 和 demo 验证必须优先走 ERP code-table。
+
+## SMT 车间执行行业解决方案
+
+- 行业分类 `smt_manufacturing`、解决方案 `smt_mes_v1`、模块 `smt_mes`，方案启用模块为 `erp, inventory, manufacturing, smt_mes`，仅适用于 `dedicated_database` 模式组织。
+- 迁移 `036_smt_mes_solution.sql`（平台与租户共用，注册并创建上述码表、`smt_settings`、`smt_edge_events`、`smt_edge_sync_log`）、`037_smt_edge_platform.sql`（平台库：边缘实例表、行业目录/资产、能力包与市场条目、`platform.runtime_operations` 种子）、`tenant/011_smt_mes_solution.sql`（租户库 include 036）。
+- 解决方案流程入口 `POST /platform/admin/organizations/{id}/industry-solution-flows/smt-mes`，走 verify → approve → apply。
+- 车间 API 挂载在 `/api/v1/smt`（站位状态、产线看板、工单工序进度、SN/料盘追溯、生产/Andon/停机/物料报表、设置、边缘实例与 Webhook 接收），模块门控为 `smt_mes`。
+- 边缘对接：平台向 SMT-MES 下发物料/客户/产品/料站表/工单（`X-API-Key`），SMT-MES 通过 `POST /api/v1/smt/hooks/{instance}` 以 `X-SMT-Signature` HMAC-SHA256 回传事件（`UNIQUE(instance_key,event_id)` 去重），并可用 `POST /smt/edges/{key}/pull` 轮询兜底。
+- 完整设计、动作清单、桥接契约与行为差异见 `docs/SMT-MES-SOLUTION.md`。
 
 ## API 概览
 

@@ -19,7 +19,7 @@ import { DocumentImportWorkspace } from './document-import-workspace'
 import { BusinessAIWorkbench } from './business-ai-workbench'
 import { FeedbackMessage, useWorkspaceInteraction } from './workspace-ui'
 
-type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail' | 'manufacturing'
+type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail' | 'manufacturing' | 'smt_mes'
 type BusinessSelection = { targetID?: string; label?: string }
 type DocumentConfig = {
   id: string
@@ -39,6 +39,10 @@ type ERPBusinessModuleWorkspaceProps = {
   activeDocumentID?: string | null
 }
 type ERPBusinessRecord = Record<string, unknown> & { key: string }
+
+// SMT MES shop-floor records stay read-only in the generic workbench: their
+// rows are produced by governed actions (loading, pass-station, andon, ...).
+const smtActionOnlyTables = ['MREL', 'MLOD', 'MVER', 'MLWA', 'MUNT', 'MPNL', 'MUDF', 'MINS', 'MAND', 'MDWN']
 
 const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
   project: [
@@ -98,6 +102,29 @@ const moduleDocuments: Record<ERPBusinessModule, DocumentConfig[]> = {
     { id: 'ap_invoice', labelKey: 'erp.document.apInvoice', submoduleKey: 'erp.submodule.apInvoices', tableCode: 'MPCH', primaryKey: 'DocEntry', childCode: 'PCH1', actions: ['post'], sortOrder: 60 },
     { id: 'incoming_payment', labelKey: 'erp.document.incomingPayment', submoduleKey: 'erp.submodule.incomingPayments', tableCode: 'MRCT', primaryKey: 'DocEntry', childCode: 'RCT1', actions: ['allocate'], sortOrder: 70 },
     { id: 'outgoing_payment', labelKey: 'erp.document.outgoingPayment', submoduleKey: 'erp.submodule.outgoingPayments', tableCode: 'MVPM', primaryKey: 'DocEntry', childCode: 'VPM1', actions: ['allocate'], sortOrder: 80 },
+  ],
+  smt_mes: [
+    { id: 'smt_line', labelKey: 'erp.document.smtLine', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MLIN', primaryKey: 'LineCode', childCode: 'LIN1', sortOrder: 10 },
+    { id: 'smt_machine', labelKey: 'erp.document.smtMachine', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MMAC', primaryKey: 'MachineCode', childCode: 'MAC1', actions: ['bind', 'verify', 'sign-off', 'lock-slot', 'unlock-slot'], sortOrder: 20 },
+    { id: 'smt_operation', labelKey: 'erp.document.smtOperation', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MOPR', primaryKey: 'OpCode', sortOrder: 30 },
+    { id: 'smt_routing', labelKey: 'erp.document.smtRouting', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MROU', primaryKey: 'RouteCode', childCode: 'ROU1', sortOrder: 40 },
+    { id: 'smt_product', labelKey: 'erp.document.smtProduct', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MPRD', primaryKey: 'ProductCode', childCode: 'PRD1', sortOrder: 50 },
+    { id: 'smt_customer_part_map', labelKey: 'erp.document.smtCustomerPartMap', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MCPM', primaryKey: 'MapCode', sortOrder: 60 },
+    { id: 'smt_feeder_setup', labelKey: 'erp.document.smtFeederSetup', submoduleKey: 'erp.submodule.smtFoundation', tableCode: 'MFSB', primaryKey: 'SetupCode', childCode: 'FSB1', sortOrder: 70 },
+    { id: 'smt_reel', labelKey: 'erp.document.smtReel', submoduleKey: 'erp.submodule.smtInventory', tableCode: 'MREL', primaryKey: 'ReelCode', childCode: 'REL1', actions: ['receive', 'issue', 'return', 'empty', 'scrap', 'lost', 'return-to-customer', 'adjust'], sortOrder: 10 },
+    { id: 'smt_work_order', labelKey: 'erp.document.smtWorkOrder', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MSWO', primaryKey: 'WorkOrderCode', childCode: 'SWO1', actions: ['start', 'progress', 'finish', 'close'], sortOrder: 10 },
+    { id: 'smt_requisition', labelKey: 'erp.document.smtRequisition', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MRQN', primaryKey: 'ReqNo', childCode: 'RQN1', actions: ['issue', 'close', 'cancel'], sortOrder: 20 },
+    { id: 'smt_loading_record', labelKey: 'erp.document.smtLoadingRecord', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MLOD', primaryKey: 'LoadCode', childCode: 'LOD1', actions: ['load', 'unload'], sortOrder: 30 },
+    { id: 'smt_verification_scan', labelKey: 'erp.document.smtVerificationScan', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MVER', primaryKey: 'ScanCode', sortOrder: 40 },
+    { id: 'smt_low_material_alert', labelKey: 'erp.document.smtLowMaterialAlert', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MLWA', primaryKey: 'AlertCode', sortOrder: 50 },
+    { id: 'smt_unit', labelKey: 'erp.document.smtUnit', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MUNT', primaryKey: 'SN', childCode: 'UNT1', actions: ['pass', 'fail', 'repair', 'scrap'], sortOrder: 60 },
+    { id: 'smt_panel', labelKey: 'erp.document.smtPanel', submoduleKey: 'erp.submodule.smtExecution', tableCode: 'MPNL', primaryKey: 'PanelCode', childCode: 'PNL1', actions: ['bind', 'split'], sortOrder: 70 },
+    { id: 'smt_defect_code', labelKey: 'erp.document.smtDefectCode', submoduleKey: 'erp.submodule.smtQuality', tableCode: 'MDFC', primaryKey: 'DefectCode', sortOrder: 10 },
+    { id: 'smt_unit_defect', labelKey: 'erp.document.smtUnitDefect', submoduleKey: 'erp.submodule.smtQuality', tableCode: 'MUDF', primaryKey: 'DefectID', sortOrder: 20 },
+    { id: 'smt_inspection', labelKey: 'erp.document.smtInspection', submoduleKey: 'erp.submodule.smtQuality', tableCode: 'MINS', primaryKey: 'InspNo', childCode: 'INS1', actions: ['record'], sortOrder: 30 },
+    { id: 'smt_andon_call', labelKey: 'erp.document.smtAndonCall', submoduleKey: 'erp.submodule.smtAndonDowntime', tableCode: 'MAND', primaryKey: 'CallNo', childCode: 'AND1', actions: ['raise', 'ack', 'close'], sortOrder: 10 },
+    { id: 'smt_downtime', labelKey: 'erp.document.smtDowntime', submoduleKey: 'erp.submodule.smtAndonDowntime', tableCode: 'MDWN', primaryKey: 'DowntimeCode', actions: ['start', 'end'], sortOrder: 20 },
+    { id: 'smt_setting', labelKey: 'erp.document.smtSetting', submoduleKey: 'erp.submodule.smtAndonDowntime', tableCode: 'MSET', primaryKey: 'SettingKey', sortOrder: 30 },
   ],
 }
 
@@ -182,16 +209,18 @@ function BusinessDocument({ token, module, document, initialKey, onOpenLink }: {
   const [lookupOptions, setLookupOptions] = useState<WorkbenchLookupOptions>({})
   const requestID = useRef<{ signature: string; id: string } | null>(null)
   const typeKey = ontologyTypeByTable[document.tableCode]
-  const readOnly = module === 'retail' || module === 'manufacturing' || document.tableCode === 'MITW' || !typeKey
+  const hardReadOnly = module === 'retail' || module === 'manufacturing' || document.tableCode === 'MITW' || !typeKey
+  const actionOnly = module === 'smt_mes' && smtActionOnlyTables.includes(document.tableCode)
+  const readOnly = hardReadOnly || actionOnly
   const selectedRecord = detail?.record.key === selectedKey ? detail.record : undefined
   const definition = useMemo(() => {
     const base = buildERPDocumentWorkbenchDefinition(document, module)
     return {
       ...base,
-      actions: base.actions.filter((action) => !readOnly && (!objectType || objectType.actions.some((candidate) => candidate.key === action.id)))
+      actions: base.actions.filter((action) => !hardReadOnly && (!objectType || objectType.actions.some((candidate) => candidate.key === action.id)))
         .map((action) => ({ ...action, disabledReasonKey: actionAvailable(document.tableCode, selectedRecord, action.id) ? undefined : 'ontology.actionUnavailable' })),
     }
-  }, [document, module, objectType, selectedRecord, readOnly])
+  }, [document, module, objectType, selectedRecord, hardReadOnly])
 
   useEffect(() => {
     if (readOnly) return

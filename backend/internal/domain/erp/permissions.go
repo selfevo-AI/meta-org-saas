@@ -42,6 +42,9 @@ func (s *Service) authorize(ctx context.Context, tableCode, operation string) er
 	if operation != "read" && archivedIndustryTable(table) {
 		return fmt.Errorf("%w: legacy industry records are read only; use the operational ontology", ErrForbidden)
 	}
+	if (operation == "create" || operation == "update" || operation == "delete") && smtActionOnlyTable(table) {
+		return fmt.Errorf("%w: %s rows are maintained by shop-floor actions", ErrForbidden, table.Code)
+	}
 	tenant, ok := middleware.TenantFromContext(ctx)
 	if !ok {
 		if _, authenticated := middleware.UserFromContext(ctx); authenticated {
@@ -78,6 +81,9 @@ func (s *Service) authorize(ctx context.Context, tableCode, operation string) er
 		case "create", "update", "delete", "submit", "confirm", "receive", "deliver", "run", "analyze":
 			return nil
 		}
+		if smtExecutorAction(table.Code, operation) {
+			return nil
+		}
 	}
 	return fmt.Errorf("%w: reviewer authority is required for this action", ErrForbidden)
 }
@@ -98,6 +104,13 @@ func validateDraftInput(table TableDefinition, input RecordInput) error {
 	}
 	if status := stringValue(input.Data, "DocStatus", "O"); status != "O" && status != "draft" {
 		return fmt.Errorf("%w: document status is maintained by business actions", ErrValidation)
+	}
+	if table.Module == "smt_mes" {
+		for _, name := range []string{"current_work_order", "verified_at", "verified_by", "signed_off_at", "signed_off_by"} {
+			if _, ok := input.Data[name]; ok {
+				return fmt.Errorf("%w: %s is maintained by shop-floor actions", ErrValidation, name)
+			}
+		}
 	}
 	return nil
 }
@@ -133,6 +146,39 @@ func (s *Service) ensureEditable(ctx context.Context, table TableDefinition, key
 
 func archivedIndustryTable(table TableDefinition) bool {
 	return table.Module == "retail" || table.Module == "manufacturing"
+}
+
+// smtActionOnlyTables are SMT shop-floor tables whose rows are produced only by
+// governed actions (loading, pass-station, andon, downtime, ...), never by
+// generic CRUD.
+var smtActionOnlyTables = map[string]bool{
+	"MREL": true, "MLOD": true, "MVER": true, "MLWA": true, "MUNT": true,
+	"MPNL": true, "MUDF": true, "MINS": true, "MAND": true, "MDWN": true,
+}
+
+// smtExecutorActions are shop-floor actions an executor may run without
+// reviewer authority. Governance actions (sign-off, unlock-slot, scrap, lost,
+// adjust, close work order, cancel requisition, return-to-customer) require
+// reviewer authority and deliberately stay out of this set.
+var smtExecutorActions = map[string]bool{
+	"MREL:receive": true, "MREL:issue": true, "MREL:return": true, "MREL:empty": true,
+	"MLOD:load": true, "MLOD:unload": true,
+	"MMAC:bind": true, "MMAC:verify": true, "MMAC:lock-slot": true,
+	"MSWO:start": true, "MSWO:progress": true, "MSWO:finish": true,
+	"MRQN:issue": true, "MRQN:close": true,
+	"MUNT:pass": true, "MUNT:fail": true, "MUNT:repair": true,
+	"MPNL:bind": true, "MPNL:split": true,
+	"MINS:record": true,
+	"MAND:raise": true, "MAND:ack": true, "MAND:close": true,
+	"MDWN:start": true, "MDWN:end": true,
+}
+
+func smtActionOnlyTable(table TableDefinition) bool {
+	return table.Module == "smt_mes" && smtActionOnlyTables[table.Code]
+}
+
+func smtExecutorAction(tableCode, operation string) bool {
+	return smtExecutorActions[tableCode+":"+operation]
 }
 
 func (s *Service) recordInTx(ctx context.Context, fn func(*Service) (*Record, error)) (*Record, error) {

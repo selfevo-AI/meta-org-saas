@@ -34,6 +34,7 @@ const tenantSlugByDomain: Record<string, string> = {
   Sales: 'sales',
   Retail: 'retail',
   Manufacturing: 'manufacturing',
+  SMT: 'smt',
 }
 
 const platformSlugByDomain: Record<string, string> = {

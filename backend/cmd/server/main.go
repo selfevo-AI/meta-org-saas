@@ -34,6 +34,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	domainruntime "github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/smtmes"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
@@ -353,6 +354,9 @@ func main() {
 	erpRepo := erp.NewRepository(tenantBusinessDB)
 	erpSvc := erp.NewService(erpRepo, erp.DefaultCatalog())
 	erpHandler := erp.NewHandler(erpSvc)
+	smtmesRepo := smtmes.NewRepository(db, tenantBusinessDB)
+	smtmesSvc := smtmes.NewService(smtmesRepo, erpSvc, modelSecretBox)
+	smtmesHandler := smtmes.NewHandler(smtmesSvc)
 	ontologySvc := ontology.NewService(erpSvc, ontology.NewRepository(tenantBusinessDB))
 	ontologyHandler := ontology.NewHandler(ontologySvc)
 	documentImportSvc := documentimport.NewService(documentimport.NewRepository(tenantBusinessDB), ontologySvc, erpSvc,
@@ -440,6 +444,7 @@ func main() {
 		ErpHandler:                           erpHandler,
 		OntologyHandler:                      ontologyHandler,
 		DocumentImportHandler:                documentImportHandler,
+		SMTMESHandler:                        smtmesHandler,
 		TenantPoolStatsProvider:              tenantBusinessDB,
 		TenantProjectionStatsProvider:        tenantProjectionWorker,
 		AuthenticationRateLimitStatsProvider: authLimiter,

@@ -163,6 +163,8 @@ func moduleForPath(path string) string {
 		return "procurement"
 	case strings.HasPrefix(path, "/api/v1/sales"):
 		return "sales"
+	case strings.HasPrefix(path, "/api/v1/smt"):
+		return "smt_mes"
 	default:
 		return ""
 	}

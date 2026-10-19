@@ -46,6 +46,7 @@ func (h *Handler) RegisterAuthenticatedRoutes(r chi.Router) {
 	r.Post("/platform/admin/organizations/{id}/industry-solution-table-fields/change-requests", h.createIndustrySolutionTableFieldChange)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/erp-standard", h.createERPSolutionFlow)
 	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/retail-distribution", h.createRetailDistributionSolutionFlow)
+	r.Post("/platform/admin/organizations/{id}/industry-solution-flows/smt-mes", h.createSMTMESSolutionFlow)
 	r.Post("/platform/admin/industry-solution-change-requests/{id}/approve", h.approveIndustrySolutionChange)
 	r.Post("/platform/admin/industry-solution-change-requests/{id}/verify", h.verifyIndustrySolutionChange)
 	r.Post("/platform/admin/industry-solution-change-requests/{id}/apply", h.applyIndustrySolutionChange)
@@ -311,6 +312,22 @@ func (h *Handler) createRetailDistributionSolutionFlow(w http.ResponseWriter, r 
 	}
 	input.OrganizationID = orgID
 	result, err := h.service.BuildRetailDistributionSolutionFlow(r.Context(), actorID, input)
+	writeResult(w, http.StatusCreated, result, err)
+}
+
+func (h *Handler) createSMTMESSolutionFlow(w http.ResponseWriter, r *http.Request) {
+	actorID, orgID, ok := h.actorAndOrganization(w, r)
+	if !ok {
+		return
+	}
+	var input ERPSolutionFlowRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &input) {
+			return
+		}
+	}
+	input.OrganizationID = orgID
+	result, err := h.service.BuildSMTMESSolutionFlow(r.Context(), actorID, input)
 	writeResult(w, http.StatusCreated, result, err)
 }
 

@@ -192,6 +192,15 @@ The stage principle is SaaS management platform first, then platform-created or 
 
 The `000` baseline seeds an `erpnext_manufacturing_demo` industry-solution sample in the SaaS management catalog. It includes a sample tenant database template, ERPNext-style BOM/work-order workspace metadata, and manufacturing closed-loop operation metadata. The physical sample database is still created by tenant database provisioning or a later maintenance job, not directly inside the SQL baseline transaction.
 
+## SMT Shop-Floor Execution Industry Solution
+
+- Industry `smt_manufacturing`, solution `smt_mes_v1`, module `smt_mes`, with enabled modules `erp, inventory, manufacturing, smt_mes`; it applies only to organizations on `dedicated_database` mode.
+- Migrations: `036_smt_mes_solution.sql` (shared by the platform and tenant databases: registers and creates the SMT code tables plus `smt_settings`, `smt_edge_events`, and `smt_edge_sync_log`), `037_smt_edge_platform.sql` (platform database: edge instance registry, industry catalog/assets, capability package and marketplace listing, `platform.runtime_operations` seeds), and `tenant/011_smt_mes_solution.sql` (tenant include of 036).
+- Solution flow entry point: `POST /platform/admin/organizations/{id}/industry-solution-flows/smt-mes`, applied through verify → approve → apply.
+- Shop-floor APIs live under `/api/v1/smt` (machine station context, line board, work-order step progress, SN/reel traceability, production/andon/downtime/material reports, settings, edge instances, and the webhook receiver) and are gated by the `smt_mes` module.
+- Edge bridge: the platform pushes materials, customers, products, feeder setups, and work orders to SMT-MES (`X-API-Key`); SMT-MES reports events back to `POST /api/v1/smt/hooks/{instance}` signed with `X-SMT-Signature` (HMAC-SHA256, deduplicated by `UNIQUE(instance_key, event_id)`); `POST /smt/edges/{key}/pull` provides the polling fallback.
+- See `docs/SMT-MES-SOLUTION.md` for the full design, action catalog, bridge contract, and behavioral differences from the reference SMT-MES.
+
 ## SaaS Database Naming Rules
 
 - The SaaS platform management database is `meta_org_saas`.

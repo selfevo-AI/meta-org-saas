@@ -1025,6 +1025,122 @@ func BuildERPNextManufacturingSolutionManifest(input ERPSolutionFlowRequest) Ind
 	return manifest
 }
 
+func (s *Service) BuildSMTMESSolutionFlow(ctx context.Context, actorID uuid.UUID, input ERPSolutionFlowRequest) (*IndustrySolutionChangeRequest, error) {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "smt_manufacturing"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "smt_mes_v1"
+	}
+	if input.Name == "" {
+		input.Name = "SMT MES"
+	}
+	input.EnabledModules = []string{"erp", "inventory", "manufacturing", "smt_mes"}
+	solutionManifest := BuildSMTMESSolutionManifest(input)
+	desiredAssetManifest, err := AssetManifestFromSolutionManifest(solutionManifest)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrValidation, err)
+	}
+	currentAssetManifest := IndustrySolutionAssetManifest{ManifestVersion: IndustryManifestVersion, IndustryKey: input.IndustryKey, PackageKey: input.PackageKey}
+	if input.CurrentTemplate != nil {
+		if parsed, err := AssetManifestFromSolutionManifest(*input.CurrentTemplate); err == nil {
+			currentAssetManifest = parsed
+		}
+	}
+	solutionManifest.Metadata["package_diff"] = BuildIndustrySolutionAssetDiff(currentAssetManifest, desiredAssetManifest)
+	return s.CreateIndustrySolutionChangeRequest(ctx, actorID, CreateIndustrySolutionChangeRequestInput{
+		OrganizationID:          input.OrganizationID,
+		RequestType:             "smt_mes_solution_flow",
+		Reason:                  "Create SMT MES industry solution flow",
+		SolutionManifest:        solutionManifest,
+		CurrentSolutionManifest: input.CurrentTemplate,
+	})
+}
+
+// smtMESTables lists the SMT MES code tables owned by the solution (module "smt_mes").
+var smtMESTables = []string{
+	"MLIN", "LIN1", "MMAC", "MAC1", "MFSB", "FSB1", "MOPR", "MROU", "ROU1",
+	"MPRD", "PRD1", "MCPM", "MREL", "REL1", "MSWO", "SWO1", "MRQN", "RQN1",
+	"MLOD", "LOD1", "MVER", "MLWA", "MUNT", "UNT1", "MPNL", "PNL1",
+	"MDFC", "MUDF", "MINS", "INS1", "MAND", "AND1", "MDWN", "MSET",
+}
+
+func BuildSMTMESSolutionManifest(input ERPSolutionFlowRequest) IndustrySolutionManifest {
+	if input.IndustryKey == "" {
+		input.IndustryKey = "smt_manufacturing"
+	}
+	if input.PackageKey == "" {
+		input.PackageKey = "smt_mes_v1"
+	}
+	if input.Name == "" {
+		input.Name = "SMT MES"
+	}
+	input.EnabledModules = []string{"erp", "inventory", "manufacturing", "smt_mes"}
+	manifest := BuildERPSolutionManifest(input)
+	manifest.ModuleKey = "smt_mes"
+	manifest.Metadata["solution_key"] = "smt_mes_v1"
+	manifest.Metadata["code_table_only"] = true
+	manifest.Metadata["smt_mes_tables"] = smtMESTables
+	manifest.Metadata["ui_workspaces"] = []string{"master_data", "inventory", "smt_mes", "smt_workstation", "smt_quality", "smt_reports", "developer_erp_code"}
+	manifest.Metadata["assistant_targets"] = []string{
+		"smt_line", "smt_machine", "feeder_setup", "smt_product", "reel", "smt_work_order",
+		"requisition", "loading_record", "production_unit", "panel", "unit_defect", "inspection", "andon_call", "downtime",
+	}
+	manifest.Metadata["process_loops"] = append(mapSliceFromAny(manifest.Metadata["process_loops"]),
+		map[string]any{"key": "smt_work_order_to_line", "steps": []string{"MSWO.start", "MMAC.bind", "MLOD.load", "MMAC.verify", "MINS.record"}},
+		map[string]any{"key": "smt_reel_to_loading", "steps": []string{"MREL.receive", "MRQN.issue", "MLOD.load", "MLOD.unload", "MREL.return"}},
+		map[string]any{"key": "smt_pass_to_finish", "steps": []string{"MUNT.pass", "MUNT.fail", "MUNT.repair", "MSWO.progress", "MSWO.finish", "MSWO.close"}},
+		map[string]any{"key": "smt_panel_to_split", "steps": []string{"MPNL.bind", "MUNT.pass", "MPNL.split"}},
+		map[string]any{"key": "smt_andan_to_downtime", "steps": []string{"MAND.raise", "MAND.ack", "MDWN.start", "MAND.close", "MDWN.end"}},
+	)
+	manifest.Metadata["verification_scenarios"] = append(mapSliceFromAny(manifest.Metadata["verification_scenarios"]),
+		map[string]any{"scenario_key": "smt_mes_work_order_to_finish_smoke", "steps": []string{"MSWO.start", "MMAC.bind", "MLOD.load", "MMAC.verify", "MUNT.pass", "MSWO.finish"}, "expected": []string{"MLOD", "MVER", "MUNT", "UNT1"}},
+		map[string]any{"scenario_key": "smt_mes_loading_verification_smoke", "steps": []string{"MREL.receive", "MRQN.issue", "MLOD.load", "MLOD.unload"}, "expected": []string{"MVER", "MLOD", "REL1"}},
+		map[string]any{"scenario_key": "smt_mes_andon_to_downtime_smoke", "steps": []string{"MAND.raise", "MAND.ack", "MDWN.start", "MAND.close", "MDWN.end"}, "expected": []string{"MAND", "MDWN"}},
+	)
+	manifest.Metadata["context_rules"] = append(mapSliceFromAny(manifest.Metadata["context_rules"]),
+		map[string]any{
+			"key":                  "smt_mes_shop_floor_state_context",
+			"scope":                "smt_mes",
+			"source_tables":        append(append([]string{}, smtMESTables...), "MITM", "MCRD", "MWHS"),
+			"required_permissions": []string{"erp:read", "assistant:erp"},
+			"workflow_stages":      []string{"pending", "running", "loaded", "verified", "signed_off", "in_process", "ng", "finished", "closed"},
+			"attention_budget":     "smt_shop_floor_loop",
+		},
+	)
+	manifest.Metadata["assistant_skills"] = append(mapSliceFromAny(manifest.Metadata["assistant_skills"]),
+		map[string]any{
+			"skill_key":     "smt_mes_shop_floor_operator",
+			"targets":       []string{"smt_work_order", "reel", "loading_record", "production_unit", "unit_defect", "inspection", "andon_call", "downtime"},
+			"context_rules": []string{"smt_mes_shop_floor_state_context"},
+			"allowed_tools": []string{"ontology.types.list", "ontology.objects.query", "ontology.objects.get", "ontology.objects.links", "ontology.action.execute", "erp.action.execute"},
+		},
+	)
+	manifest.Metadata["tool_definitions"] = append(mapSliceFromAny(manifest.Metadata["tool_definitions"]),
+		map[string]any{
+			"tool_key":    "smt.mlod.load",
+			"entrypoint":  "/erp/MLOD/{key}/actions/load",
+			"policy":      "smt_shop_floor_execution",
+			"permissions": []string{"erp:action"},
+			"observed_by": []string{"tool_execution", "erp_action", "smt_verification_scan", "audit_log"},
+			"risk_level":  "medium",
+		},
+		map[string]any{
+			"tool_key":    "smt.munt.pass",
+			"entrypoint":  "/erp/MUNT/{key}/actions/pass",
+			"policy":      "smt_shop_floor_execution",
+			"permissions": []string{"erp:action"},
+			"observed_by": []string{"tool_execution", "erp_action", "smt_unit_event", "audit_log"},
+			"risk_level":  "low",
+		},
+	)
+	archiveUnavailableERPWorkflows(manifest.Metadata)
+	assetManifest := buildIndustryAssetManifest(input, manifest.Metadata)
+	assetManifest.Dependencies = append(assetManifest.Dependencies, "erp.smt_mes_code_tables")
+	setIndustryAssetManifest(&manifest, assetManifest)
+	return manifest
+}
+
 type erpRuntimeWorkspaceDocument struct {
 	Module       string
 	DocumentID   string

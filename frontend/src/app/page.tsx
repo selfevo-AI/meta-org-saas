@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Code2,
+  Cpu,
   FolderKanban,
   Gauge,
   GitBranch,
@@ -127,6 +128,7 @@ const ERPCodeWorkspace = dynamic(() => import('./erp-workspace').then((module) =
 const MetaResourceWorkspace = dynamic(() => import('./meta-resource-workspace').then((module) => module.MetaResourceWorkspace), { loading: WorkspaceLoading })
 const OrganizationWorkspace = dynamic(() => import('./organization-workspace').then((module) => module.OrganizationWorkspace), { loading: WorkspaceLoading })
 const SystemAdminWorkspace = dynamic(() => import('./system-admin-workspace').then((module) => module.SystemAdminWorkspace), { loading: WorkspaceLoading })
+const SMTWorkspace = dynamic(() => import('./smt-workspace').then((module) => module.SMTWorkspace), { loading: WorkspaceLoading })
 
 type AuthMode = 'login' | 'register'
 type LoginSurface = 'tenant' | 'platform'
@@ -184,6 +186,7 @@ const domainLabels: Record<string, string> = {
   Sales: '销售',
   Retail: '零售',
   Manufacturing: 'Manufacturing',
+  SMT: 'nav.domain.smt',
 }
 
 const domainIcons: Record<string, typeof Gauge> = {
@@ -227,6 +230,7 @@ const domainIcons: Record<string, typeof Gauge> = {
   Procurement: PackageCheck,
   Sales: ShoppingCart,
   Manufacturing: Boxes,
+  SMT: Cpu,
 }
 
 function defaultSkillComponents(prompt: string): AssistantSkillComponent[] {
@@ -422,6 +426,7 @@ const dedicatedDomains = new Set([
   'Sales',
   'Retail',
   'Manufacturing',
+  'SMT',
   ...lifecycleDomains,
 ])
 const menuStorageKey = 'meta_org.menu.groups.v2'
@@ -475,7 +480,7 @@ const defaultMenuGroups: MenuGroup[] = [
   {
     id: 'archive',
     label: 'nav.group.archive',
-    domains: ['Manufacturing', 'Retail'],
+    domains: ['Manufacturing', 'Retail', 'SMT'],
   },
 ]
 
@@ -1178,7 +1183,7 @@ function normalizeMenuGroups(input?: MenuGroup[]): MenuGroup[] {
     if (!target) return
     sourceGroup.domains.forEach((domain) => {
       if (!knownDomains.has(domain) || assigned.has(domain)) return
-      const destination = domain === 'Manufacturing' || domain === 'Retail' ? groupByID.get('archive')! : target
+      const destination = domain === 'Manufacturing' || domain === 'Retail' || domain === 'SMT' ? groupByID.get('archive')! : target
       destination.domains.push(domain)
       assigned.add(domain)
     })
@@ -2839,7 +2844,9 @@ function WorkspaceApplication() {
 					<ERPBusinessModuleWorkspace token={token} module="sales" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Retail' ? (
 					<ERPBusinessModuleWorkspace token={token} module="retail" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
-				) : effectiveWorkspaceView === 'domain:Manufacturing' ? (
+				) : effectiveWorkspaceView === 'domain:SMT' ? (
+						<SMTWorkspace token={token} />
+					) : effectiveWorkspaceView === 'domain:Manufacturing' ? (
 					<ERPBusinessModuleWorkspace token={token} module="manufacturing" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />
 				) : effectiveWorkspaceView === 'domain:Finance' || effectiveWorkspaceView === 'domain:FinanceAccounting' ? (
 					<ERPBusinessModuleWorkspace token={token} module="finance" externalSelection={activeBusinessSelection} activeDocumentID={activeTenantDocumentID} />

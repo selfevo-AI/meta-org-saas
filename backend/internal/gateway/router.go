@@ -31,6 +31,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/runtime"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/saas"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/smtmes"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/systemadmin"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/tenantprojection"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/toolruntime"
@@ -63,6 +64,7 @@ type Dependencies struct {
 	RuntimeHandler          *runtime.Handler
 	ToolRuntimeHandler      *toolruntime.Handler
 	SaaSHandler             *saas.Handler
+	SMTMESHandler           *smtmes.Handler
 	SystemAdminHandler      *systemadmin.Handler
 	TenantResolver          middleware.TenantResolver
 	PlatformRoleResolver    middleware.PlatformRoleResolver
@@ -127,6 +129,9 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		}
 		if deps.SaaSHandler != nil {
 			deps.SaaSHandler.RegisterPublicRoutes(r, optionalMiddleware(deps.PublicInvitationRateLimit)...)
+		}
+		if deps.SMTMESHandler != nil {
+			deps.SMTMESHandler.RegisterHookRoutes(r)
 		}
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.AuthMiddleware(deps.JWTSecret))
@@ -274,6 +279,9 @@ func registerTenantRoutes(r chi.Router, deps *Dependencies) {
 	}
 	if deps.DocumentImportHandler != nil {
 		deps.DocumentImportHandler.RegisterRoutes(r)
+	}
+	if deps.SMTMESHandler != nil {
+		deps.SMTMESHandler.RegisterRoutes(r)
 	}
 	if deps.CostingHandler != nil {
 		deps.CostingHandler.RegisterRoutes(r)

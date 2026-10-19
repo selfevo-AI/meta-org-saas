@@ -155,6 +155,63 @@ func TestBuildERPNextManufacturingSolutionFlowRetainsHistoricalTables(t *testing
 	}
 }
 
+func TestBuildSMTMESSolutionFlowBuildsShopFloorPackage(t *testing.T) {
+	repo := &fakeRepository{role: "system_owner"}
+	service := NewService(repo)
+	organizationID := uuid.New()
+
+	result, err := service.BuildSMTMESSolutionFlow(context.Background(), uuid.New(), ERPSolutionFlowRequest{
+		OrganizationID: organizationID,
+	})
+	if err != nil {
+		t.Fatalf("BuildSMTMESSolutionFlow error: %v", err)
+	}
+	if result.RequestType != "smt_mes_solution_flow" {
+		t.Fatalf("RequestType = %q, want smt_mes_solution_flow", result.RequestType)
+	}
+	if result.OrganizationID != organizationID {
+		t.Fatalf("organization id = %s, want %s", result.OrganizationID, organizationID)
+	}
+	manifest, err := AssetManifestFromSolutionManifest(result.SolutionManifest)
+	if err != nil {
+		t.Fatalf("AssetManifestFromSolutionManifest error = %v", err)
+	}
+	if manifest.IndustryKey != "smt_manufacturing" || manifest.PackageKey != "smt_mes_v1" {
+		t.Fatalf("manifest package = %s/%s, want smt_manufacturing/smt_mes_v1", manifest.IndustryKey, manifest.PackageKey)
+	}
+	for _, tableCode := range []string{"MLIN", "MMAC", "MFSB", "MOPR", "MROU", "MPRD", "MCPM", "MREL", "MSWO", "MRQN", "MLOD", "MVER", "MLWA", "MUNT", "MPNL", "MDFC", "MUDF", "MINS", "MAND", "MDWN"} {
+		if !manifestHasDatabaseAsset(manifest, tableCode) {
+			t.Fatalf("manifest missing SMT MES code-table %s", tableCode)
+		}
+	}
+	for _, loopKey := range []string{"smt_work_order_to_line", "smt_reel_to_loading", "smt_pass_to_finish", "smt_panel_to_split", "smt_andan_to_downtime"} {
+		if !manifestHasProcessLoop(manifest, loopKey) {
+			t.Fatalf("manifest missing active shop-floor process loop %s", loopKey)
+		}
+	}
+	if archived := mapSliceFromAny(result.SolutionManifest.Metadata["archived_process_loops"]); len(archived) != 0 {
+		t.Fatalf("smt_mes flows must all resolve against registered actions, archived = %d", len(archived))
+	}
+	skills := mapSliceFromAny(result.SolutionManifest.Metadata["assistant_skills"])
+	foundSkill := false
+	for _, skill := range skills {
+		if skill["skill_key"] == "smt_mes_shop_floor_operator" {
+			foundSkill = true
+		}
+	}
+	if !foundSkill {
+		t.Fatalf("manifest missing smt_mes_shop_floor_operator skill: %#v", skills)
+	}
+	if !manifestHasProcessLoop(manifest, "requirement_to_project") {
+		t.Fatal("smt_mes solution should inherit the ERP base process loops")
+	}
+	for _, key := range []string{"database_assets", "business_functions", "runtime_operations", "ui_workspaces", "assistant_targets", "quality_gates", "verification_scenarios"} {
+		if !result.SolutionManifestHas(key) {
+			t.Fatalf("solution manifest missing %s in %#v", key, result.SolutionManifest.Metadata)
+		}
+	}
+}
+
 func solutionManifestHasTable(pkg IndustrySolutionManifest, name string) bool {
 	for _, table := range pkg.Tables {
 		if table.Name == name {

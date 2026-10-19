@@ -135,6 +135,49 @@ export function defaultWorkbenchFields(tableName: string, primaryKey: string): D
     case 'MBOM':
     case 'MWOR':
       return [primary, name, f('ItemCode', 'item', { required: true }), f('Quantity', 'quantity', { dataType: 'number', defaultValue: '1', required: true }), f('SourceWhsCode', 'sourceWarehouse'), f('FinishedWhsCode', 'warehouse'), readonly('Status', 'status')]
+    // SMT MES industry solution tables.
+    case 'MLIN':
+      return [primary, name, readonly('Status', 'status')]
+    case 'MMAC':
+      return [primary, name, f('line_code', 'lineName'), readonly('current_work_order', 'workOrder'), readonly('verified_at', 'verifiedAt'), readonly('signed_off_at', 'signedOffAt'), readonly('Status', 'status')]
+    case 'MOPR':
+      return [primary, name, f('OpType', 'opType', { options: ['SMT', 'REFLOW', 'INSPECT', 'TEST', 'ASSEMBLY', 'PACK', 'DEPANEL', 'OTHER'].map((value) => ({ value, labelKey: `ontology.opType.${value}` })) }), readonly('Status', 'status')]
+    case 'MROU':
+      return [primary, f('product_code', 'product', { required: true }), f('version', 'version'), f('active', 'active', { dataType: 'boolean', defaultValue: 'true' }), readonly('Status', 'status')]
+    case 'MPRD':
+      return [primary, name, f('version', 'version'), f('customer_code', 'customer'), readonly('Status', 'status')]
+    case 'MCPM':
+      return [primary, f('customer_code', 'customer', { required: true }), f('customer_part_no', 'customerPartNo', { required: true }), f('part_no', 'item', { required: true }), f('Remark', 'remarks')]
+    case 'MFSB':
+      return [primary, f('product_code', 'product', { required: true }), f('machine_code', 'machine', { required: true }), f('program_name', 'program'), f('version', 'version'), f('active', 'active', { dataType: 'boolean', defaultValue: 'true' }), readonly('Status', 'status')]
+    case 'MSWO':
+      return [primary, f('product_code', 'product', { required: true }), f('line_code', 'lineName'), f('plan_qty', 'planQty', { dataType: 'number', required: true, defaultValue: '0' }), readonly('done_qty', 'doneQty'), f('customer_code', 'customer'), f('route_code', 'routing'), readonly('Status', 'status')]
+    case 'MRQN':
+      return [primary, f('work_order', 'workOrder', { required: true }), f('batch_qty', 'batchQty', { dataType: 'number' }), f('loss_rate', 'lossRate', { dataType: 'number' }), f('unit_basis', 'unitBasis', { options: [{ value: 'QTY', labelKey: 'smt.unitBasis.QTY' }, { value: 'REEL', labelKey: 'smt.unitBasis.REEL' }] }), readonly('Status', 'status')]
+    case 'MDFC':
+      return [primary, name, f('Category', 'category'), readonly('Status', 'status')]
+    case 'MREL':
+      return [primary, readonly('part_no', 'item'), readonly('qty', 'quantity'), readonly('lot_no', 'lot'), readonly('status', 'status'), readonly('owner_type', 'ownership'), readonly('location', 'location'), readonly('current_slot', 'currentSlot')]
+    case 'MLOD':
+      return [primary, readonly('work_order', 'workOrder'), readonly('machine_code', 'machine'), readonly('slot_no', 'slotNo'), readonly('reel_code', 'reelCode'), readonly('part_no', 'item'), readonly('position', 'position'), readonly('status', 'status')]
+    case 'MVER':
+      return [primary, readonly('machine_code', 'machine'), readonly('slot_no', 'slotNo'), readonly('reel_code', 'reelCode'), readonly('result', 'result'), readonly('error_type', 'errorType'), readonly('message', 'message')]
+    case 'MLWA':
+      return [primary, readonly('machine_code', 'machine'), readonly('slot_no', 'slotNo'), readonly('part_no', 'item'), readonly('qty_est', 'qtyEst'), readonly('boards_left', 'boardsLeft'), readonly('status', 'status')]
+    case 'MUNT':
+      return [primary, readonly('work_order', 'workOrder'), readonly('product_code', 'product'), readonly('status', 'status'), readonly('last_seq', 'lastSeq'), readonly('fail_count', 'failCount'), readonly('panel_code', 'panel')]
+    case 'MPNL':
+      return [primary, readonly('work_order', 'workOrder'), readonly('board_count', 'boardCount'), readonly('status', 'status')]
+    case 'MUDF':
+      return [primary, readonly('sn', 'sn'), readonly('defect_code', 'defectCode'), readonly('location', 'location'), readonly('part_no', 'item'), readonly('status', 'status')]
+    case 'MINS':
+      return [primary, f('insp_type', 'inspType', { options: [{ value: 'FAI', labelKey: 'smt.inspType.FAI' }, { value: 'IPQC', labelKey: 'smt.inspType.IPQC' }] }), readonly('work_order', 'workOrder'), readonly('sample_sn', 'sampleSn'), readonly('result', 'result')]
+    case 'MAND':
+      return [primary, f('line_code', 'lineName'), f('machine_code', 'machine'), f('work_order', 'workOrder'), f('call_type', 'callType', { options: ['MATERIAL', 'EQUIPMENT', 'QUALITY', 'PROCESS', 'OTHER'].map((value) => ({ value, labelKey: `smt.andonType.${value}` })) }), readonly('status', 'status'), f('description', 'description'), f('cause', 'cause'), f('solution', 'solution')]
+    case 'MDWN':
+      return [primary, f('machine_code', 'machine'), f('line_code', 'lineName'), f('reason_type', 'reasonType', { options: ['EQUIPMENT', 'MATERIAL', 'CHANGEOVER', 'QUALITY', 'PROCESS', 'PLANNED', 'OTHER'].map((value) => ({ value, labelKey: `smt.downtimeReason.${value}` })) }), f('reason', 'reason'), f('planned', 'planned', { dataType: 'boolean', defaultValue: 'false' }), readonly('started_at', 'startedAt'), f('ended_at', 'endedAt')]
+    case 'MSET':
+      return [primary, f('Value', 'value'), f('Description', 'description')]
   }
   if (primaryKey !== 'DocEntry') return [primary, name, f('Comments', 'remarks')]
   const payment = tableName === 'MRCT' || tableName === 'MVPM'
@@ -161,6 +204,20 @@ export function defaultWorkbenchLineFields(tableName: string): DocumentWorkbench
   if (tableName === 'RCT1' || tableName === 'VPM1') return [line, f('TargetKey', 'invoice', { readOnly: true }), f('Amount', 'amount', { readOnly: true }), f('Currency', 'currency', { readOnly: true })]
   if (tableName === 'CRD1') return [line, f('Address', 'address'), f('City', 'city'), f('Country', 'country')]
   if (tableName === 'ITM1') return [line, f('Price', 'price', { dataType: 'number' }), f('Currency', 'currency', { defaultValue: 'CNY' })]
+  // SMT MES industry solution detail rows.
+  if (tableName === 'LIN1') return [line, f('MachineCode', 'machine', { required: true }), f('Name', 'name'), f('MachineType', 'machineType')]
+  if (tableName === 'MAC1') return [line, f('SlotNo', 'slotNo', { required: true }), f('Barcode', 'barcode', { required: true }), f('Locked', 'locked', { dataType: 'boolean', defaultValue: 'false' })]
+  if (tableName === 'FSB1') return [line, f('SlotNo', 'slotNo', { required: true }), f('PartNo', 'item', { required: true }), f('AltPartNos', 'altParts'), f('Remark', 'remarks')]
+  if (tableName === 'ROU1') return [line, f('Seq', 'seq', { dataType: 'integer', required: true }), f('OpCode', 'operation', { required: true }), f('Remark', 'remarks')]
+  if (tableName === 'PRD1') return [line, f('PartNo', 'item', { required: true }), f('Qty', 'quantity', { dataType: 'number', defaultValue: '1', required: true }), f('RefDesignators', 'refDesignators'), f('AltPartNos', 'altParts')]
+  if (tableName === 'REL1') return [line, f('type', 'txType', { readOnly: true }), f('qty_change', 'qtyChange', { dataType: 'number', readOnly: true }), f('qty_after', 'qtyAfter', { dataType: 'number', readOnly: true }), f('ref', 'ref', { readOnly: true }), f('remark', 'remarks', { readOnly: true })]
+  if (tableName === 'LOD1') return [line, f('action', 'action', { readOnly: true }), f('reel_code', 'reelCode', { readOnly: true }), f('part_no', 'item', { readOnly: true }), f('operator', 'operator', { readOnly: true }), f('created_at', 'createdAt', { readOnly: true })]
+  if (tableName === 'SWO1') return [line, f('PartNo', 'item', { readOnly: true }), f('RequiredQty', 'requiredQty', { dataType: 'number', readOnly: true }), f('IssuedQty', 'issuedQty', { dataType: 'number', readOnly: true }), f('Gap', 'gap', { dataType: 'number', readOnly: true })]
+  if (tableName === 'RQN1') return [line, f('PartNo', 'item', { required: true }), f('RequiredQty', 'requiredQty', { dataType: 'number' }), f('IssuedQty', 'issuedQty', { dataType: 'number', readOnly: true })]
+  if (tableName === 'UNT1') return [line, f('seq', 'seq', { dataType: 'integer', readOnly: true }), f('operation_code', 'operation', { readOnly: true }), f('result', 'result', { readOnly: true }), f('reject_type', 'rejectType', { readOnly: true }), f('defect_code', 'defectCode', { readOnly: true }), f('location', 'location', { readOnly: true }), f('machine_code', 'machine', { readOnly: true }), f('created_at', 'createdAt', { readOnly: true })]
+  if (tableName === 'PNL1') return [line, f('pos', 'pos', { dataType: 'integer', required: true }), f('sn', 'sn', { required: true })]
+  if (tableName === 'INS1') return [line, f('ItemName', 'itemName'), f('Result', 'result'), f('Remark', 'remarks')]
+  if (tableName === 'AND1') return [line, f('action', 'action', { readOnly: true }), f('actor', 'operator', { readOnly: true }), f('note', 'notes', { readOnly: true }), f('created_at', 'createdAt', { readOnly: true })]
   return [line, f('ItemCode', 'item', { required: true }), f('Dscription', 'description'), f('Quantity', 'quantity', { dataType: 'number', defaultValue: '1', required: true }), f('Price', 'price', { dataType: 'number', defaultValue: '0', required: true }), f('TaxRate', 'taxRate', { dataType: 'number', defaultValue: '0' }), f('WhsCode', 'warehouse', { required: true })]
 }
 

@@ -48,3 +48,6 @@ frontend/.playwright/
 .env.*
 !.env.example
 !.env.*.example
+
+# Local agent workspace data
+.workbuddy/

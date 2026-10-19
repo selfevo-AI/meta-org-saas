@@ -38,6 +38,8 @@ This directory now uses staged baseline migrations instead of the historical
 33. `033_ontology_document_imports.sql`
 34. `034_document_import_operations.sql`
 35. `035_migration_line_endings.sql`
+36. `036_smt_mes_solution.sql`
+37. `037_smt_edge_platform.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -51,6 +53,7 @@ Physical tenant databases use their own tenant migration directory:
 8. `tenant/008_operational_ontology_ledger.sql`
 9. `tenant/009_ontology_document_imports.sql`
 10. `tenant/010_migration_line_endings.sql`
+11. `tenant/011_smt_mes_solution.sql`
 
 The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
@@ -624,6 +627,27 @@ tenant stages, including validated foreign keys and catalog/source relationships
 The import integration suite additionally tests concurrent confirmation,
 rollback, stale review rejection, human-only authorization, and document queries.
 See `docs/document-imports.md` for formats, API contracts, and verification commands.
+
+## SMT MES Industry Solution
+
+`036_smt_mes_solution.sql` owns the SMT shop-floor stage. It registers and
+creates the SMT code tables through the `MREG` registry and
+`create_erp_master`/`create_erp_child` (line, machine/slot, feeder setup,
+operation, routing, product BOM, customer part map, reel, work order,
+requisition, loading record, verification scan, low-material alert, unit,
+panel, defect code, unit defect, inspection, andon call, downtime, settings),
+adds the tenant-local `smt_settings` key/value table plus the
+`smt_edge_events`/`smt_edge_sync_log` integration inbox and sync log, and seeds
+the `smt_mes` SaaS module. `037_smt_edge_platform.sql` owns the platform-side
+artifacts: `platform.smt_edge_instances`, the `smt_manufacturing` industry
+category and `smt_mes_v1` solution with its database/module/workspace assets,
+the `smt_mes_v1` capability package and marketplace listing, and the
+`platform.runtime_operations` seeds for the shop-floor workspace and read
+surfaces. Tenant migration `011_smt_mes_solution.sql` includes `036`, so every
+dedicated tenant database owns the same shop-floor tables without cross-database
+foreign keys. Both files are additive and idempotent; they do not edit or accept
+drift for any earlier baseline. See `docs/SMT-MES-SOLUTION.md` for the action
+catalog, edge bridge contract, and verification steps.
 
 ## AI Audit Retention
 

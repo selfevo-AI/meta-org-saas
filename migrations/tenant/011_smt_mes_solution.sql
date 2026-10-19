@@ -1,0 +1,5 @@
+-- SMT MES industry solution (tenant business scope).
+-- Expands the shared platform migration that registers the SMT code tables,
+-- tenant settings, and edge integration inbox/sync tables.
+--
+-- tenantdb:include ../036_smt_mes_solution.sql
