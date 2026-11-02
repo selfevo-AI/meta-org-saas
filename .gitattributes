@@ -1,3 +1,20 @@
+# Source is stored with LF and checked out with LF on every platform, so gofmt,
+# eslint and the migration checksums behave the same on Windows as in CI.
+* text=auto eol=lf
+
 # Migration checksums must not depend on Windows checkout settings.
 migrations/*.sql text eol=lf
 migrations/tenant/*.sql text eol=lf
+
+# Windows-only scripts keep their native line endings.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

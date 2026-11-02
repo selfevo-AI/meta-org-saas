@@ -697,6 +697,8 @@ const zh: Dictionary = {
   'apiError.validation': '请求参数无效，请检查后重试。',
   'apiError.unauthorized': '登录状态已失效，请重新登录。',
   'apiError.forbidden': '没有执行此操作的权限。',
+  'apiError.authorityInsufficient': '此操作需要组织内的审核者或管理员权限。',
+  'apiError.authorityHumanRequired': '此操作必须由人类成员执行；Agent 需通过已审批的工具运行时。',
   'apiError.notFound': '请求的资源不存在。',
   'apiError.conflict': '操作与当前状态冲突，请刷新后重试。',
   'apiError.rateLimited': '请求过于频繁，请稍后重试。',

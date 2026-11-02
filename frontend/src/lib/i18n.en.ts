@@ -686,6 +686,8 @@ const en: Record<string, string> = {
   'apiError.validation': 'Invalid request. Please check the input and retry.',
   'apiError.unauthorized': 'Your session has expired. Please sign in again.',
   'apiError.forbidden': 'You do not have permission to perform this action.',
+  'apiError.authorityInsufficient': 'This action requires reviewer or administrator authority in the organization.',
+  'apiError.authorityHumanRequired': 'This action must be performed by a human member; agents go through the approved tool runtime.',
   'apiError.notFound': 'The requested resource was not found.',
   'apiError.conflict': 'The operation conflicts with the current state. Refresh and retry.',
   'apiError.rateLimited': 'Too many requests. Please retry later.',

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -20,28 +21,32 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
+	// Reference data and voids reshape every downstream figure, so they stay
+	// with reviewers; day-to-day rate cards and ledger entries remain open to
+	// executors.
+	reviewer := r.With(middleware.RequireAuthority(middleware.AuthorityReviewer))
 	r.Get("/costing/currencies", h.listCurrencies)
-	r.Post("/costing/currencies", h.upsertCurrency)
-	r.Patch("/costing/currencies/{code}", h.upsertCurrency)
-	r.Post("/costing/currencies/{code}/void", h.voidCurrency)
+	reviewer.Post("/costing/currencies", h.upsertCurrency)
+	reviewer.Patch("/costing/currencies/{code}", h.upsertCurrency)
+	reviewer.Post("/costing/currencies/{code}/void", h.voidCurrency)
 	r.Get("/costing/exchange-rates", h.listExchangeRates)
-	r.Post("/costing/exchange-rates", h.createExchangeRate)
-	r.Patch("/costing/exchange-rates/{id}", h.updateExchangeRate)
-	r.Post("/costing/exchange-rates/{id}/void", h.voidExchangeRate)
+	reviewer.Post("/costing/exchange-rates", h.createExchangeRate)
+	reviewer.Patch("/costing/exchange-rates/{id}", h.updateExchangeRate)
+	reviewer.Post("/costing/exchange-rates/{id}/void", h.voidExchangeRate)
 	r.Post("/costing/convert", h.convert)
 	r.Get("/costing/rate-cards", h.listRateCards)
 	r.Post("/costing/rate-cards", h.createRateCard)
 	r.Patch("/costing/rate-cards/{id}", h.updateRateCard)
-	r.Post("/costing/rate-cards/{id}/void", h.voidRateCard)
+	reviewer.Post("/costing/rate-cards/{id}/void", h.voidRateCard)
 	r.Get("/costing/ledger-entries", h.listLedgerEntries)
 	r.Post("/costing/ledger-entries", h.createLedgerEntry)
 	r.Patch("/costing/ledger-entries/{id}", h.updateLedgerEntry)
-	r.Post("/costing/ledger-entries/{id}/void", h.voidLedgerEntry)
+	reviewer.Post("/costing/ledger-entries/{id}/void", h.voidLedgerEntry)
 	r.Get("/costing/summary", h.summary)
 	r.Get("/costing/budgets", h.listBudgets)
-	r.Post("/costing/budgets", h.createBudget)
-	r.Patch("/costing/budgets/{id}", h.updateBudget)
-	r.Post("/costing/budgets/{id}/void", h.voidBudget)
+	reviewer.Post("/costing/budgets", h.createBudget)
+	reviewer.Patch("/costing/budgets/{id}", h.updateBudget)
+	reviewer.Post("/costing/budgets/{id}/void", h.voidBudget)
 }
 
 func (h *Handler) listCurrencies(w http.ResponseWriter, r *http.Request) {

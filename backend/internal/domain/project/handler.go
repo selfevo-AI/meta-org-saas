@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -28,6 +29,10 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
+	// Approval, acceptance and lifecycle decisions are reviewer gates in the
+	// Plan/Do/Change/Accept/Learn loop; drafting and analysis stay open to
+	// executors.
+	reviewer := r.With(middleware.RequireAuthority(middleware.AuthorityReviewer))
 	r.Post("/requirements", h.createRequirement)
 	r.Get("/requirements", h.listRequirements)
 	r.Get("/requirements/{id}", h.getRequirement)
@@ -36,8 +41,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/requirements/{id}/documents", h.listRequirementDocuments)
 	r.Get("/requirement-documents/{id}/download", h.downloadRequirementDocument)
 	r.Post("/requirements/{id}/analyze", h.analyzeRequirement)
-	r.Post("/requirements/{id}/approve", h.approveRequirement)
-	r.Post("/requirements/{id}/convert-to-project", h.convertRequirement)
+	reviewer.Post("/requirements/{id}/approve", h.approveRequirement)
+	reviewer.Post("/requirements/{id}/convert-to-project", h.convertRequirement)
 	r.Post("/requirements/{id}/analysis-workflows", h.startRequirementAnalysisWorkflow)
 	r.Get("/requirements/{id}/analysis-workflows", h.listRequirementAnalysisWorkflows)
 	r.Post("/requirements/{id}/analysis-workflows/sync", h.syncLatestRequirementAnalysisWorkflow)
@@ -52,7 +57,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/projects/{id}/workflows", h.bindProjectWorkflow)
 	r.Get("/projects/{id}/workflows", h.listProjectWorkflows)
 	r.Post("/projects/{id}/match-actors", h.matchProjectActors)
-	r.Post("/projects/{id}/status", h.updateProjectStatus)
+	reviewer.Post("/projects/{id}/status", h.updateProjectStatus)
 	r.Get("/projects/{id}/overview", h.getProjectOverview)
 	r.Post("/projects/{id}/ai-analyses", h.analyzeProjectStage)
 	r.Get("/projects/{id}/ai-analyses", h.listProjectStageAIRuns)
@@ -62,8 +67,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/projects/{id}/deliverables", h.listDeliverables)
 	r.Patch("/deliverables/{id}", h.updateDeliverable)
 	r.Post("/deliverables/{id}/submit", h.submitDeliverable)
-	r.Post("/deliverables/{id}/accept", h.acceptDeliverable)
-	r.Post("/deliverables/{id}/reject", h.rejectDeliverable)
+	reviewer.Post("/deliverables/{id}/accept", h.acceptDeliverable)
+	reviewer.Post("/deliverables/{id}/reject", h.rejectDeliverable)
 
 	r.Post("/projects/{id}/cost-entries", h.createCostEntry)
 	r.Get("/projects/{id}/cost-entries", h.listCostEntries)
@@ -72,7 +77,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 
 	r.Post("/projects/{id}/evaluations", h.createProjectEvaluation)
 	r.Get("/projects/{id}/evaluations", h.listProjectEvaluations)
-	r.Post("/projects/{id}/close-feedback", h.closeFeedback)
+	reviewer.Post("/projects/{id}/close-feedback", h.closeFeedback)
 }
 
 func (h *Handler) createRequirement(w http.ResponseWriter, r *http.Request) {

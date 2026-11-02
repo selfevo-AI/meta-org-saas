@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/dberrors"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -29,27 +30,33 @@ func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
-	r.Post("/finance/adapters", h.createAdapter)
+	// Adapters make the server call operator-supplied endpoints, so configuring
+	// them is an organization-admin decision. Posting, submitting and voiding
+	// change the books and stay with reviewers; drafting and importing remain
+	// open to executors.
+	admin := r.With(middleware.RequireAuthority(middleware.AuthorityOrganizationAdmin))
+	reviewer := r.With(middleware.RequireAuthority(middleware.AuthorityReviewer))
+	admin.Post("/finance/adapters", h.createAdapter)
 	r.Get("/finance/adapters", h.listAdapters)
-	r.Patch("/finance/adapters/{id}", h.updateAdapter)
-	r.Post("/finance/adapters/{id}/test", h.testAdapter)
+	admin.Patch("/finance/adapters/{id}", h.updateAdapter)
+	admin.Post("/finance/adapters/{id}/test", h.testAdapter)
 	r.Post("/finance/export-batches", h.createExportBatch)
 	r.Get("/finance/export-batches", h.listExportBatches)
 	r.Get("/finance/export-batches/{id}", h.getExportBatch)
-	r.Post("/finance/export-batches/{id}/submit", h.submitExportBatch)
+	reviewer.Post("/finance/export-batches/{id}/submit", h.submitExportBatch)
 	r.Post("/finance/accounting-batches", h.createExportBatch)
 	r.Get("/finance/accounting-batches", h.listExportBatches)
 	r.Get("/finance/accounting-batches/{id}", h.getExportBatch)
-	r.Post("/finance/accounting-batches/{id}/submit", h.submitExportBatch)
+	reviewer.Post("/finance/accounting-batches/{id}/submit", h.submitExportBatch)
 	r.Get("/finance/reconciliation", h.listReconciliation)
-	r.Post("/finance/gl/accounts", h.createGLAccount)
+	reviewer.Post("/finance/gl/accounts", h.createGLAccount)
 	r.Get("/finance/gl/accounts", h.listGLAccounts)
-	r.Post("/finance/gl/cost-centers", h.createGLCostCenter)
+	reviewer.Post("/finance/gl/cost-centers", h.createGLCostCenter)
 	r.Get("/finance/gl/cost-centers", h.listGLCostCenters)
 	r.Post("/finance/gl/journal-entries", h.createGLJournalEntry)
 	r.Get("/finance/gl/journal-entries", h.listGLJournalEntries)
 	r.Get("/finance/gl/journal-entries/{id}", h.getGLJournalEntry)
-	r.Post("/finance/gl/journal-entries/{id}/post", h.postGLJournalEntry)
+	reviewer.Post("/finance/gl/journal-entries/{id}/post", h.postGLJournalEntry)
 	r.Get("/finance/gl/trial-balance", h.getGLTrialBalance)
 	r.Post("/finance/imports", h.importExpenses)
 	r.Post("/finance/imports/files", h.importExpenseFile)
@@ -60,8 +67,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/finance/settlement-orders", h.listSettlementOrders)
 	r.Get("/finance/settlement-orders/{id}", h.getSettlementOrder)
 	r.Patch("/finance/settlement-orders/{id}", h.updateSettlementOrder)
-	r.Post("/finance/settlement-orders/{id}/post", h.postSettlementOrder)
-	r.Post("/finance/settlement-orders/{id}/void", h.voidSettlementOrder)
+	reviewer.Post("/finance/settlement-orders/{id}/post", h.postSettlementOrder)
+	reviewer.Post("/finance/settlement-orders/{id}/void", h.voidSettlementOrder)
 	// Old semantic ledgers cannot accept writes alongside canonical ERP ledgers.
 	for route, target := range map[string]string{
 		"receivables": "receivable_invoice", "receipts": "incoming_payment",

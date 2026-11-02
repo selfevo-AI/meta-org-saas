@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -19,12 +20,15 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
-	r.Post("/workflows/templates", h.createTemplate)
+	// Templates define who approves what, and forcing an instance status
+	// bypasses that routing; both stay with reviewers.
+	reviewer := r.With(middleware.RequireAuthority(middleware.AuthorityReviewer))
+	reviewer.Post("/workflows/templates", h.createTemplate)
 	r.Get("/workflows/templates", h.listTemplates)
 	r.Get("/workflows/templates/{id}", h.getTemplate)
 	r.Post("/workflows/instances", h.startWorkflow)
 	r.Get("/workflows/instances/{id}", h.getWorkflow)
-	r.Patch("/workflows/instances/{id}/status", h.updateStatus)
+	reviewer.Patch("/workflows/instances/{id}/status", h.updateStatus)
 	r.Patch("/tasks/{id}/status", h.completeTask)
 	r.Post("/tasks/{id}/decisions", h.recordDecision)
 	r.Get("/tasks/{id}/matrix-assignments", h.listTaskMatrixAssignments)

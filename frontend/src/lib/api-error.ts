@@ -46,6 +46,8 @@ const errorCodeMessageKeys: Record<string, string> = {
   validation_error: 'apiError.validation',
   authentication_required: 'apiError.unauthorized',
   forbidden: 'apiError.forbidden',
+  authority_insufficient: 'apiError.authorityInsufficient',
+  authority_human_required: 'apiError.authorityHumanRequired',
   not_found: 'apiError.notFound',
   conflict: 'apiError.conflict',
   rate_limited: 'apiError.rateLimited',

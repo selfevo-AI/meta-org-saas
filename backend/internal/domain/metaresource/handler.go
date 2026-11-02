@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
 type Handler struct {
@@ -23,7 +24,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/meta-resources", h.listResources)
 	r.Post("/meta-resources", h.createResource)
 	r.Get("/meta-resources/{id}", h.getResource)
-	r.Post("/meta-resources/sync-existing", h.syncExistingResources)
+	// Bulk re-sync rewrites the whole resource registry.
+	r.With(middleware.RequireAuthority(middleware.AuthorityReviewer)).Post("/meta-resources/sync-existing", h.syncExistingResources)
 	r.Get("/meta-resources/summary", h.resourceSummary)
 	r.Get("/demand-profiles", h.listDemandProfiles)
 	r.Post("/demand-profiles", h.createDemandProfile)
