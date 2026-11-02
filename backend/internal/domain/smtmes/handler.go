@@ -310,8 +310,8 @@ func instanceKey(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
 }
 
 func organizationFromRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {
-	tenant, ok := tenantFrom(r.Context())
-	if !ok {
+	tenant, err := tenantFrom(r.Context())
+	if err != nil {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "organization context is required"})
 		return uuid.Nil, false
 	}

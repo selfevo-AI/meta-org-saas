@@ -27,38 +27,38 @@ import (
 // ---------------------------------------------------------------------------
 
 var smtSettingDefaults = map[string]string{
-	"reel_uid_prefix":             "R",
-	"vendor_label_separator":      "|",
-	"vendor_label_fields":         "part_no,lot_no,qty,supplier,date_code",
-	"vendor_label_min_fields":     "1",
-	"allow_unregistered_reel":     "true",
-	"require_issued_before_load":  "false",
-	"lock_on_mismatch":            "false",
-	"low_qty_threshold":           "500",
-	"low_pcs_threshold":           "50",
-	"customer_material_policy":    "same_customer_or_self",
-	"require_issued_to_wo":        "false",
-	"requisition_loss_rate":       "2",
-	"sn_regex":                    "",
-	"pass_require_machine_ready":  "true",
-	"pass_limit_plan_qty":         "false",
-	"pass_auto_progress":          "true",
-	"fai_required":                "true",
-	"fai_require_verified":        "true",
-	"signoff_required":            "false",
-	"signoff_role":                "any",
-	"andon_fail_threshold":        "3",
-	"andon_auto_material":         "false",
-	"downtime_from_andon":         "true",
-	"downtime_from_changeover":    "true",
-	"shift_definitions":           "白班=08:00-20:00;夜班=20:00-08:00",
-	"collector_interval_sec":      "10",
-	"collector_stable_sec":        "3",
-	"voice_enabled":               "true",
-	"voice_on_ok":                 "true",
-	"scanner_interval_ms":         "50",
-	"company_name":                "SMT 车间执行",
-	"fai_check_items":             "上料核对/签核已通过;锡膏印刷无少锡/偏移/连锡;元件无缺件/错件/多件;极性与方向正确;无立碑/偏移/翘脚;焊点外观良好;AOI 首件检测通过",
+	"reel_uid_prefix":            "R",
+	"vendor_label_separator":     "|",
+	"vendor_label_fields":        "part_no,lot_no,qty,supplier,date_code",
+	"vendor_label_min_fields":    "1",
+	"allow_unregistered_reel":    "true",
+	"require_issued_before_load": "false",
+	"lock_on_mismatch":           "false",
+	"low_qty_threshold":          "500",
+	"low_pcs_threshold":          "50",
+	"customer_material_policy":   "same_customer_or_self",
+	"require_issued_to_wo":       "false",
+	"requisition_loss_rate":      "2",
+	"sn_regex":                   "",
+	"pass_require_machine_ready": "true",
+	"pass_limit_plan_qty":        "false",
+	"pass_auto_progress":         "true",
+	"fai_required":               "true",
+	"fai_require_verified":       "true",
+	"signoff_required":           "false",
+	"signoff_role":               "any",
+	"andon_fail_threshold":       "3",
+	"andon_auto_material":        "false",
+	"downtime_from_andon":        "true",
+	"downtime_from_changeover":   "true",
+	"shift_definitions":          "白班=08:00-20:00;夜班=20:00-08:00",
+	"collector_interval_sec":     "10",
+	"collector_stable_sec":       "3",
+	"voice_enabled":              "true",
+	"voice_on_ok":                "true",
+	"scanner_interval_ms":        "50",
+	"company_name":               "SMT 车间执行",
+	"fai_check_items":            "上料核对/签核已通过;锡膏印刷无少锡/偏移/连锡;元件无缺件/错件/多件;极性与方向正确;无立碑/偏移/翘脚;焊点外观良好;AOI 首件检测通过",
 }
 
 // SMTSettingDefaults exposes the SMT settings defaults (key -> default value).
@@ -188,7 +188,7 @@ func (s *Service) smtUpsertRecord(ctx context.Context, tableCode, key string, da
 	if err != nil {
 		return nil, err
 	}
-	record, err := s.repo.GetRecord(ctx, table, key)
+	_, err = s.repo.GetRecord(ctx, table, key)
 	if err == ErrNotFound {
 		payload := copyData(data)
 		payload[table.PrimaryKey] = key
@@ -254,6 +254,28 @@ func smtStatusOf(record *Record) string {
 // ---------------------------------------------------------------------------
 // Dispatch.
 // ---------------------------------------------------------------------------
+
+// smtBusinessActions lists every governed shop-floor action. Each invocation is
+// a distinct scan/operator event (a unit passes several stations, a machine is
+// re-verified after every load), so without an explicit idempotency key from
+// the caller these actions must never collide with an earlier execution.
+var smtBusinessActions = map[string]bool{
+	"MREL:receive": true, "MREL:issue": true, "MREL:return": true, "MREL:empty": true, "MREL:scrap": true,
+	"MREL:lost": true, "MREL:return-to-customer": true, "MREL:adjust": true,
+	"MLOD:load": true, "MLOD:unload": true,
+	"MMAC:bind": true, "MMAC:verify": true, "MMAC:sign-off": true, "MMAC:lock-slot": true, "MMAC:unlock-slot": true,
+	"MSWO:start": true, "MSWO:progress": true, "MSWO:finish": true, "MSWO:close": true,
+	"MRQN:issue": true, "MRQN:close": true, "MRQN:cancel": true,
+	"MUNT:pass": true, "MUNT:fail": true, "MUNT:repair": true, "MUNT:scrap": true,
+	"MPNL:bind": true, "MPNL:split": true,
+	"MINS:record": true,
+	"MAND:raise":  true, "MAND:ack": true, "MAND:close": true,
+	"MDWN:start": true, "MDWN:end": true,
+}
+
+func isSMTBusinessAction(tableCode, action string) bool {
+	return smtBusinessActions[tableCode+":"+action]
+}
 
 func (s *Service) runSMTBusinessAction(ctx context.Context, tableCode string, key string, action string, input ActionInput) (*ActionResult, error) {
 	switch tableCode + ":" + action {
@@ -347,22 +369,22 @@ func (s *Service) smtReelReceive(ctx context.Context, key string, input ActionIn
 	for index := 0; index < int(reelCount); index++ {
 		reelCode := generateReelCode(prefix, ctx, s)
 		payload := map[string]any{
-			"part_no":        partNo,
-			"name":           stringValue(item.Data, "ItemName", ""),
-			"lot_no":         stringValue(input.Data, "lot_no", ""),
-			"qty":            qtyPerReel,
-			"initial_qty":    qtyPerReel,
-			"supplier":       stringValue(input.Data, "supplier", ""),
-			"date_code":      stringValue(input.Data, "date_code", ""),
-			"vendor_barcode": stringValue(input.Data, "vendor_barcode", ""),
-			"location":       strings.TrimSpace(stringValue(input.Data, "location", "")),
-			"status":         "IN_STOCK",
-			"owner_type":     strings.ToUpper(stringValue(input.Data, "owner_type", "SELF")),
-			"customer_code":  strings.TrimSpace(stringValue(input.Data, "customer_code", "")),
+			"part_no":          partNo,
+			"name":             stringValue(item.Data, "ItemName", ""),
+			"lot_no":           stringValue(input.Data, "lot_no", ""),
+			"qty":              qtyPerReel,
+			"initial_qty":      qtyPerReel,
+			"supplier":         stringValue(input.Data, "supplier", ""),
+			"date_code":        stringValue(input.Data, "date_code", ""),
+			"vendor_barcode":   stringValue(input.Data, "vendor_barcode", ""),
+			"location":         strings.TrimSpace(stringValue(input.Data, "location", "")),
+			"status":           "IN_STOCK",
+			"owner_type":       strings.ToUpper(stringValue(input.Data, "owner_type", "SELF")),
+			"customer_code":    strings.TrimSpace(stringValue(input.Data, "customer_code", "")),
 			"customer_part_no": strings.TrimSpace(stringValue(input.Data, "customer_part_no", "")),
-			"remark":         stringValue(input.Data, "remark", ""),
-			"received_at":    now,
-			"Status":         "active",
+			"remark":           stringValue(input.Data, "remark", ""),
+			"received_at":      now,
+			"Status":           "active",
 		}
 		if payload["owner_type"] != "CUSTOMER" {
 			payload["owner_type"] = "SELF"
@@ -371,8 +393,7 @@ func (s *Service) smtReelReceive(ctx context.Context, key string, input ActionIn
 		} else if payload["customer_code"] == "" {
 			return nil, fmt.Errorf("%w: customer_code is required for customer-supplied reels", ErrValidation)
 		}
-		record, err := s.smtUpsertRecord(ctx, "MREL", reelCode, payload)
-		if err != nil {
+		if _, err := s.smtUpsertRecord(ctx, "MREL", reelCode, payload); err != nil {
 			return nil, err
 		}
 		if err := s.smtAppendChild(ctx, "MREL", reelCode, "REL1", map[string]any{
@@ -1003,13 +1024,13 @@ func (s *Service) smtMachineBind(ctx context.Context, key string, input ActionIn
 		return nil, err
 	}
 	record, err := s.smtUpsertRecord(ctx, "MMAC", key, map[string]any{
-		"current_work_order": workOrder,
-		"verified_at":        "",
-		"verified_by":        "",
-		"signed_off_at":      "",
-		"signed_off_by":      "",
-		"changeover_at":      now,
-		"changeover_from":    previous,
+		"current_work_order":   workOrder,
+		"verified_at":          "",
+		"verified_by":          "",
+		"signed_off_at":        "",
+		"signed_off_by":        "",
+		"changeover_at":        now,
+		"changeover_from":      previous,
 		"changeover_checklist": checklist,
 	})
 	if err != nil {
@@ -1182,14 +1203,14 @@ func (s *Service) smtMachineContext(ctx context.Context, machineCode string) (ma
 	signoffRequired := s.smtBoolSetting(ctx, "signoff_required")
 	ready := verifiedAt != "" && (!signoffRequired || signedOffAt != "")
 	return map[string]any{
-		"machine_code": machineCode,
-		"line_code":    stringValue(machine.Data, "line_code", ""),
-		"work_order":   workOrderCode,
-		"product_code": productCode,
-		"verified_at":  verifiedAt,
-		"verified_by":  stringValue(machine.Data, "verified_by", ""),
-		"signed_off_at": signedOffAt,
-		"signed_off_by": stringValue(machine.Data, "signed_off_by", ""),
+		"machine_code":     machineCode,
+		"line_code":        stringValue(machine.Data, "line_code", ""),
+		"work_order":       workOrderCode,
+		"product_code":     productCode,
+		"verified_at":      verifiedAt,
+		"verified_by":      stringValue(machine.Data, "verified_by", ""),
+		"signed_off_at":    signedOffAt,
+		"signed_off_by":    stringValue(machine.Data, "signed_off_by", ""),
 		"signoff_required": signoffRequired,
 		"ready":            ready,
 		"awaiting_signoff": verifiedAt != "" && signoffRequired && signedOffAt == "",
@@ -1558,10 +1579,10 @@ func (s *Service) smtMachineSnapshots(ctx context.Context, workOrder string) ([]
 		slots := make([]map[string]any, 0, len(loadings))
 		for _, loading := range loadings {
 			slots = append(slots, map[string]any{
-				"slot_no": stringValue(loading.Data, "slot_no", ""),
+				"slot_no":   stringValue(loading.Data, "slot_no", ""),
 				"reel_code": stringValue(loading.Data, "reel_code", ""),
-				"part_no": stringValue(loading.Data, "part_no", ""),
-				"position": stringValue(loading.Data, "position", "MAIN"),
+				"part_no":   stringValue(loading.Data, "part_no", ""),
+				"position":  stringValue(loading.Data, "position", "MAIN"),
 			})
 		}
 		snapshots = append(snapshots, map[string]any{
@@ -1635,7 +1656,7 @@ func (s *Service) smtAndonRaise(ctx context.Context, key string, input ActionInp
 	if s.smtBoolSetting(ctx, "downtime_from_andon") && (callType == "EQUIPMENT" || (callType == "MATERIAL" && source == "MANUAL")) {
 		if err := s.smtStartDowntime(ctx, map[string]any{
 			"machine_code": machineCode, "line_code": lineCode,
-			"work_order": stringValue(input.Data, "work_order", ""),
+			"work_order":  stringValue(input.Data, "work_order", ""),
 			"reason_type": map[string]string{"EQUIPMENT": "EQUIPMENT", "MATERIAL": "MATERIAL"}[callType],
 			"reason":      smtAndonTypes[callType] + "呼叫 " + key,
 			"source":      "ANDON", "andon_call": key,
@@ -1711,7 +1732,7 @@ func (s *Service) smtStartDowntime(ctx context.Context, data map[string]any, inp
 	now := smtNowISO()
 	_, err := s.smtUpsertRecord(ctx, "MDWN", key, map[string]any{
 		"machine_code": machineCode, "line_code": lineCode,
-		"work_order": stringValue(data, "work_order", ""),
+		"work_order":  stringValue(data, "work_order", ""),
 		"reason_type": stringValue(data, "reason_type", "OTHER"),
 		"reason":      stringValue(data, "reason", ""),
 		"planned":     isTruthy(data["planned"]),
@@ -1773,7 +1794,7 @@ func (s *Service) smtDowntimeStart(ctx context.Context, key string, input Action
 	now := smtNowISO()
 	record, err := s.smtUpsertRecord(ctx, "MDWN", key, map[string]any{
 		"machine_code": machineCode, "line_code": lineCode,
-		"work_order": strings.TrimSpace(stringValue(input.Data, "work_order", "")),
+		"work_order":  strings.TrimSpace(stringValue(input.Data, "work_order", "")),
 		"reason_type": strings.ToUpper(stringValue(input.Data, "reason_type", "OTHER")),
 		"reason":      stringValue(input.Data, "reason", ""),
 		"planned":     isTruthy(input.Data["planned"]),

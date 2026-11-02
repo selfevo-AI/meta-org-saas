@@ -190,15 +190,23 @@ func TestSMTLoadConfirmsWhenSlotOccupied(t *testing.T) {
 func TestSMTUnloadReturnsReelAndClearsVerification(t *testing.T) {
 	repo := newBusinessFakeRepository()
 	seedSMTBase(repo)
-	runSMT(t, repo, "MMAC", "M01", "verify", map[string]any{})
+	// Verification with empty required slots must fail and leave the machine unverified.
+	result := runSMT(t, repo, "MMAC", "M01", "verify", map[string]any{})
+	if result.Status != "failed" || stringValue(repo.records["MMAC"]["M01"].Data, "verified_at", "") != "" {
+		t.Fatalf("verify with empty slots: status = %s, machine %#v", result.Status, repo.records["MMAC"]["M01"].Data)
+	}
+	// The feeder setup requires both F01 and F02; load both before verifying.
 	runSMT(t, repo, "MLOD", "LD-6", "load", map[string]any{
 		"machine_code": "M01", "slot_code": "F01", "reel_code": "R0001",
+	})
+	runSMT(t, repo, "MLOD", "LD-7", "load", map[string]any{
+		"machine_code": "M01", "slot_code": "F02", "reel_code": "R0002",
 	})
 	runSMT(t, repo, "MMAC", "M01", "verify", map[string]any{})
 	if stringValue(repo.records["MMAC"]["M01"].Data, "verified_at", "") == "" {
 		t.Fatal("machine should be verified after verify with loaded setup")
 	}
-	result := runSMT(t, repo, "MLOD", "LD-6", "unload", map[string]any{
+	result = runSMT(t, repo, "MLOD", "LD-6", "unload", map[string]any{
 		"reason": "RETURN", "qty_at_unload": 1500, "old_reel_action": "RETURN",
 	})
 	if result.Status != "unloaded" {

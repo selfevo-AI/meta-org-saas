@@ -96,18 +96,10 @@ func (s *Service) runBusinessAction(ctx context.Context, tableCode string, key s
 		return s.runInTx(ctx, func(tx *Service) (*ActionResult, error) {
 			return tx.runTrialBalance(ctx, key, input)
 		})
-	case "MREL:receive", "MREL:issue", "MREL:return", "MREL:empty", "MREL:scrap", "MREL:lost", "MREL:return-to-customer", "MREL:adjust",
-		"MLOD:load", "MLOD:unload",
-		"MMAC:bind", "MMAC:verify", "MMAC:sign-off", "MMAC:lock-slot", "MMAC:unlock-slot",
-		"MSWO:start", "MSWO:progress", "MSWO:finish", "MSWO:close",
-		"MRQN:issue", "MRQN:close", "MRQN:cancel",
-		"MUNT:pass", "MUNT:fail", "MUNT:repair", "MUNT:scrap",
-		"MPNL:bind", "MPNL:split",
-		"MINS:record",
-		"MAND:raise", "MAND:ack", "MAND:close",
-		"MDWN:start", "MDWN:end":
-		return s.runSMTBusinessAction(ctx, tableCode, key, action, input)
 	default:
+		if isSMTBusinessAction(tableCode, action) {
+			return s.runSMTBusinessAction(ctx, tableCode, key, action, input)
+		}
 		return nil, fmt.Errorf("%w: %s for %s", errUnsupportedERPAction, action, tableCode)
 	}
 }

@@ -450,6 +450,9 @@ func defaultActionIdempotencySuffix(tableCode string, key string, action string,
 	case "MJDT:post":
 		return "MJDT-" + key
 	default:
+		if isSMTBusinessAction(tableCode, action) {
+			return uuid.NewString()
+		}
 		return "default"
 	}
 }

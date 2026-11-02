@@ -19,32 +19,32 @@ import (
 func (s *Service) smtScanResult(ctx context.Context, tableCode, key, action string, scan map[string]any, input ActionInput, extra map[string]any) (*ActionResult, error) {
 	scanCode := smtGenerateKey("SS")
 	payload := map[string]any{
-		"work_order": stringValue(scan, "work_order", ""),
-		"machine_code": stringValue(scan, "machine_code", ""),
-		"slot_code":    stringValue(scan, "slot_code", ""),
-		"slot_no":      stringValue(scan, "slot_no", ""),
-		"reel_code":    stringValue(scan, "reel_code", ""),
+		"work_order":       stringValue(scan, "work_order", ""),
+		"machine_code":     stringValue(scan, "machine_code", ""),
+		"slot_code":        stringValue(scan, "slot_code", ""),
+		"slot_no":          stringValue(scan, "slot_no", ""),
+		"reel_code":        stringValue(scan, "reel_code", ""),
 		"required_part_no": stringValue(scan, "required_part_no", ""),
 		"actual_part_no":   stringValue(scan, "actual_part_no", ""),
-		"result":       stringValue(scan, "result", "OK"),
-		"error_type":   stringValue(scan, "error_type", ""),
-		"message":      stringValue(scan, "message", ""),
-		"voice":        stringValue(scan, "voice", ""),
-		"operator":     smtActor(ctx, input),
-		"created_at":   smtNowISO(),
-		"Status":       "closed",
+		"result":           stringValue(scan, "result", "OK"),
+		"error_type":       stringValue(scan, "error_type", ""),
+		"message":          stringValue(scan, "message", ""),
+		"voice":            stringValue(scan, "voice", ""),
+		"operator":         smtActor(ctx, input),
+		"created_at":       smtNowISO(),
+		"Status":           "closed",
 	}
 	if _, err := s.smtUpsertRecord(ctx, "MVER", scanCode, payload); err != nil {
 		return nil, err
 	}
 	effects := map[string]any{
-		"result":       payload["result"],
-		"error_type":   payload["error_type"],
-		"message":      payload["message"],
-		"voice":        payload["voice"],
-		"scan_code":    scanCode,
-		"slot_no":      payload["slot_no"],
-		"reel_code":    payload["reel_code"],
+		"result":     payload["result"],
+		"error_type": payload["error_type"],
+		"message":    payload["message"],
+		"voice":      payload["voice"],
+		"scan_code":  scanCode,
+		"slot_no":    payload["slot_no"],
+		"reel_code":  payload["reel_code"],
 	}
 	for name, value := range extra {
 		effects[name] = value
@@ -253,16 +253,16 @@ func (s *Service) smtLoad(ctx context.Context, key string, input ActionInput) (*
 			return &ActionResult{
 				TableCode: "MLOD", Key: key, Action: "load", Status: "CONFIRM",
 				Effects: map[string]any{
-					"confirm":        true,
-					"slot_no":        slotNo,
+					"confirm":          true,
+					"slot_no":          slotNo,
 					"required_part_no": requiredPart,
-					"actual_part_no": actualPart,
-					"current_reel":   stringValue(mainLoading.Data, "reel_code", ""),
-					"current_part_no": stringValue(mainLoading.Data, "part_no", ""),
-					"message":        fmt.Sprintf("站位 %s 已有料盘 %s", slotNo, stringValue(mainLoading.Data, "reel_code", "")),
-					"voice":          fmt.Sprintf("%s 已有料盘", slotNo),
+					"actual_part_no":   actualPart,
+					"current_reel":     stringValue(mainLoading.Data, "reel_code", ""),
+					"current_part_no":  stringValue(mainLoading.Data, "part_no", ""),
+					"message":          fmt.Sprintf("站位 %s 已有料盘 %s", slotNo, stringValue(mainLoading.Data, "reel_code", "")),
+					"voice":            fmt.Sprintf("%s 已有料盘", slotNo),
 				},
-			}
+			}, nil
 		}
 	} else if splicedLoading != nil && !spliceRequested {
 		return s.smtLoadReject(ctx, key, input, machineCode, workOrderCode, slotCode, slotNo, reelCode, requiredPart, actualPart, "SLOT_HAS_SPLICE", "")
@@ -317,9 +317,9 @@ func (s *Service) smtLoad(ctx context.Context, key string, input ActionInput) (*
 		return nil, err
 	}
 	reelUpdate := map[string]any{
-		"status": "LOADED",
+		"status":       "LOADED",
 		"current_slot": machineCode + "-" + slotNo,
-		"loaded_at": now,
+		"loaded_at":    now,
 	}
 	if stringValue(reel.Data, "issued_wo", "") == "" {
 		reelUpdate["issued_wo"] = workOrderCode
@@ -351,9 +351,9 @@ func (s *Service) smtLoad(ctx context.Context, key string, input ActionInput) (*
 		"result": "OK", "error_type": "", "message": message, "voice": voice,
 	}
 	return s.smtScanResult(ctx, "MLOD", loadCode, "load", scan, input, map[string]any{
-		"load_code":    loadCode,
-		"position":     position,
-		"is_alternate": isAlternate,
+		"load_code":        loadCode,
+		"position":         position,
+		"is_alternate":     isAlternate,
 		"required_part_no": requiredPart,
 		"actual_part_no":   actualPart,
 	})
@@ -531,7 +531,7 @@ func (s *Service) smtUnloadRecord(ctx context.Context, loading *Record, data map
 	}
 	if err := s.smtAppendChild(ctx, "MLOD", loading.Key, "LOD1", map[string]any{
 		"action": "UNLOAD", "reel_code": stringValue(loading.Data, "reel_code", ""),
-		"part_no": stringValue(loading.Data, "part_no", ""),
+		"part_no":       stringValue(loading.Data, "part_no", ""),
 		"qty_at_unload": qtyAtUnload, "reason": reason,
 		"operator": smtActor(ctx, input), "created_at": now,
 	}); err != nil {
@@ -622,10 +622,10 @@ func (s *Service) smtUnload(ctx context.Context, key string, input ActionInput) 
 	return &ActionResult{
 		TableCode: "MLOD", Key: key, Action: "unload", Status: "unloaded", Record: updated,
 		Effects: map[string]any{
-			"slot_no": stringValue(loading.Data, "slot_no", ""),
+			"slot_no":   stringValue(loading.Data, "slot_no", ""),
 			"reel_code": stringValue(loading.Data, "reel_code", ""),
-			"message": fmt.Sprintf("%s 卸料完成", stringValue(loading.Data, "slot_no", "")),
-			"voice":   "卸料完成",
+			"message":   fmt.Sprintf("%s 卸料完成", stringValue(loading.Data, "slot_no", "")),
+			"voice":     "卸料完成",
 		},
 	}, nil
 }
@@ -683,9 +683,9 @@ func (s *Service) smtSyncLowMaterialAlerts(ctx context.Context, order *Record, i
 			seen[key] = true
 			entry := map[string]any{
 				"machine_code": machine.Key, "slot_no": slotNo,
-				"part_no": stringValue(loading.Data, "part_no", ""),
+				"part_no":   stringValue(loading.Data, "part_no", ""),
 				"reel_code": stringValue(loading.Data, "reel_code", ""),
-				"qty_est": estimate["qty_est"], "boards_left": estimate["boards_left"],
+				"qty_est":   estimate["qty_est"], "boards_left": estimate["boards_left"],
 				"work_order": workOrder,
 			}
 			if existing := openBySlot[key]; existing != nil {
@@ -700,9 +700,9 @@ func (s *Service) smtSyncLowMaterialAlerts(ctx context.Context, order *Record, i
 				alertCode := smtGenerateKey("LA")
 				if _, err := s.smtUpsertRecord(ctx, "MLWA", alertCode, map[string]any{
 					"work_order": workOrder, "machine_code": machine.Key, "slot_no": slotNo,
-					"part_no": stringValue(loading.Data, "part_no", ""),
+					"part_no":   stringValue(loading.Data, "part_no", ""),
 					"reel_code": stringValue(loading.Data, "reel_code", ""),
-					"qty_est": estimate["qty_est"], "boards_left": estimate["boards_left"],
+					"qty_est":   estimate["qty_est"], "boards_left": estimate["boards_left"],
 					"status": "OPEN", "Status": "OPEN",
 					"raised_at": now, "resolved_at": "", "resolution": "",
 				}); err != nil {
@@ -713,7 +713,7 @@ func (s *Service) smtSyncLowMaterialAlerts(ctx context.Context, order *Record, i
 				ref := "low:" + machine.Key + "-" + slotNo
 				if s.smtBoolSetting(ctx, "andon_auto_material") {
 					if _, err := s.smtAndonRaise(ctx, smtGenerateKey("AD"), ActionInput{Data: map[string]any{
-						"line_code": stringValue(machine.Data, "line_code", ""),
+						"line_code":    stringValue(machine.Data, "line_code", ""),
 						"machine_code": machine.Key, "work_order": workOrder,
 						"call_type": "MATERIAL", "source": "AUTO", "ref": ref,
 						"description": fmt.Sprintf("缺料预警：%s 站位 %s 料号 %s 剩余约 %.0f", machine.Key, slotNo, stringValue(loading.Data, "part_no", ""), float64FromAny(estimate["qty_est"])),

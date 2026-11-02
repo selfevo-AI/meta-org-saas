@@ -99,7 +99,7 @@ func (s *Service) smtUnitEventReject(ctx context.Context, sn, workOrder, operati
 		"seq": seq, "operation_code": operationCode, "op_type": opType,
 		"result": "REJECT", "reject_type": typeCode, "message": message, "voice": item.Voice,
 		"work_order": workOrder, "machine_code": machineCode,
-		"source": strings.ToUpper(stringValue(input.Data, "source", "MANUAL")),
+		"source":   strings.ToUpper(stringValue(input.Data, "source", "MANUAL")),
 		"operator": smtActor(ctx, input), "created_at": smtNowISO(),
 	})
 }
@@ -148,7 +148,8 @@ func (s *Service) smtUnitPass(ctx context.Context, sn string, input ActionInput)
 			// Device check mode: report without persisting a rejection event.
 			return rejection, nil
 		}
-		return s.smtReject(ctx, sn, rejectionWorkOrder(rejection), operationCode, "", rejectionSeq(rejection), machineCode, rejection.ErrorType, rejection.Message, input)
+		return s.smtReject(ctx, sn, rejectionWorkOrder(rejection), operationCode, "", rejectionSeq(rejection), machineCode,
+			stringValue(rejection.Effects, "reject_type", ""), stringValue(rejection.Effects, "message", ""), input)
 	}
 
 	if dryRun {
@@ -195,7 +196,7 @@ func (s *Service) smtValidateUnitStep(ctx context.Context, sn, operationCode, ma
 			Effects: map[string]any{
 				"result": "REJECT", "reject_type": typeCode,
 				"reject_type_cn": smtRejectError(typeCode).Message,
-				"message": message, "voice": smtRejectError(typeCode).Voice,
+				"message":        message, "voice": smtRejectError(typeCode).Voice,
 				"sn": sn, "work_order": workOrder, "seq": seq, "operation_code": operationCode,
 			},
 		}, nil
@@ -417,7 +418,7 @@ func (s *Service) smtApplyUnitPass(ctx context.Context, order, unit *Record, ste
 	lastStep := steps[len(steps)-1].Seq
 	finished := step.Seq == lastStep
 	update := map[string]any{
-		"work_order": order.Key,
+		"work_order":   order.Key,
 		"product_code": stringValue(order.Data, "product_code", ""),
 		"route_code":   stringValue(order.Data, "route_code", ""),
 		"status":       "FINISHED",
@@ -451,7 +452,7 @@ func (s *Service) smtApplyUnitPass(ctx context.Context, order, unit *Record, ste
 		"result": "PASS", "sn": sn, "seq": step.Seq,
 		"operation_code": step.OperationCode, "operation_name": step.OperationName,
 		"finished": finished, "message": fmt.Sprintf("%s 通过（%s）", sn, step.OperationName),
-		"voice":   "过站成功",
+		"voice": "过站成功",
 	}
 	if finished {
 		effects["message"] = fmt.Sprintf("%s 完工", sn)
@@ -530,7 +531,7 @@ func (s *Service) smtUnitFail(ctx context.Context, sn string, input ActionInput)
 	update := map[string]any{
 		"work_order": order.Key, "product_code": productCode,
 		"route_code": stringValue(order.Data, "route_code", ""),
-		"status": "NG", "ng_step": step.Seq, "ng_operation": step.OperationCode,
+		"status":     "NG", "ng_step": step.Seq, "ng_operation": step.OperationCode,
 		"fail_count": failCount, "updated_at": now,
 	}
 	if unit == nil || unit.CreatedAt.IsZero() {
@@ -545,7 +546,7 @@ func (s *Service) smtUnitFail(ctx context.Context, sn string, input ActionInput)
 		"seq": step.Seq, "operation_code": step.OperationCode, "op_type": step.OpType,
 		"result": "FAIL", "reject_type": "", "message": "",
 		"work_order": order.Key, "machine_code": machineCode,
-		"source": strings.ToUpper(stringValue(input.Data, "source", "MANUAL")),
+		"source":   strings.ToUpper(stringValue(input.Data, "source", "MANUAL")),
 		"operator": actor, "created_at": now,
 	}); err != nil {
 		return nil, err
@@ -629,7 +630,7 @@ func (s *Service) smtFailReject(ctx context.Context, sn, operationCode, machineC
 		Effects: map[string]any{
 			"result": "REJECT", "reject_type": typeCode,
 			"reject_type_cn": smtRejectError(typeCode).Message,
-			"message": message, "voice": smtRejectError(typeCode).Voice,
+			"message":        message, "voice": smtRejectError(typeCode).Voice,
 			"sn": sn, "work_order": workOrder,
 		},
 	}, nil
@@ -845,7 +846,7 @@ func (s *Service) smtUnitScrap(ctx context.Context, sn string, input ActionInput
 		"seq": int(numericValue(unit.Data, "last_seq")), "operation_code": stringValue(unit.Data, "ng_operation", ""),
 		"result": "SCRAP", "message": stringValue(input.Data, "reason", ""),
 		"work_order": stringValue(unit.Data, "work_order", ""),
-		"source": "MANUAL", "operator": actor, "created_at": now,
+		"source":     "MANUAL", "operator": actor, "created_at": now,
 	}); err != nil {
 		return nil, err
 	}

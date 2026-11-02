@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 10 {
-		t.Fatalf("tenant migration file count = %d, want 10", len(files))
+	if len(files) != 11 {
+		t.Fatalf("tenant migration file count = %d, want 11", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -179,6 +179,9 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		"001_tenant_business_baseline.sql", "002_tenant_projection_outbox.sql",
 	}) {
 		t.Fatalf("line-ending repair must reconcile the historical Windows migrations: %#v", files[9])
+	}
+	if files[10].Filename != "011_smt_mes_solution.sql" || !strings.Contains(files[10].SQL, "tenantdb:include ../036_smt_mes_solution.sql") {
+		t.Fatalf("SMT MES tenant migration must expand the shared platform solution migration: %#v", files[10])
 	}
 }
 

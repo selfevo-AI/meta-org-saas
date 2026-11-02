@@ -14,8 +14,19 @@ var smtMESTableCodes = []string{
 
 func TestSMTMESCatalogRegistersAllShopFloorTables(t *testing.T) {
 	catalog := DefaultCatalog()
+	// Child tables (LIN1, MAC1, ...) live under their parent definition rather
+	// than as top-level catalog entries, so resolve them through the parent.
+	childOwner := map[string]TableDefinition{}
+	for _, table := range catalog.Tables {
+		for _, childTable := range table.Children {
+			childOwner[childTable.Code] = table
+		}
+	}
 	for _, code := range smtMESTableCodes {
 		table, ok := catalog.Table(code)
+		if !ok {
+			table, ok = childOwner[code]
+		}
 		if !ok {
 			t.Fatalf("catalog missing SMT MES table %s", code)
 		}

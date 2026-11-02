@@ -78,6 +78,7 @@ const smtButton = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-l
 const smtPrimaryButton = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#DF6A24] px-3 text-sm font-semibold text-white transition hover:bg-[#c95c1c] disabled:cursor-not-allowed disabled:opacity-40'
 const smtDangerButton = 'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-900 px-3 text-sm font-semibold text-red-300 transition hover:bg-red-950/60 disabled:cursor-not-allowed disabled:opacity-40'
 const smtInput = 'h-10 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-[#DF6A24]'
+const smtLabel = 'mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400'
 const smtTableWrap = 'overflow-x-auto rounded-lg border border-slate-800'
 const smtTh = 'whitespace-nowrap px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500'
 const smtTd = 'whitespace-nowrap px-3 py-2 text-slate-300'
@@ -218,20 +219,23 @@ function useSMTResource<T>(loader: () => Promise<T>, deps: DependencyList, enabl
   useEffect(() => {
     if (!enabled) return
     let cancelled = false
-    setLoading(true)
-    setError('')
-    loader()
-      .then((result) => {
-        if (!cancelled) setData(result)
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(smtErrorText(err))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+    const timer = window.setTimeout(() => {
+      setLoading(true)
+      setError('')
+      loader()
+        .then((result) => {
+          if (!cancelled) setData(result)
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(smtErrorText(err))
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+    }, 0)
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [...deps, version, enabled])
@@ -356,13 +360,17 @@ function SMTStationTab({ token }: { token: string }) {
   }, [token])
 
   useEffect(() => {
-    void reloadContext(machineCode)
+    const timer = window.setTimeout(() => void reloadContext(machineCode), 0)
+    return () => window.clearTimeout(timer)
   }, [machineCode, reloadContext])
 
   useEffect(() => {
-    void reloadAlerts()
+    const initial = window.setTimeout(() => void reloadAlerts(), 0)
     const timer = window.setInterval(() => void reloadAlerts(), 60000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(initial)
+      window.clearInterval(timer)
+    }
   }, [reloadAlerts])
 
   const applyResult = useCallback(
@@ -985,7 +993,7 @@ function SMTUnitsTab({ token }: { token: string }) {
     } finally {
       setBusy(false)
     }
-  }, [notify, panelCode, panelUnits, t, token])
+  }, [notify, panelCode, t, token])
 
   const historyEvents = objectList(history?.events ?? history?.smt_events)
   const unitInfo = (history?.unit ?? null) as Record<string, unknown> | null
@@ -2565,7 +2573,8 @@ function SMTSettingsTab({ token }: { token: string }) {
   const [busy, setBusy] = useState(false)
 
   const stored: Record<string, string> = settings.data?.stored ?? {}
-  const values: Record<string, string> = settings.data?.values ?? {}
+  const settingValues = settings.data?.values
+  const values = useMemo<Record<string, string>>(() => settingValues ?? {}, [settingValues])
   const keys = useMemo(() => Object.keys(values).sort(), [values])
 
   const save = useCallback(async () => {
@@ -2674,7 +2683,9 @@ function SMTEdgesTab({ token }: { token: string }) {
   useEffect(() => {
     if (selected) return
     const first = edges.data?.[0]?.instance_key
-    if (first) setSelected(first)
+    if (!first) return
+    const timer = window.setTimeout(() => setSelected(first), 0)
+    return () => window.clearTimeout(timer)
   }, [edges.data, selected])
 
   const current = (edges.data ?? []).find((edge) => edge.instance_key === selected)
