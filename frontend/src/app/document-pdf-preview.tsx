@@ -12,6 +12,7 @@ export function DocumentPdfPreview({ url, name }: { url: string; name: string })
   const container = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const renderTask = useRef<RenderTask | null>(null)
+  const renderQueue = useRef<Promise<void>>(Promise.resolve())
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null)
   const [width, setWidth] = useState(0)
   const [page, setPage] = useState(1)
@@ -47,15 +48,12 @@ export function DocumentPdfPreview({ url, name }: { url: string; name: string })
     if (!document || !width || !canvas.current) return
     let cancelled = false
     const element = canvas.current
-    void (async () => {
-      // pdf.js releases a canvas asynchronously after cancel(); starting the next
-      // render before that settles throws "same canvas during multiple render()"
-      // (React StrictMode re-runs this effect immediately in development).
-      const previous = renderTask.current
-      if (previous) {
-        previous.cancel()
-        await previous.promise.catch(() => undefined)
-      }
+    // pdf.js locks a canvas for the full duration of render() and, when a task is
+    // cancelled before it initializes, aborts the page's operator list so the next
+    // render fails. Serializing through a promise queue keeps one render per canvas
+    // (React StrictMode re-runs this effect immediately in development) and lets a
+    // superseded render finish harmlessly instead of cancelling it.
+    const run = async () => {
       if (cancelled) return
       const content = await document.getPage(page)
       if (cancelled) return
@@ -75,9 +73,18 @@ export function DocumentPdfPreview({ url, name }: { url: string; name: string })
         if (renderTask.current === task) renderTask.current = null
       }
       if (!cancelled) setRendered(renderKey)
-    })().catch(() => { if (!cancelled) setFailed(true) })
-    return () => { cancelled = true; renderTask.current?.cancel() }
+    }
+    const queued = renderQueue.current.then(run)
+    renderQueue.current = queued.catch(() => undefined)
+    queued.catch((reason) => {
+      if (cancelled) return
+      console.error('PDF preview render failed', reason)
+      setFailed(true)
+    })
+    return () => { cancelled = true }
   }, [document, width, page, zoom, renderKey])
+
+  useEffect(() => () => { renderTask.current?.cancel(); renderTask.current = null }, [])
 
   return <div className="import-pdf-viewer">
     <div className="import-pdf-toolbar" role="group" aria-label={t('import.pdfControls')}>
