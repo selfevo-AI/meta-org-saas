@@ -71,33 +71,58 @@ func (p fakeAuthenticationRateLimitStatsProvider) Stats() authlimit.Stats {
 	return p.stats
 }
 
-func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
-	provider := fakeTenantPoolStatsProvider{stats: tenantdb.PoolRouterStats{
-		CachedPools:             3,
-		ActivePools:             1,
-		CapacityRejectionsTotal: 2,
-	}}
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+func healthTestDependencies() *Dependencies {
+	return &Dependencies{
+		TenantPoolStatsProvider: fakeTenantPoolStatsProvider{stats: tenantdb.PoolRouterStats{
+			CachedPools:             3,
+			ActivePools:             1,
+			CapacityRejectionsTotal: 2,
+		}},
+		TenantProjectionStatsProvider: fakeTenantProjectionStatsProvider{stats: tenantprojection.WorkerStats{
+			WorkerID:            "projection-test",
+			EventsProjected:     7,
+			LastProjectionLagMs: 12,
+			Running:             true,
+		}},
+		AuthenticationRateLimitStatsProvider: fakeAuthenticationRateLimitStatsProvider{stats: authlimit.Stats{
+			ChecksTotal:      9,
+			RateLimitedTotal: 2,
+			BlocksApplied:    1,
+		}},
+		AuditRetentionStatsProvider: fakeAuditRetentionStatsProvider{stats: auditretention.WorkerStats{
+			Running: true, RunsTotal: 3, RowsRedactedTotal: 42,
+		}},
+		AIGatewayReservationStatsProvider: fakeReservationRecoveryStatsProvider{stats: aigateway.ReservationRecoveryWorkerStats{
+			WorkerID: "reservation-test", Running: true, RunsTotal: 4, RecoveredTotal: 6,
+		}},
+		PlatformDatabaseHealthProvider: fakePlatformDatabaseHealthProvider{},
+		SecurityKernelHealthProvider:   fakeSecurityKernelHealthProvider{},
+	}
+}
 
-	projectionProvider := fakeTenantProjectionStatsProvider{stats: tenantprojection.WorkerStats{
-		WorkerID:            "projection-test",
-		EventsProjected:     7,
-		LastProjectionLagMs: 12,
-		Running:             true,
-	}}
-	authLimitProvider := fakeAuthenticationRateLimitStatsProvider{stats: authlimit.Stats{
-		ChecksTotal:      9,
-		RateLimitedTotal: 2,
-		BlocksApplied:    1,
-	}}
-	retentionProvider := fakeAuditRetentionStatsProvider{stats: auditretention.WorkerStats{
-		Running: true, RunsTotal: 3, RowsRedactedTotal: 42,
-	}}
-	reservationProvider := fakeReservationRecoveryStatsProvider{stats: aigateway.ReservationRecoveryWorkerStats{
-		WorkerID: "reservation-test", Running: true, RunsTotal: 4, RecoveredTotal: 6,
-	}}
-	healthCheck(provider, projectionProvider, authLimitProvider, retentionProvider, reservationProvider, fakePlatformDatabaseHealthProvider{}, fakeSecurityKernelHealthProvider{}).ServeHTTP(recorder, request)
+func TestPublicHealthCheckOmitsInternalStatistics(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	healthCheck(healthTestDependencies(), false).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var response healthResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Status != "ok" || response.PlatformDatabase == nil || response.SecurityKernel == nil {
+		t.Fatalf("public probe must still report dependency status: %#v", response)
+	}
+	if response.TenantDatabasePools != nil || response.TenantProjectionWorker != nil || response.RequestRateLimits != nil ||
+		response.AuthenticationRateLimits != nil || response.AuditRetentionWorker != nil || response.AIGatewayReservationRecovery != nil {
+		t.Fatalf("public probe leaked internal statistics: %s", recorder.Body.String())
+	}
+}
+
+func TestDetailedHealthCheckIncludesTenantPoolStats(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/platform/admin/health", nil)
+	healthCheck(healthTestDependencies(), true).ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -153,7 +178,7 @@ func TestHealthCheckIncludesTenantPoolStats(t *testing.T) {
 func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	healthCheck(nil, nil, nil, nil, nil, nil, fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}).ServeHTTP(recorder, request)
+	healthCheck(&Dependencies{SecurityKernelHealthProvider: fakeSecurityKernelHealthProvider{err: errors.New("connection refused")}}, false).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
@@ -169,7 +194,7 @@ func TestHealthCheckFailsWhenSecurityKernelIsUnavailable(t *testing.T) {
 func TestHealthCheckFailsWhenPlatformDatabaseIsUnavailable(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	healthCheck(nil, nil, nil, nil, nil, fakePlatformDatabaseHealthProvider{err: errors.New("connection refused")}, nil).ServeHTTP(recorder, request)
+	healthCheck(&Dependencies{PlatformDatabaseHealthProvider: fakePlatformDatabaseHealthProvider{err: errors.New("connection refused")}}, false).ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}

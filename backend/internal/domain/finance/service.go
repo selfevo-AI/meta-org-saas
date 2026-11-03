@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/safeurl"
 )
 
 var (
@@ -93,6 +93,7 @@ type ObservabilityRecorder interface {
 type Service struct {
 	repo          Repository
 	httpClient    *http.Client
+	outbound      safeurl.Policy
 	costPoster    CostPoster
 	observability ObservabilityRecorder
 }
@@ -104,6 +105,16 @@ func WithHTTPClient(client *http.Client) ServiceOption {
 		if client != nil {
 			s.httpClient = client
 		}
+	}
+}
+
+// WithOutboundPolicy sets which destinations adapters may point at and, unless
+// WithHTTPClient overrides it, builds the HTTP client that enforces the policy
+// at dial time.
+func WithOutboundPolicy(policy safeurl.Policy) ServiceOption {
+	return func(s *Service) {
+		s.outbound = policy
+		s.httpClient = policy.Client(30 * time.Second)
 	}
 }
 
@@ -122,7 +133,7 @@ func WithObservability(recorder ObservabilityRecorder) ServiceOption {
 func NewService(repo Repository, opts ...ServiceOption) *Service {
 	s := &Service{
 		repo:       repo,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: safeurl.Policy{}.Client(30 * time.Second),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -135,7 +146,7 @@ func (s *Service) CreateAdapter(ctx context.Context, input CreateAdapterInput) (
 		return nil, fmt.Errorf("%w: name, endpoint_url, and secret are required", ErrValidation)
 	}
 	normalizeCreateAdapterInput(&input)
-	if err := validateEndpoint(input.EndpointURL); err != nil {
+	if err := s.validateEndpoint(ctx, input.EndpointURL); err != nil {
 		return nil, err
 	}
 	if !validAuthType(input.AuthType) {
@@ -160,7 +171,7 @@ func (s *Service) UpdateAdapter(ctx context.Context, id uuid.UUID, input UpdateA
 		return nil, fmt.Errorf("%w: adapter id is required", ErrValidation)
 	}
 	if input.EndpointURL != nil {
-		if err := validateEndpoint(*input.EndpointURL); err != nil {
+		if err := s.validateEndpoint(ctx, *input.EndpointURL); err != nil {
 			return nil, err
 		}
 	}
@@ -1101,15 +1112,16 @@ func parseDate(raw string) (time.Time, error) {
 	return value.UTC(), nil
 }
 
-func validateEndpoint(endpoint string) error {
-	parsed, err := url.ParseRequestURI(endpoint)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%w: endpoint_url must be an absolute URL", ErrValidation)
+func (s *Service) validateEndpoint(ctx context.Context, endpoint string) error {
+	_, err := s.outbound.Validate(ctx, endpoint)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, safeurl.ErrDisallowedDestination), errors.Is(err, safeurl.ErrUnresolvableDestination):
+		return fmt.Errorf("%w: endpoint_url must point at a reachable public host: %v", ErrValidation, err)
+	default:
+		return fmt.Errorf("%w: endpoint_url must be an absolute http(s) URL: %v", ErrValidation, err)
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("%w: endpoint_url scheme must be http or https", ErrValidation)
-	}
-	return nil
 }
 
 func validAuthType(authType string) bool {

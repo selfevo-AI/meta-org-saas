@@ -146,22 +146,22 @@ function WorkspaceLoading() {
 
 const domainLabels: Record<string, string> = {
   MetaOrg: 'Meta-Org',
-  Dashboard: '系统',
-  Identity: '身份',
-  Organization: '部门',
-  Layer: '分层',
-  Capability: '能力',
-  Workflow: '工作流',
-  Observability: '可观测',
-  Verification: '验证',
-  Governance: '治理',
-  Evolution: '自进化',
-  Requirement: '需求',
-  Project: '项目',
-  Delivery: '交付',
-  Cost: '成本',
-  Feedback: '反馈评估',
-  DeveloperTools: 'AI模型及API接入',
+  Dashboard: 'nav.domain.dashboard',
+  Identity: 'nav.domain.identity',
+  Organization: 'nav.domain.organization',
+  Layer: 'nav.domain.layer',
+  Capability: 'nav.domain.capability',
+  Workflow: 'nav.domain.workflow',
+  Observability: 'nav.domain.observability',
+  Verification: 'nav.domain.verification',
+  Governance: 'nav.domain.governance',
+  Evolution: 'nav.domain.evolution',
+  Requirement: 'nav.domain.requirement',
+  Project: 'nav.domain.project',
+  Delivery: 'nav.domain.delivery',
+  Cost: 'nav.domain.cost',
+  Feedback: 'nav.domain.feedback',
+  DeveloperTools: 'nav.domain.developerTools',
   SystemAdmin: 'SystemAdmin',
   'PlatformAdmin:assistant': 'systemAdmin.platformAssistant',
   'PlatformAdmin:monitoring': 'systemAdmin.monitoringAgent',
@@ -174,17 +174,17 @@ const domainLabels: Record<string, string> = {
   'PlatformAdmin:models': 'systemAdmin.modelAndApiSettings',
   'PlatformAdmin:runtime': 'systemAdmin.apiWorkbench',
   'PlatformAdmin:catalog': 'systemAdmin.platformCatalog',
-  Finance: '财务核算',
-  Costing: '成本核算',
-  FinanceAccounting: '财务核算',
-  FinanceReceivables: '应收',
-  FinancePayables: '应付',
-  FinanceCostAccounting: '成本核算',
+  Finance: 'nav.domain.finance',
+  Costing: 'nav.domain.costing',
+  FinanceAccounting: 'nav.domain.finance',
+  FinanceReceivables: 'nav.domain.financeReceivables',
+  FinancePayables: 'nav.domain.financePayables',
+  FinanceCostAccounting: 'nav.domain.costing',
   MetaResource: 'MetaResource',
-  Inventory: '库存',
-  Procurement: '采购',
-  Sales: '销售',
-  Retail: '零售',
+  Inventory: 'nav.domain.inventory',
+  Procurement: 'nav.domain.procurement',
+  Sales: 'nav.domain.sales',
+  Retail: 'nav.domain.retail',
   Manufacturing: 'Manufacturing',
   SMT: 'nav.domain.smt',
 }
@@ -453,12 +453,12 @@ const workspaceLayoutLimits: Record<WorkspaceLayoutPane, { min: number; max: num
 const defaultMenuGroups: MenuGroup[] = [
   {
     id: 'business',
-    label: '业务闭环',
+    label: 'nav.group.business',
     domains: ['Requirement', 'Project', 'Delivery', 'Cost', 'Feedback'],
   },
   {
     id: 'baseData',
-    label: '基础数据',
+    label: 'nav.group.baseData',
     domains: [
       'MetaResource',
       'Organization',
@@ -474,7 +474,7 @@ const defaultMenuGroups: MenuGroup[] = [
   },
   {
     id: 'finance',
-    label: '财务',
+    label: 'nav.group.finance',
     domains: ['FinanceAccounting', 'FinanceReceivables', 'FinancePayables', 'FinanceCostAccounting'],
   },
   {
@@ -1862,7 +1862,7 @@ function WorkspaceApplication() {
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('加载概览失败'))
+        if (!cancelled) setError(err instanceof Error ? err.message : t('shell.loadOverviewFailed'))
       })
 
     return () => {
@@ -1956,7 +1956,7 @@ function WorkspaceApplication() {
       setOverview(overviewData)
       setInbox(inboxData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('加载概览失败'))
+      setError(err instanceof Error ? err.message : t('shell.loadOverviewFailed'))
     } finally {
       setOverviewLoading(false)
     }
@@ -2028,7 +2028,10 @@ function WorkspaceApplication() {
       const emailTaken =
         (mode === 'register' && err instanceof APIError && err.code === 'conflict') ||
         message === 'email already registered'
-      setError(emailTaken ? t('auth.emailAlreadyRegistered') : message || t('auth.failed'))
+      const accountDisabled = err instanceof APIError && err.code === 'account_disabled'
+      setError(
+        emailTaken ? t('auth.emailAlreadyRegistered') : accountDisabled ? t('auth.accountDisabled') : message || t('auth.failed'),
+      )
     } finally {
       setLoading(false)
     }
@@ -4414,7 +4417,7 @@ function RoleDirectory({ roles }: { roles: Role[] }) {
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
         <CheckCircle2 className="h-5 w-5 text-slate-500" />
-        <h2 className="text-base font-semibold text-slate-950">{t('角色目录')}</h2>
+        <h2 className="text-base font-semibold text-slate-950">{t('shell.roleCatalog')}</h2>
       </div>
       <div className="mt-5 space-y-3">
         {roles.length > 0 ? (
@@ -4430,7 +4433,7 @@ function RoleDirectory({ roles }: { roles: Role[] }) {
             </div>
           ))
         ) : (
-          <p className="text-sm text-slate-500">{t('角色目录暂不可用')}</p>
+          <p className="text-sm text-slate-500">{t('shell.roleCatalogUnavailable')}</p>
         )}
       </div>
     </section>
@@ -4532,7 +4535,7 @@ function RecentEvents({ events }: { events: MetaOrgOverview['activity'] }) {
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
         <Activity className="h-5 w-5 text-slate-500" />
-        <h2 className="text-base font-semibold text-slate-950">{t('近期事件')}</h2>
+        <h2 className="text-base font-semibold text-slate-950">{t('shell.recentEvents')}</h2>
       </div>
       <div className="mt-5 divide-y divide-slate-100">
         {events.length > 0 ? (
@@ -4544,7 +4547,7 @@ function RecentEvents({ events }: { events: MetaOrgOverview['activity'] }) {
             </div>
           ))
         ) : (
-          <p className="py-3 text-sm text-slate-500">{t('暂无事件')}</p>
+          <p className="py-3 text-sm text-slate-500">{t('shell.noEvents')}</p>
         )}
       </div>
     </section>

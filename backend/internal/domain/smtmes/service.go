@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/safeurl"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
 )
 
@@ -28,42 +29,55 @@ var (
 // httpDoer performs one JSON HTTP request; injectable for tests.
 type httpDoer func(ctx context.Context, method, url string, headers map[string]string, body []byte) (int, []byte, error)
 
-func defaultHTTPDoer(ctx context.Context, method, url string, headers map[string]string, body []byte) (int, []byte, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	var reader io.Reader
-	if body != nil {
-		reader = strings.NewReader(string(body))
+// newHTTPDoer builds the doer used for edge pull/push calls. The client
+// enforces the outbound policy at dial time so an edge whose DNS answer
+// changes after validation still cannot reach internal networks.
+func newHTTPDoer(policy safeurl.Policy) httpDoer {
+	client := policy.Client(10 * time.Second)
+	return func(ctx context.Context, method, url string, headers map[string]string, body []byte) (int, []byte, error) {
+		var reader io.Reader
+		if body != nil {
+			reader = strings.NewReader(string(body))
+		}
+		request, err := http.NewRequestWithContext(ctx, method, url, reader)
+		if err != nil {
+			return 0, nil, err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		for name, value := range headers {
+			request.Header.Set(name, value)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			return 0, nil, err
+		}
+		defer response.Body.Close()
+		payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+		if err != nil {
+			return response.StatusCode, nil, err
+		}
+		return response.StatusCode, payload, nil
 	}
-	request, err := http.NewRequestWithContext(requestCtx, method, url, reader)
-	if err != nil {
-		return 0, nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	for name, value := range headers {
-		request.Header.Set(name, value)
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer response.Body.Close()
-	payload, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return response.StatusCode, nil, err
-	}
-	return response.StatusCode, payload, nil
 }
 
 type Service struct {
-	repo *Repository
-	erp  *erp.Service
-	box  *secretbox.Box
-	do   httpDoer
+	repo     *Repository
+	erp      *erp.Service
+	box      *secretbox.Box
+	outbound safeurl.Policy
+	do       httpDoer
 }
 
 func NewService(repo *Repository, erpService *erp.Service, box *secretbox.Box) *Service {
-	return &Service{repo: repo, erp: erpService, box: box, do: defaultHTTPDoer}
+	return &Service{repo: repo, erp: erpService, box: box, do: newHTTPDoer(safeurl.Policy{})}
+}
+
+// WithOutboundPolicy sets which destinations edge instances may point at and
+// rebuilds the HTTP doer to enforce it.
+func (s *Service) WithOutboundPolicy(policy safeurl.Policy) *Service {
+	s.outbound = policy
+	s.do = newHTTPDoer(policy)
+	return s
 }
 
 // WithHTTPDoer swaps the HTTP client (tests).
@@ -245,8 +259,8 @@ func (s *Service) CreateEdge(ctx context.Context, input CreateEdgeInstanceInput)
 	if input.Name == "" || input.BaseURL == "" || input.APIKey == "" {
 		return nil, fmt.Errorf("%w: name, base_url and api_key are required", ErrValidation)
 	}
-	if !strings.HasPrefix(input.BaseURL, "http://") && !strings.HasPrefix(input.BaseURL, "https://") {
-		return nil, fmt.Errorf("%w: base_url must be an http(s) URL", ErrValidation)
+	if err := s.validateBaseURL(ctx, input.BaseURL); err != nil {
+		return nil, err
 	}
 	if s.box == nil {
 		return nil, fmt.Errorf("%w: secretbox is not configured", ErrValidation)
@@ -296,6 +310,12 @@ func (s *Service) UpdateEdge(ctx context.Context, key uuid.UUID, input UpdateEdg
 	if input.Status != "" && input.Status != EdgeInstanceStatusActive && input.Status != EdgeInstanceStatusDisabled {
 		return nil, fmt.Errorf("%w: status must be active or disabled", ErrValidation)
 	}
+	if input.BaseURL != "" {
+		input.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+		if err := s.validateBaseURL(ctx, input.BaseURL); err != nil {
+			return nil, err
+		}
+	}
 	var apiKeyCipher, secretCipher *string
 	if input.APIKey != "" {
 		encrypted, err := s.box.Encrypt(input.APIKey)
@@ -320,6 +340,18 @@ func (s *Service) UpdateEdge(ctx context.Context, key uuid.UUID, input UpdateEdg
 	}
 	instance := record.EdgeInstance
 	return &instance, nil
+}
+
+func (s *Service) validateBaseURL(ctx context.Context, baseURL string) error {
+	_, err := s.outbound.Validate(ctx, baseURL)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, safeurl.ErrDisallowedDestination), errors.Is(err, safeurl.ErrUnresolvableDestination):
+		return fmt.Errorf("%w: base_url must point at a reachable public host: %v", ErrValidation, err)
+	default:
+		return fmt.Errorf("%w: base_url must be an absolute http(s) URL: %v", ErrValidation, err)
+	}
 }
 
 func (s *Service) DeleteEdge(ctx context.Context, key uuid.UUID) error {
@@ -609,13 +641,13 @@ func (s *Service) buildPushPayload(ctx context.Context, scope string) ([]map[str
 		rows := make([]map[string]any, 0, len(items))
 		for _, item := range items {
 			rows = append(rows, map[string]any{
-				"part_no":        item["key"],
-				"name":           item["ItemName"],
-				"unit":           item["InvntryUom"],
-				"spec":           item["FrgnName"],
-				"reel_std_qty":   item["reel_std_qty"],
-				"safety_stock":   item["safety_stock"],
-				"is_active":      true,
+				"part_no":      item["key"],
+				"name":         item["ItemName"],
+				"unit":         item["InvntryUom"],
+				"spec":         item["FrgnName"],
+				"reel_std_qty": item["reel_std_qty"],
+				"safety_stock": item["safety_stock"],
+				"is_active":    true,
 			})
 		}
 		return rows, nil

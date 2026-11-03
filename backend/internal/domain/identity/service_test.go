@@ -43,6 +43,38 @@ type passwordChangeRepo struct {
 	updatedHash string
 }
 
+// loginRepo serves the stored user by email so AuthenticateUser can be driven
+// without a database.
+type loginRepo struct{ passwordChangeRepo }
+
+func (r *loginRepo) GetUserByEmail(context.Context, string) (*User, error) {
+	return r.user, nil
+}
+
+func TestAuthenticateUserRejectsDisabledAccountOnlyAfterPasswordCheck(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("Secret!2026"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	repo := &loginRepo{passwordChangeRepo{user: &User{
+		ID: uuid.New(), Name: "Disabled", Email: "disabled@example.test", PasswordHash: string(hash), AccountStatus: AccountStatusDisabled,
+	}}}
+	service := NewService(repo, "test-secret")
+
+	if _, err := service.AuthenticateUser(context.Background(), "disabled@example.test", "wrong"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("wrong password error = %v, want ErrInvalidCredentials (must not reveal disabled state)", err)
+	}
+	if _, err := service.AuthenticateUser(context.Background(), "disabled@example.test", "Secret!2026"); !errors.Is(err, ErrAccountDisabled) {
+		t.Fatalf("disabled account error = %v, want ErrAccountDisabled", err)
+	}
+
+	repo.user.AccountStatus = AccountStatusActive
+	resp, err := service.AuthenticateUser(context.Background(), "disabled@example.test", "Secret!2026")
+	if err != nil || resp == nil || resp.Token == "" {
+		t.Fatalf("active account login = (%v, %v), want token", resp, err)
+	}
+}
+
 func (r *passwordChangeRepo) CreateUser(context.Context, CreateUserInput) (*User, error) {
 	return nil, nil
 }

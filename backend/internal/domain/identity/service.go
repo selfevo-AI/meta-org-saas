@@ -20,6 +20,7 @@ import (
 
 var (
 	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrAccountDisabled        = errors.New("account disabled")
 	ErrUserNotFound           = errors.New("user not found")
 	ErrAgentNotFound          = errors.New("agent not found")
 	ErrValidation             = errors.New("validation error")
@@ -121,6 +122,11 @@ func (s *Service) AuthenticateUser(ctx context.Context, email, password string) 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
 		log.Printf("password mismatch for user %s: %v", email, err)
 		return nil, ErrInvalidCredentials
+	}
+	// Checked after the password so a disabled account is only revealed to
+	// someone who already holds its credentials.
+	if user.AccountStatus == AccountStatusDisabled {
+		return nil, ErrAccountDisabled
 	}
 
 	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name)

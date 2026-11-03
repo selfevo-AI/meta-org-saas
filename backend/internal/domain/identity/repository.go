@@ -40,9 +40,9 @@ func (r *Repository) CreateUser(ctx context.Context, input CreateUserInput) (*Us
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	user := &User{}
 	err := r.db.QueryRow(ctx,
-		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), created_at, updated_at
+		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), COALESCE(account_status, 'active'), created_at, updated_at
 		 FROM users WHERE lower(email) = lower($1)`, strings.TrimSpace(email),
-	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.AccountStatus, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get user by email: %w", err)
 	}
@@ -52,9 +52,9 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, e
 func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	user := &User{}
 	err := r.db.QueryRow(ctx,
-		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), created_at, updated_at
+		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), COALESCE(account_status, 'active'), created_at, updated_at
 		 FROM users WHERE id = $1`, id,
-	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.AccountStatus, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get user by id: %w", err)
 	}

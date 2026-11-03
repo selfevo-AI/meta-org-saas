@@ -45,6 +45,7 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/config"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/database"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/safeurl"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/secretbox"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/securitykernel"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/server"
@@ -131,6 +132,10 @@ func main() {
 	modelSecretBox, err := secretbox.New(cfg.ModelSecretKey)
 	if err != nil {
 		log.Fatalf("model secret key invalid: %v", err)
+	}
+	outboundPolicy := safeurl.Policy{AllowPrivate: cfg.OutboundAllowPrivateNetworks}
+	if cfg.OutboundAllowPrivateNetworks {
+		log.Printf("outbound policy: tenant integrations may target private networks (OUTBOUND_ALLOW_PRIVATE_NETWORKS)")
 	}
 	securityKernelConfig := securitykernel.Config{
 		URL:             cfg.SecurityKernelURL,
@@ -341,7 +346,7 @@ func main() {
 	projectHandler := project.NewHandler(projectSvc)
 
 	financeRepo := finance.NewRepository(tenantBusinessDB, modelSecretBox)
-	financeSvc := finance.NewService(financeRepo, finance.WithCostPoster(projectSvc), finance.WithObservability(obsSvc))
+	financeSvc := finance.NewService(financeRepo, finance.WithCostPoster(projectSvc), finance.WithObservability(obsSvc), finance.WithOutboundPolicy(outboundPolicy))
 	financeHandler := finance.NewHandler(financeSvc)
 
 	runtimeRepo := domainruntime.NewRepository(db)
@@ -355,7 +360,7 @@ func main() {
 	erpSvc := erp.NewService(erpRepo, erp.DefaultCatalog())
 	erpHandler := erp.NewHandler(erpSvc)
 	smtmesRepo := smtmes.NewRepository(db, tenantBusinessDB)
-	smtmesSvc := smtmes.NewService(smtmesRepo, erpSvc, modelSecretBox)
+	smtmesSvc := smtmes.NewService(smtmesRepo, erpSvc, modelSecretBox).WithOutboundPolicy(outboundPolicy)
 	smtmesHandler := smtmes.NewHandler(smtmesSvc)
 	ontologySvc := ontology.NewService(erpSvc, ontology.NewRepository(tenantBusinessDB))
 	ontologyHandler := ontology.NewHandler(ontologySvc)

@@ -42,51 +42,55 @@ type Config struct {
 	ModelSecretKey                    string
 	CorsOrigins                       []string
 	TrustedProxyCIDRs                 []string
-	AuthRateLimitWindowSeconds        int
-	AuthRateLimitMaxAttempts          int
-	AuthRateLimitFailureThreshold     int
-	AuthRateLimitBlockSeconds         int
-	AuthRegistrationMaxAttempts       int
-	SensitiveRateLimitWindowSeconds   int
-	SensitiveRateLimitMaxAttempts     int
-	SensitiveRateLimitBlockSeconds    int
-	InvitationAcceptMaxAttempts       int
-	AIGatewayRateLimitWindowSeconds   int
-	AIGatewayRateLimitMaxRequests     int
-	AIGatewayRateLimitBlockSeconds    int
-	AIGatewayInvokeTimeoutSeconds     int
-	AIGatewayStreamTimeoutSeconds     int
-	AIGatewayMaxRetries               int
-	AIGatewayChannelFailureThreshold  int
-	AIGatewayChannelCooldownSeconds   int
-	AIGatewayRecoveryEnabled          bool
-	AIGatewayReservationStaleSeconds  int
-	AIGatewayReservationPollSeconds   int
-	AIGatewayReservationLeaseSeconds  int
-	AIGatewayReservationBatchSize     int
-	AuditRetentionWorkerEnabled       bool
-	AuditRetentionDays                int
-	AuditRetentionPollSeconds         int
-	AuditRetentionBatchSize           int
-	AuditRetentionMaxBatches          int
-	BusinessAIProviderType            string
-	BusinessAIModel                   string
-	BusinessAIMaxTokens               int
-	DocumentImportProviderType        string
-	DocumentImportModel               string
-	MigrationsPath                    string
-	MetaOrgMode                       string
-	MetaOrgDistributionMode           string
-	MetaOrgLicenseMode                string
-	PlatformAdminEmail                string
-	PlatformAdminPasswordHash         string
-	SecurityKernelURL                 string
-	SecurityKernelSharedSecret        string
-	SecurityKernelEnforcementMode     string
-	MonitoringAgentSchedulerEnabled   bool
-	MonitoringAgentDailyTime          string
-	MonitoringAgentLookbackHours      int
-	MonitoringAgentMaxSignalsPerRun   int
+	// OutboundAllowPrivateNetworks lets tenant-configured integrations (finance
+	// adapters, SMT edges) target loopback/private addresses. Defaults to true
+	// only in development and test.
+	OutboundAllowPrivateNetworks     bool
+	AuthRateLimitWindowSeconds       int
+	AuthRateLimitMaxAttempts         int
+	AuthRateLimitFailureThreshold    int
+	AuthRateLimitBlockSeconds        int
+	AuthRegistrationMaxAttempts      int
+	SensitiveRateLimitWindowSeconds  int
+	SensitiveRateLimitMaxAttempts    int
+	SensitiveRateLimitBlockSeconds   int
+	InvitationAcceptMaxAttempts      int
+	AIGatewayRateLimitWindowSeconds  int
+	AIGatewayRateLimitMaxRequests    int
+	AIGatewayRateLimitBlockSeconds   int
+	AIGatewayInvokeTimeoutSeconds    int
+	AIGatewayStreamTimeoutSeconds    int
+	AIGatewayMaxRetries              int
+	AIGatewayChannelFailureThreshold int
+	AIGatewayChannelCooldownSeconds  int
+	AIGatewayRecoveryEnabled         bool
+	AIGatewayReservationStaleSeconds int
+	AIGatewayReservationPollSeconds  int
+	AIGatewayReservationLeaseSeconds int
+	AIGatewayReservationBatchSize    int
+	AuditRetentionWorkerEnabled      bool
+	AuditRetentionDays               int
+	AuditRetentionPollSeconds        int
+	AuditRetentionBatchSize          int
+	AuditRetentionMaxBatches         int
+	BusinessAIProviderType           string
+	BusinessAIModel                  string
+	BusinessAIMaxTokens              int
+	DocumentImportProviderType       string
+	DocumentImportModel              string
+	MigrationsPath                   string
+	MetaOrgMode                      string
+	MetaOrgDistributionMode          string
+	MetaOrgLicenseMode               string
+	PlatformAdminEmail               string
+	PlatformAdminPasswordHash        string
+	SecurityKernelURL                string
+	SecurityKernelSharedSecret       string
+	SecurityKernelEnforcementMode    string
+	MonitoringAgentSchedulerEnabled  bool
+	MonitoringAgentDailyTime         string
+	MonitoringAgentLookbackHours     int
+	MonitoringAgentMaxSignalsPerRun  int
 }
 
 func Load() *Config {
@@ -96,8 +100,9 @@ func Load() *Config {
 	}
 	databaseURL := getEnv("DATABASE_URL", "postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable")
 	platformDatabaseURL := getEnv("PLATFORM_DATABASE_URL", databaseURL)
+	environment := normalizedEnvironment(getEnv("META_ORG_ENVIRONMENT", "development"))
 	return &Config{
-		Environment:                       normalizedEnvironment(getEnv("META_ORG_ENVIRONMENT", "development")),
+		Environment:                       environment,
 		ServerPort:                        getEnvInt("SERVER_PORT", 8080),
 		DatabaseURL:                       databaseURL,
 		PlatformDatabaseURL:               platformDatabaseURL,
@@ -131,6 +136,7 @@ func Load() *Config {
 		ModelSecretKey:                    getEnv("MODEL_SECRET_KEY", "dev-model-secret-key-32-bytes!!!"),
 		CorsOrigins:                       getEnvSlice("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
 		TrustedProxyCIDRs:                 getEnvSlice("TRUSTED_PROXY_CIDRS", ""),
+		OutboundAllowPrivateNetworks:      getEnvBool("OUTBOUND_ALLOW_PRIVATE_NETWORKS", environment == "development" || environment == "test"),
 		AuthRateLimitWindowSeconds:        getEnvInt("AUTH_RATE_LIMIT_WINDOW_SECONDS", 60),
 		AuthRateLimitMaxAttempts:          getEnvInt("AUTH_RATE_LIMIT_MAX_ATTEMPTS", 10),
 		AuthRateLimitFailureThreshold:     getEnvInt("AUTH_RATE_LIMIT_FAILURE_THRESHOLD", 5),

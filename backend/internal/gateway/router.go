@@ -115,15 +115,10 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 		r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {
 			writeRouteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		})
-		r.Get("/health", healthCheck(
-			deps.TenantPoolStatsProvider,
-			deps.TenantProjectionStatsProvider,
-			deps.AuthenticationRateLimitStatsProvider,
-			deps.AuditRetentionStatsProvider,
-			deps.AIGatewayReservationStatsProvider,
-			deps.PlatformDatabaseHealthProvider,
-			deps.SecurityKernelHealthProvider,
-		))
+		// The public probe reports liveness and dependency status only; pool,
+		// rate-limit and worker statistics are served to platform operators at
+		// /platform/admin/health.
+		r.Get("/health", healthCheck(deps, false))
 		if deps.IdentityHandler != nil {
 			deps.IdentityHandler.RegisterPublicRoutes(r)
 		}
@@ -194,6 +189,7 @@ func registerPlatformAdminRoutes(r chi.Router, deps *Dependencies) {
 	r.Route("/platform/admin", func(r chi.Router) {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.PlatformPermissionMiddleware(deps.PlatformRoleResolver, platformauth.PermissionPlatformRead))
+			r.Get("/health", healthCheck(deps, true))
 			if deps.IdentityHandler != nil {
 				deps.IdentityHandler.RegisterPlatformManagementRoutes(r)
 			}
@@ -314,49 +310,41 @@ type dependencyHealth struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func healthCheck(poolProvider interface {
-	Stats() tenantdb.PoolRouterStats
-}, projectionProvider interface {
-	Stats() tenantprojection.WorkerStats
-}, authLimitProvider interface {
-	Stats() authlimit.Stats
-}, retentionProvider interface {
-	Stats() auditretention.WorkerStats
-}, reservationRecoveryProvider interface {
-	Stats() aigateway.ReservationRecoveryWorkerStats
-}, platformDatabaseProvider interface {
-	Ping(context.Context) error
-}, securityKernelProvider interface {
-	CheckHealth(context.Context) error
-}) http.HandlerFunc {
+// healthCheck reports liveness plus platform database and security kernel
+// status. With detailed set it also includes pool, rate-limit and background
+// worker statistics, which describe internal capacity and must only reach
+// platform operators.
+func healthCheck(deps *Dependencies, detailed bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := healthResponse{Status: "ok"}
 		statusCode := http.StatusOK
 		healthCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if poolProvider != nil {
-			stats := poolProvider.Stats()
-			response.TenantDatabasePools = &stats
+		if detailed {
+			if deps.TenantPoolStatsProvider != nil {
+				stats := deps.TenantPoolStatsProvider.Stats()
+				response.TenantDatabasePools = &stats
+			}
+			if deps.TenantProjectionStatsProvider != nil {
+				stats := deps.TenantProjectionStatsProvider.Stats()
+				response.TenantProjectionWorker = &stats
+			}
+			if deps.AuthenticationRateLimitStatsProvider != nil {
+				stats := deps.AuthenticationRateLimitStatsProvider.Stats()
+				response.RequestRateLimits = &stats
+				response.AuthenticationRateLimits = &stats
+			}
+			if deps.AuditRetentionStatsProvider != nil {
+				stats := deps.AuditRetentionStatsProvider.Stats()
+				response.AuditRetentionWorker = &stats
+			}
+			if deps.AIGatewayReservationStatsProvider != nil {
+				stats := deps.AIGatewayReservationStatsProvider.Stats()
+				response.AIGatewayReservationRecovery = &stats
+			}
 		}
-		if projectionProvider != nil {
-			stats := projectionProvider.Stats()
-			response.TenantProjectionWorker = &stats
-		}
-		if authLimitProvider != nil {
-			stats := authLimitProvider.Stats()
-			response.RequestRateLimits = &stats
-			response.AuthenticationRateLimits = &stats
-		}
-		if retentionProvider != nil {
-			stats := retentionProvider.Stats()
-			response.AuditRetentionWorker = &stats
-		}
-		if reservationRecoveryProvider != nil {
-			stats := reservationRecoveryProvider.Stats()
-			response.AIGatewayReservationRecovery = &stats
-		}
-		if platformDatabaseProvider != nil {
-			if err := platformDatabaseProvider.Ping(healthCtx); err != nil {
+		if deps.PlatformDatabaseHealthProvider != nil {
+			if err := deps.PlatformDatabaseHealthProvider.Ping(healthCtx); err != nil {
 				log.Printf("platform database health check failed: %v", err)
 				response.Status = "unavailable"
 				response.PlatformDatabase = &dependencyHealth{Status: "unavailable", Reason: "platform_database_unavailable"}
@@ -365,8 +353,8 @@ func healthCheck(poolProvider interface {
 				response.PlatformDatabase = &dependencyHealth{Status: "ok"}
 			}
 		}
-		if securityKernelProvider != nil {
-			err := securityKernelProvider.CheckHealth(healthCtx)
+		if deps.SecurityKernelHealthProvider != nil {
+			err := deps.SecurityKernelHealthProvider.CheckHealth(healthCtx)
 			if err != nil {
 				log.Printf("security kernel health check failed: %v", err)
 				response.Status = "unavailable"

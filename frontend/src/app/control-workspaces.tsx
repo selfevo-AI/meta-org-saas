@@ -348,7 +348,7 @@ export function GovernanceWorkspace({ token, currentUserId }: WorkspaceProps) {
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败')
+      setError(err instanceof Error ? err.message : 'common.operationFailed')
     } finally {
       setLoading(false)
     }
@@ -368,7 +368,7 @@ export function GovernanceWorkspace({ token, currentUserId }: WorkspaceProps) {
         },
       })
       await loadGovernance()
-    }, '权限已创建')
+    }, 'control.permissionCreated')
   }
 
   async function decideAccess(event: FormEvent<HTMLFormElement>) {
@@ -390,74 +390,74 @@ export function GovernanceWorkspace({ token, currentUserId }: WorkspaceProps) {
       })
       setLatestDecision(decision)
       await loadGovernance()
-    }, '准入决策已生成')
+    }, 'control.decisionGenerated')
   }
 
   return (
     <WorkspaceShell
-      title="权限策略"
+      title="control.permissionPolicy"
       icon={ShieldCheck}
       message={message}
       error={error}
-      onRefresh={() => run(loadGovernance, '权限数据已刷新')}
+      onRefresh={() => run(loadGovernance, 'control.permissionDataRefreshed')}
     >
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <Panel icon={Plus} title="创建权限级别行为">
+        <Panel icon={Plus} title="control.createPermissionBehavior">
           <form className="space-y-3" onSubmit={createPermission}>
             <div className="grid gap-3 sm:grid-cols-2">
               <TextInput label="Level" value={permissionForm.level} onChange={(value) => setPermissionForm({ ...permissionForm, level: value })} />
               <SelectInput
-                label="行为"
+                label="control.behavior"
                 value={permissionForm.behavior}
                 onChange={(value) => setPermissionForm({ ...permissionForm, behavior: value })}
                 options={['auto', 'notify', 'approve', 'deny']}
               />
             </div>
-            <TextInput label="权限名" value={permissionForm.name} onChange={(value) => setPermissionForm({ ...permissionForm, name: value })} />
+            <TextInput label="control.permissionName" value={permissionForm.name} onChange={(value) => setPermissionForm({ ...permissionForm, name: value })} />
             <TextArea
-              label="描述"
+              label="control.description"
               value={permissionForm.description}
               onChange={(value) => setPermissionForm({ ...permissionForm, description: value })}
             />
-            <SubmitButton loading={loading} label="创建权限" />
+            <SubmitButton loading={loading} label="control.createPermission" />
           </form>
         </Panel>
 
-        <Panel icon={Scale} title="准入决策">
+        <Panel icon={Scale} title="control.accessDecision">
           <form className="space-y-3" onSubmit={decideAccess}>
             <TextInput label="Actor ID" value={decisionActorId} onChange={setDecisionActorId} />
             <div className="grid gap-3 sm:grid-cols-2">
               <SelectInput
-                label="Actor 类型"
+                label="control.actorType"
                 value={decisionForm.actor_type}
                 onChange={(value) => setDecisionForm({ ...decisionForm, actor_type: value })}
                 options={['internal_human', 'external_human', 'internal_agent', 'external_agent']}
               />
               <SelectInput
-                label="风险"
+                label="control.risk"
                 value={decisionForm.risk_level}
                 onChange={(value) => setDecisionForm({ ...decisionForm, risk_level: value })}
                 options={['low', 'medium', 'high', 'critical']}
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <TextInput label="动作" value={decisionForm.action} onChange={(value) => setDecisionForm({ ...decisionForm, action: value })} />
-              <TextInput label="资源" value={decisionForm.resource} onChange={(value) => setDecisionForm({ ...decisionForm, resource: value })} />
+              <TextInput label="control.action" value={decisionForm.action} onChange={(value) => setDecisionForm({ ...decisionForm, action: value })} />
+              <TextInput label="control.resource" value={decisionForm.resource} onChange={(value) => setDecisionForm({ ...decisionForm, resource: value })} />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <SelectInput
-                label="权限级别"
+                label="control.permissionLevel"
                 value={decisionForm.required_level}
                 onChange={(value) => setDecisionForm({ ...decisionForm, required_level: value })}
                 options={['L1', 'L2', 'L3', 'L4']}
               />
               <TextInput
-                label="权重快照"
+                label="control.weightSnapshot"
                 value={decisionForm.weight_snapshot}
                 onChange={(value) => setDecisionForm({ ...decisionForm, weight_snapshot: value })}
               />
             </div>
-            <SubmitButton loading={loading || !decisionActorId} label="生成决策" />
+            <SubmitButton loading={loading || !decisionActorId} label="control.generateDecision" />
           </form>
           {latestDecision && (
             <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -472,14 +472,14 @@ export function GovernanceWorkspace({ token, currentUserId }: WorkspaceProps) {
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <Panel icon={ShieldCheck} title="权限目录">
+        <Panel icon={ShieldCheck} title="control.permissionCatalog">
           <List>
             {permissions.map((permission) => (
               <ListRow key={permission.id} title={permission.name} detail={`L${permission.level} · ${permission.behavior}`} />
             ))}
           </List>
         </Panel>
-        <Panel icon={Activity} title="最近准入审计">
+        <Panel icon={Activity} title="control.recentAccessAudit">
           <List>
             {decisions.map((decision) => (
               <ListRow
@@ -535,7 +535,7 @@ export function WeightWorkspace({ token, currentUserId }: WorkspaceProps) {
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败')
+      setError(err instanceof Error ? err.message : 'common.operationFailed')
     } finally {
       setLoading(false)
     }
@@ -561,7 +561,7 @@ export function WeightWorkspace({ token, currentUserId }: WorkspaceProps) {
       })
       setLatestWeight(weight)
       await loadWeights()
-    }, '上下文权重已计算')
+    }, 'control.weightComputed')
   }
 
   async function recordOutcome() {
@@ -584,36 +584,36 @@ export function WeightWorkspace({ token, currentUserId }: WorkspaceProps) {
       })
       setLatestWeight(weight)
       await loadWeights()
-    }, '结果已写入权重')
+    }, 'control.outcomeRecorded')
   }
 
   return (
-    <WorkspaceShell title="权重中心" icon={BrainCircuit} message={message} error={error} onRefresh={() => run(loadWeights, '权重已刷新')}>
+    <WorkspaceShell title="control.weightCenter" icon={BrainCircuit} message={message} error={error} onRefresh={() => run(loadWeights, 'control.weightsRefreshed')}>
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <Panel icon={Scale} title="计算上下文权重">
+        <Panel icon={Scale} title="control.computeContextWeight">
           <form className="space-y-3" onSubmit={computeWeight}>
             <TextInput label="Actor ID" value={actorId} onChange={setActorId} />
             <div className="grid gap-3 sm:grid-cols-2">
               <SelectInput
-                label="Actor 类型"
+                label="control.actorType"
                 value={form.actor_type}
                 onChange={(value) => setForm({ ...form, actor_type: value })}
                 options={['internal_human', 'external_human', 'internal_agent', 'external_agent']}
               />
               <SelectInput
-                label="风险"
+                label="control.risk"
                 value={form.risk_level}
                 onChange={(value) => setForm({ ...form, risk_level: value })}
                 options={['low', 'medium', 'high', 'critical']}
               />
             </div>
-            <TextInput label="任务类型" value={form.task_type} onChange={(value) => setForm({ ...form, task_type: value })} />
+            <TextInput label="control.taskType" value={form.task_type} onChange={(value) => setForm({ ...form, task_type: value })} />
             <div className="grid gap-3 sm:grid-cols-2">
-              <TextInput label="工作流节点" value={form.workflow_stage} onChange={(value) => setForm({ ...form, workflow_stage: value })} />
-              <TextInput label="能力 ID" value={form.capability_id} onChange={(value) => setForm({ ...form, capability_id: value })} />
+              <TextInput label="control.workflowStage" value={form.workflow_stage} onChange={(value) => setForm({ ...form, workflow_stage: value })} />
+              <TextInput label="control.capabilityId" value={form.capability_id} onChange={(value) => setForm({ ...form, capability_id: value })} />
             </div>
             <div className="flex flex-wrap gap-2">
-              <SubmitButton loading={loading || !actorId} label="计算权重" />
+              <SubmitButton loading={loading || !actorId} label="control.computeWeight" />
               <button
                 type="button"
                 onClick={recordOutcome}
@@ -621,29 +621,29 @@ export function WeightWorkspace({ token, currentUserId }: WorkspaceProps) {
                 className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                {t('记录结果')}
+                {t('control.recordOutcome')}
               </button>
             </div>
           </form>
         </Panel>
 
-        <Panel icon={Activity} title="当前权重画像">
+        <Panel icon={Activity} title="control.currentWeightProfile">
           {latestWeight ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <ScoreTile label="总分" value={latestWeight.overall_score} />
-              <ScoreTile label="专业" value={latestWeight.expertise_score} />
-              <ScoreTile label="历史" value={latestWeight.track_record_score} />
-              <ScoreTile label="可靠性" value={latestWeight.reliability_score} />
-              <ScoreTile label="上下文匹配" value={latestWeight.context_fit_score} />
-              <ScoreTile label="决策次数" value={latestWeight.decision_count / 10} display={String(latestWeight.decision_count)} />
+              <ScoreTile label="control.score.overall" value={latestWeight.overall_score} />
+              <ScoreTile label="control.score.expertise" value={latestWeight.expertise_score} />
+              <ScoreTile label="control.score.trackRecord" value={latestWeight.track_record_score} />
+              <ScoreTile label="control.score.reliability" value={latestWeight.reliability_score} />
+              <ScoreTile label="control.score.contextFit" value={latestWeight.context_fit_score} />
+              <ScoreTile label="control.score.decisionCount" value={latestWeight.decision_count / 10} display={String(latestWeight.decision_count)} />
             </div>
           ) : (
-            <EmptyText>尚未计算权重</EmptyText>
+            <EmptyText>control.noWeightYet</EmptyText>
           )}
         </Panel>
       </div>
 
-      <Panel icon={BrainCircuit} title="上下文权重排行">
+      <Panel icon={BrainCircuit} title="control.contextWeightRanking">
         <List>
           {weights.map((weight) => (
             <ListRow
@@ -717,7 +717,7 @@ export function CapabilityEvaluationWorkspace({ token, currentUserId }: Workspac
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败')
+      setError(err instanceof Error ? err.message : 'common.operationFailed')
     } finally {
       setLoading(false)
     }
@@ -746,7 +746,7 @@ export function CapabilityEvaluationWorkspace({ token, currentUserId }: Workspac
         },
       })
       await loadEvaluationData()
-    }, '能力评估已提交')
+    }, 'control.evaluationSubmitted')
   }
 
   const selectedCapability = useMemo(
@@ -756,23 +756,23 @@ export function CapabilityEvaluationWorkspace({ token, currentUserId }: Workspac
 
   return (
     <WorkspaceShell
-      title="能力评估"
+      title="control.capabilityEvaluation"
       icon={CheckCircle2}
       message={message}
       error={error}
-      onRefresh={() => run(loadEvaluationData, '评估数据已刷新')}
+      onRefresh={() => run(loadEvaluationData, 'control.evaluationDataRefreshed')}
     >
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <Panel icon={CheckCircle2} title="人类评估">
+        <Panel icon={CheckCircle2} title="control.humanEvaluation">
           <form className="space-y-3" onSubmit={createEvaluation}>
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">{t('能力')}</span>
+              <span className="text-sm font-medium text-slate-700">{t('control.capability')}</span>
               <select
                 value={form.capability_id}
                 onChange={(event) => setForm({ ...form, capability_id: event.target.value })}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               >
-                <option value="">{t('仅评估 Actor')}</option>
+                <option value="">{t('control.actorOnly')}</option>
                 {capabilities.map((capability) => (
                   <option key={capability.id} value={capability.id}>
                     {capability.name} {capability.version}
@@ -783,26 +783,26 @@ export function CapabilityEvaluationWorkspace({ token, currentUserId }: Workspac
             <div className="grid gap-3 sm:grid-cols-2">
               <TextInput label="Actor ID" value={actorId} onChange={setActorId} />
               <SelectInput
-                label="Actor 类型"
+                label="control.actorType"
                 value={form.actor_type}
                 onChange={(value) => setForm({ ...form, actor_type: value })}
                 options={['internal_human', 'external_human', 'internal_agent', 'external_agent']}
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <TextInput label="质量" value={form.quality_score} onChange={(value) => setForm({ ...form, quality_score: value })} />
-              <TextInput label="可靠性" value={form.reliability_score} onChange={(value) => setForm({ ...form, reliability_score: value })} />
-              <TextInput label="合规" value={form.compliance_score} onChange={(value) => setForm({ ...form, compliance_score: value })} />
-              <TextInput label="成本" value={form.cost_score} onChange={(value) => setForm({ ...form, cost_score: value })} />
-              <TextInput label="时延" value={form.latency_score} onChange={(value) => setForm({ ...form, latency_score: value })} />
-              <TextInput label="风险控制" value={form.risk_score} onChange={(value) => setForm({ ...form, risk_score: value })} />
+              <TextInput label="control.score.quality" value={form.quality_score} onChange={(value) => setForm({ ...form, quality_score: value })} />
+              <TextInput label="control.score.reliability" value={form.reliability_score} onChange={(value) => setForm({ ...form, reliability_score: value })} />
+              <TextInput label="control.score.compliance" value={form.compliance_score} onChange={(value) => setForm({ ...form, compliance_score: value })} />
+              <TextInput label="control.score.cost" value={form.cost_score} onChange={(value) => setForm({ ...form, cost_score: value })} />
+              <TextInput label="control.score.latency" value={form.latency_score} onChange={(value) => setForm({ ...form, latency_score: value })} />
+              <TextInput label="control.score.riskControl" value={form.risk_score} onChange={(value) => setForm({ ...form, risk_score: value })} />
             </div>
-            <TextArea label="结论" value={form.conclusion} onChange={(value) => setForm({ ...form, conclusion: value })} />
-            <SubmitButton loading={loading || (!form.capability_id && !actorId)} label="提交评估" />
+            <TextArea label="control.conclusion" value={form.conclusion} onChange={(value) => setForm({ ...form, conclusion: value })} />
+            <SubmitButton loading={loading || (!form.capability_id && !actorId)} label="control.submitEvaluation" />
           </form>
         </Panel>
 
-        <Panel icon={Sparkles} title="当前能力">
+        <Panel icon={Sparkles} title="control.currentCapability">
           {selectedCapability ? (
             <div className="space-y-3">
               <ListRow
@@ -810,15 +810,15 @@ export function CapabilityEvaluationWorkspace({ token, currentUserId }: Workspac
                 detail={`${selectedCapability.version} · ${selectedCapability.permission_level}`}
                 badge={selectedCapability.is_active ? 'active' : 'inactive'}
               />
-              <p className="text-sm text-slate-600">{selectedCapability.description || t('无描述')}</p>
+              <p className="text-sm text-slate-600">{selectedCapability.description || t('control.noDescription')}</p>
             </div>
           ) : (
-            <EmptyText>选择一个能力或仅评估 Actor</EmptyText>
+            <EmptyText>control.selectCapabilityHint</EmptyText>
           )}
         </Panel>
       </div>
 
-      <Panel icon={Activity} title="最近评估">
+      <Panel icon={Activity} title="control.recentEvaluations">
         <List>
           {evaluations.map((evaluation) => (
             <ListRow
@@ -862,7 +862,7 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
         setDepartmentId((current) => current || flatDepartments[0]?.id || '')
         setPositions(flattenDepartmentPositions(tree))
       })
-      .catch((err) => setError(err instanceof Error ? err.message : t('加载组织失败')))
+      .catch((err) => setError(err instanceof Error ? err.message : t('control.loadOrganizationFailed')))
 
     apiRequest<WorkflowTemplate[]>('/workflows/templates', { token })
       .then((data) => setTemplates(Array.isArray(data) ? data : []))
@@ -875,7 +875,7 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
 
   function addStage(stageType: WorkflowNodeData['stage_type']) {
     const id = `${stageType}-${Date.now()}`
-    const label = stageType === 'plan' ? '计划节点' : stageType === 'execute' ? '执行节点' : '复核节点'
+    const label = t(stageType === 'plan' ? 'control.stage.plan' : stageType === 'execute' ? 'control.stage.execute' : 'control.stage.review')
     setNodes((current) => [
       ...current,
       {
@@ -960,22 +960,22 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
       })
       const data = await apiRequest<WorkflowTemplate[]>('/workflows/templates', { token })
       setTemplates(Array.isArray(data) ? data : [])
-      setMessage(t('工作流模板已创建'))
+      setMessage('control.templateCreated')
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('操作失败'))
+      setError(err instanceof Error ? err.message : 'common.operationFailed')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <WorkspaceShell title="工作流设计" icon={GitBranch} message={message} error={error} onRefresh={() => setMessage(t('可重新执行匹配'))}>
+    <WorkspaceShell title="control.workflowDesign" icon={GitBranch} message={message} error={error} onRefresh={() => setMessage('control.rerunMatchHint')}>
       <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
-        <Panel icon={GitBranch} title="拖拽流程画布">
+        <Panel icon={GitBranch} title="control.flowCanvas">
           <div className="mb-3 flex flex-wrap gap-2">
-            <ActionButtonLike loading={loading} icon={Plus} label="计划节点" onClick={() => addStage('plan')} />
-            <ActionButtonLike loading={loading} icon={Sparkles} label="执行节点" onClick={() => addStage('execute')} />
-            <ActionButtonLike loading={loading} icon={CheckCircle2} label="复核节点" onClick={() => addStage('review')} />
+            <ActionButtonLike loading={loading} icon={Plus} label="control.stage.plan" onClick={() => addStage('plan')} />
+            <ActionButtonLike loading={loading} icon={Sparkles} label="control.stage.execute" onClick={() => addStage('execute')} />
+            <ActionButtonLike loading={loading} icon={CheckCircle2} label="control.stage.review" onClick={() => addStage('review')} />
           </div>
           <div className="h-[460px] overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
             <ReactFlow
@@ -994,18 +994,18 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
           </div>
         </Panel>
 
-        <Panel icon={Scale} title="节点与模板属性">
+        <Panel icon={Scale} title="control.nodeAndTemplateProperties">
           <div className="space-y-3">
-            <TextInput label="名称" value={templateName} onChange={setTemplateName} />
-            <TextArea label="描述" value={description} onChange={setDescription} />
+            <TextInput label="common.name" value={templateName} onChange={setTemplateName} />
+            <TextArea label="control.description" value={description} onChange={setDescription} />
             <label className="block">
-              <span className="text-sm font-medium text-slate-700">{t('部门')}</span>
+              <span className="text-sm font-medium text-slate-700">{t('control.department')}</span>
               <select
                 value={departmentId}
                 onChange={(event) => setDepartmentId(event.target.value)}
                 className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
               >
-                <option value="">{t('未选择')}</option>
+                <option value="">{t('common.notSelected')}</option>
                 {departments.map((department) => (
                   <option key={department.id} value={department.id}>
                     {department.name}
@@ -1015,18 +1015,18 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
             </label>
             {selectedNode && (
               <div className="rounded-lg border border-slate-200 p-3">
-                <p className="mb-3 text-sm font-semibold text-slate-950">{t('当前节点')}</p>
-                <TextInput label="节点名称" value={selectedNode.data.name} onChange={(value) => updateSelectedNode({ name: value })} />
+                <p className="mb-3 text-sm font-semibold text-slate-950">{t('control.currentNode')}</p>
+                <TextInput label="control.nodeName" value={selectedNode.data.name} onChange={(value) => updateSelectedNode({ name: value })} />
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <SelectInput label="节点类型" value={selectedNode.data.stage_type} options={['plan', 'execute', 'review']} onChange={(value) => updateSelectedNode({ stage_type: value as WorkflowNodeData['stage_type'] })} />
-                  <SelectInput label="权限级别" value={selectedNode.data.required_permission_level} options={['L1', 'L2', 'L3', 'L4']} onChange={(value) => updateSelectedNode({ required_permission_level: value })} />
+                  <SelectInput label="control.nodeType" value={selectedNode.data.stage_type} options={['plan', 'execute', 'review']} onChange={(value) => updateSelectedNode({ stage_type: value as WorkflowNodeData['stage_type'] })} />
+                  <SelectInput label="control.permissionLevel" value={selectedNode.data.required_permission_level} options={['L1', 'L2', 'L3', 'L4']} onChange={(value) => updateSelectedNode({ required_permission_level: value })} />
                 </div>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <SelectInput label="风险" value={selectedNode.data.risk_level} options={['low', 'medium', 'high', 'critical']} onChange={(value) => updateSelectedNode({ risk_level: value })} />
-                  <SelectInput label="Actor 类型" value={selectedNode.data.assignee_type} options={['internal', 'external', 'either']} onChange={(value) => updateSelectedNode({ assignee_type: value })} />
+                  <SelectInput label="control.risk" value={selectedNode.data.risk_level} options={['low', 'medium', 'high', 'critical']} onChange={(value) => updateSelectedNode({ risk_level: value })} />
+                  <SelectInput label="control.actorType" value={selectedNode.data.assignee_type} options={['internal', 'external', 'either']} onChange={(value) => updateSelectedNode({ assignee_type: value })} />
                 </div>
                 <label className="mt-3 block">
-                  <span className="text-sm font-medium text-slate-700">{t('岗位')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('control.position')}</span>
                   <select
                     value={selectedNode.data.position_id}
                     onChange={(event) => {
@@ -1039,7 +1039,7 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
                     }}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="">{t('未选择')}</option>
+                    <option value="">{t('common.notSelected')}</option>
                     {positions.map((position) => (
                       <option key={position.id} value={position.id}>
                         {position.name} · {position.permission_level}
@@ -1048,7 +1048,7 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
                   </select>
                 </label>
                 <div className="mt-3">
-                  <TextInput label="所需能力" value={selectedNode.data.required_capabilities} onChange={(value) => updateSelectedNode({ required_capabilities: value })} />
+                  <TextInput label="control.requiredCapabilities" value={selectedNode.data.required_capabilities} onChange={(value) => updateSelectedNode({ required_capabilities: value })} />
                 </div>
               </div>
             )}
@@ -1059,13 +1059,13 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
               className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {t('保存流程模板')}
+              {t('control.saveFlowTemplate')}
             </button>
           </div>
         </Panel>
       </div>
 
-      <Panel icon={Activity} title="模板列表">
+      <Panel icon={Activity} title="control.templateList">
         <List>
           {templates.map((template) => (
             <ListRow
@@ -1125,7 +1125,7 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败')
+      setError(err instanceof Error ? err.message : 'common.operationFailed')
     } finally {
       setLoading(false)
     }
@@ -1147,7 +1147,7 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
         },
       })
       setCandidates(asArray(data))
-    }, '成员匹配已完成')
+    }, 'control.memberMatchDone')
   }
 
   async function matchCapabilities() {
@@ -1165,7 +1165,7 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
         },
       })
       setBridge(data)
-    }, '能力桥接已生成')
+    }, 'control.capabilityBridgeGenerated')
   }
 
   async function createWorkflowTemplate() {
@@ -1211,21 +1211,21 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
           ],
         },
       })
-    }, '工作流模板已创建')
+    }, 'control.templateCreated')
   }
 
   return (
     <WorkspaceShell
-      title="工作流匹配"
+      title="control.workflowMatching"
       icon={GitBranch}
       message={message}
       error={error}
-      onRefresh={() => setMessage(t('可重新执行匹配'))}
+      onRefresh={() => setMessage('control.rerunMatchHint')}
     >
-      <Panel icon={Sparkles} title="业务需求匹配">
+      <Panel icon={Sparkles} title="control.businessRequirementMatching">
         <div className="grid gap-3 xl:grid-cols-2">
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">{t('组织')}</span>
+            <span className="text-sm font-medium text-slate-700">{t('control.organization')}</span>
             <select
               value={form.organization_id}
               onChange={(event) => setForm({ ...form, organization_id: event.target.value, department_id: '' })}
@@ -1239,13 +1239,13 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
             </select>
           </label>
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">{t('部门')}</span>
+            <span className="text-sm font-medium text-slate-700">{t('control.department')}</span>
             <select
               value={form.department_id}
               onChange={(event) => setForm({ ...form, department_id: event.target.value })}
               className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
             >
-              <option value="">{t('全组织')}</option>
+              <option value="">{t('control.wholeOrganization')}</option>
               {departments.map((department) => (
                 <option key={department.id} value={department.id}>
                   {department.name}
@@ -1254,22 +1254,22 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
             </select>
           </label>
           <div className="xl:col-span-2">
-            <TextArea label="业务需求" value={form.task_description} onChange={(value) => setForm({ ...form, task_description: value })} />
+            <TextArea label="control.businessRequirement" value={form.task_description} onChange={(value) => setForm({ ...form, task_description: value })} />
           </div>
           <TextInput
-            label="所需能力"
+            label="control.requiredCapabilities"
             value={form.required_capabilities}
             onChange={(value) => setForm({ ...form, required_capabilities: value })}
           />
           <div className="grid gap-3 sm:grid-cols-2">
             <SelectInput
-              label="权限级别"
+              label="control.permissionLevel"
               value={form.required_level}
               onChange={(value) => setForm({ ...form, required_level: value })}
               options={['L1', 'L2', 'L3', 'L4']}
             />
             <SelectInput
-              label="风险"
+              label="control.risk"
               value={form.risk_level}
               onChange={(value) => setForm({ ...form, risk_level: value })}
               options={['low', 'medium', 'high', 'critical']}
@@ -1284,7 +1284,7 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {t('匹配成员')}
+            {t('control.matchMembers')}
           </button>
           <button
             type="button"
@@ -1293,7 +1293,7 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
             className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <BrainCircuit className="h-4 w-4" />
-            {t('生成能力桥接')}
+            {t('control.generateCapabilityBridge')}
           </button>
           <button
             type="button"
@@ -1302,13 +1302,13 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
             className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Plus className="h-4 w-4" />
-            {t('创建流程模板')}
+            {t('control.createFlowTemplate')}
           </button>
         </div>
       </Panel>
 
       <div className="grid gap-5 xl:grid-cols-2">
-        <Panel icon={Activity} title="候选成员">
+        <Panel icon={Activity} title="control.candidateMembers">
           <List>
             {candidates.map((candidate) => (
               <ListRow
@@ -1320,8 +1320,8 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
             ))}
           </List>
         </Panel>
-        <Panel icon={BrainCircuit} title="能力桥接">
-          {bridge ? <JsonBlock value={bridge} /> : <EmptyText>尚未生成能力桥接</EmptyText>}
+        <Panel icon={BrainCircuit} title="control.capabilityBridge">
+          {bridge ? <JsonBlock value={bridge} /> : <EmptyText>control.noCapabilityBridgeYet</EmptyText>}
         </Panel>
       </div>
     </WorkspaceShell>
@@ -1359,7 +1359,7 @@ function WorkspaceShell({
               className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
             >
               <RefreshCw className="h-4 w-4" />
-              {t('刷新')}
+              {t('common.refresh')}
             </button>
           )}
         </div>

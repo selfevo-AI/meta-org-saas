@@ -16,6 +16,12 @@ const (
 
 type PermissionLevel string
 
+// Account statuses mirror the CHECK constraint on users.account_status.
+const (
+	AccountStatusActive   = "active"
+	AccountStatusDisabled = "disabled"
+)
+
 const (
 	PermissionL1 PermissionLevel = "L1"
 	PermissionL2 PermissionLevel = "L2"
@@ -24,14 +30,15 @@ const (
 )
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Name         string    `json:"name"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	AvatarURL    string    `json:"avatar_url,omitempty"`
-	Roles        []Role    `json:"roles,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            uuid.UUID `json:"id"`
+	Name          string    `json:"name"`
+	Email         string    `json:"email"`
+	PasswordHash  string    `json:"-"`
+	AvatarURL     string    `json:"avatar_url,omitempty"`
+	AccountStatus string    `json:"account_status,omitempty"`
+	Roles         []Role    `json:"roles,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type AIAgent struct {

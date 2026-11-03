@@ -2,12 +2,14 @@ package finance
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/safeurl"
 )
 
 func TestSignAndVerifyPayload(t *testing.T) {
@@ -63,6 +65,27 @@ func TestCreateExportBatchRejectsInvalidPeriod(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("CreateExportBatch accepted invalid period")
+	}
+}
+
+func TestAdapterEndpointsMustBePublic(t *testing.T) {
+	svc := NewService(&fakeRepository{}, WithOutboundPolicy(safeurl.Policy{}))
+	for _, endpoint := range []string{
+		"http://127.0.0.1:5432", "http://localhost:8090/hooks", "https://192.168.1.20/erp",
+		"http://169.254.169.254/latest/meta-data", "http://[fd00::1]/", "ftp://books.example.com", "not a url",
+	} {
+		_, err := svc.CreateAdapter(context.Background(), CreateAdapterInput{Name: "erp", EndpointURL: endpoint, Secret: "s"})
+		if !errors.Is(err, ErrValidation) {
+			t.Errorf("CreateAdapter(%q) error = %v, want ErrValidation", endpoint, err)
+		}
+		_, err = svc.UpdateAdapter(context.Background(), uuid.New(), UpdateAdapterInput{EndpointURL: &endpoint})
+		if !errors.Is(err, ErrValidation) {
+			t.Errorf("UpdateAdapter(%q) error = %v, want ErrValidation", endpoint, err)
+		}
+	}
+	permissive := NewService(&fakeRepository{}, WithOutboundPolicy(safeurl.Policy{AllowPrivate: true}))
+	if err := permissive.validateEndpoint(context.Background(), "http://127.0.0.1:9000/hooks"); err != nil {
+		t.Fatalf("permissive policy rejected loopback: %v", err)
 	}
 }
 

@@ -471,6 +471,11 @@ func (s *Service) ResolveTenant(ctx context.Context, user middleware.Authenticat
 	if err != nil {
 		return nil, err
 	}
+	// Tokens live for hours; re-checking the account on every tenant request
+	// is what makes "disable user" take effect for sessions already open.
+	if profile.AccountStatus == identity.AccountStatusDisabled {
+		return nil, middleware.ErrTenantForbidden
+	}
 	if s.mode == ModeSaaS && profile.OnboardingRequired {
 		return nil, middleware.ErrOnboardingRequired
 	}

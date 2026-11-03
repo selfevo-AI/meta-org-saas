@@ -311,7 +311,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         .filter((agent) => agent.agent_origin === 'external')
         .map((agent) => ({ id: agent.id, label: `${agent.name} · ${agent.provider ?? agent.vendor ?? agent.permission_level}` }))
     }
-    return currentUserId ? [{ id: currentUserId, label: t('当前登录用户') }] : []
+    return currentUserId ? [{ id: currentUserId, label: t('org.currentUser') }] : []
   }, [agents, currentUserId, externalMembers, positionAssignmentForm.actor_type, t])
   const assignmentMetaOptions = useMemo(
     () =>
@@ -350,7 +350,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('加载当前组织失败'))
+        if (!cancelled) setError(err instanceof Error ? err.message : t('org.loadOrganizationFailed'))
       })
 
     apiRequest<ExternalMember[]>('/external-members?limit=100', { token })
@@ -407,7 +407,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('加载部门树失败'))
+        if (!cancelled) setError(err instanceof Error ? err.message : t('org.loadDepartmentsFailed'))
       })
 
     apiRequest<OrganizationMembership[]>(`/organizations/${selectedOrgId}/members`, { token })
@@ -509,7 +509,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       await action()
       setMessage(t(success))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('操作失败'))
+      setError(err instanceof Error ? err.message : t('common.operationFailed'))
     } finally {
       setLoading(false)
     }
@@ -644,7 +644,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       })
       await loadDepartmentTree()
       setDepartmentForm(emptyDepartmentForm)
-    }, '部门已创建')
+    }, 'org.departmentCreated')
   }
 
   async function updateDepartment(event: FormEvent<HTMLFormElement>) {
@@ -664,7 +664,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         },
       })
       await loadDepartmentTree()
-    }, '部门已更新')
+    }, 'org.departmentUpdated')
   }
 
   async function createPosition(event: FormEvent<HTMLFormElement>) {
@@ -687,7 +687,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       })
       setSelectedPositionId(position.id)
       await loadDepartmentTree()
-    }, '岗位已创建')
+    }, 'org.positionCreated')
   }
 
   async function updatePosition(event: FormEvent<HTMLFormElement>) {
@@ -710,7 +710,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       })
       setPositionForm(positionToForm(position))
       await loadDepartmentTree()
-    }, '岗位已更新')
+    }, 'org.positionUpdated')
   }
 
   async function assignPosition(event: FormEvent<HTMLFormElement>) {
@@ -734,14 +734,14 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       setPositionForm(positionToForm(position))
       setPositionAssignments(asArray<PositionAssignment>(position.assignments))
       await loadDepartmentTree()
-    }, '岗位适配已保存')
+    }, 'org.positionAssignmentSaved')
   }
 
   async function removePositionAssignment(id: string) {
     await runAction(async () => {
       await apiRequest(`/position-assignments/${id}`, { method: 'DELETE', token })
       await loadPositionAssignments()
-    }, '岗位适配已移除')
+    }, 'org.positionAssignmentRemoved')
   }
 
   async function loadTaskMatrixAssignments(taskId = taskMatrixForm.task_id) {
@@ -772,14 +772,14 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         },
       })
       await loadTaskMatrixAssignments(taskMatrixForm.task_id)
-    }, '任务矩阵已更新')
+    }, 'org.taskMatrixUpdated')
   }
 
   async function removeTaskMatrixAssignment(id: string) {
     await runAction(async () => {
       await apiRequest(`/task-matrix-assignments/${id}`, { method: 'DELETE', token })
       await loadTaskMatrixAssignments(taskMatrixForm.task_id)
-    }, '任务矩阵已移除')
+    }, 'org.taskMatrixRemoved')
   }
 
   async function createExternalMember(event: FormEvent<HTMLFormElement>) {
@@ -792,7 +792,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       })
       setExternalForm(emptyExternalForm)
       await loadExternalMembers()
-    }, '外部成员已创建')
+    }, 'org.externalMemberCreated')
   }
 
   async function createAgent(event: FormEvent<HTMLFormElement>) {
@@ -819,7 +819,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       setMemberForm((current) => ({ ...current, member_type: 'agent', agent_id: response.agent.id }))
       setAgentForm(emptyAgentForm)
       await loadAgents()
-    }, 'Agent 已创建')
+    }, 'org.agentCreated')
   }
 
   async function addDepartmentMember(event: FormEvent<HTMLFormElement>) {
@@ -840,14 +840,14 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         },
       })
       await loadMembers()
-    }, '成员已添加')
+    }, 'org.memberAdded')
   }
 
   async function removeMembership(id: string) {
     await runAction(async () => {
       await apiRequest(`/memberships/${id}`, { method: 'DELETE', token })
       await loadMembers()
-    }, '成员关系已移除')
+    }, 'org.membershipRemoved')
   }
 
   async function createPermissionChangeRequest(event: FormEvent<HTMLFormElement>) {
@@ -867,7 +867,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         },
       })
       await loadPermissionGovernance()
-    }, '权限变更请求已提交')
+    }, 'org.permissionRequestSubmitted')
   }
 
   async function reviewPermissionChangeRequest(id: string, decision: 'approve' | 'reject') {
@@ -878,7 +878,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         body: { reason: decision === 'approve' ? 'reviewed from organization workspace' : 'rejected from organization workspace' },
       })
       await Promise.all([loadPermissionGovernance(), loadMembers()])
-    }, decision === 'approve' ? '权限变更已批准' : '权限变更已拒绝')
+    }, decision === 'approve' ? 'org.permissionChangeApproved' : 'org.permissionChangeRejected')
   }
 
   async function createAccessRule(event: FormEvent<HTMLFormElement>) {
@@ -895,7 +895,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         },
       })
       await loadPermissionGovernance()
-    }, '权限规则已创建')
+    }, 'org.accessRuleCreated')
   }
 
   function analyzeWithAgent() {
@@ -918,7 +918,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         orgId = organization.id
       }
       if (!orgId) {
-        throw new Error(t('加载当前组织失败'))
+        throw new Error(t('org.loadOrganizationFailed'))
       }
       for (const department of agentPlan.departments) {
         await apiRequest<Department>(`/organizations/${orgId}/departments`, {
@@ -933,7 +933,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         })
       }
       await loadDepartmentTree(orgId)
-    }, 'Agent 方案已创建')
+    }, 'org.agentPlanCreated')
   }
 
   async function matchMembers() {
@@ -954,7 +954,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         },
       })
       setCandidates(asArray<MatchCandidate>(data))
-    }, '匹配完成')
+    }, 'org.matchCompleted')
   }
 
   return (
@@ -991,7 +991,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2">
             <GitBranch className="h-5 w-5 text-slate-500" />
-            <h2 className="text-base font-semibold text-slate-950">{t('部门树')}</h2>
+            <h2 className="text-base font-semibold text-slate-950">{t('org.departmentTree')}</h2>
           </div>
           <div className="mt-4 space-y-1">
             {asArray<Department>(departmentTree).map((department) => (
@@ -1008,7 +1008,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
               />
             ))}
             {selectedOrgId && asArray<Department>(departmentTree).length === 0 && (
-              <p className="text-sm text-slate-500">{t('当前组织暂无部门')}</p>
+              <p className="text-sm text-slate-500">{t('org.noDepartments')}</p>
             )}
           </div>
         </section>
@@ -1026,41 +1026,41 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         )}
 
         <div className="space-y-5">
-          <Panel icon={GitBranch} title={selectedDepartment ? '修改部门' : '创建部门'}>
+          <Panel icon={GitBranch} title={selectedDepartment ? 'org.editDepartment' : 'org.createDepartment'}>
             <form className="space-y-3" onSubmit={selectedDepartment ? updateDepartment : createDepartment}>
               <TextInput
-                label="部门名称"
+                label="org.departmentName"
                 value={departmentForm.name}
                 onChange={(value) => setDepartmentForm({ ...departmentForm, name: value })}
               />
               <div className="grid gap-3 sm:grid-cols-2">
                 <TextInput
-                  label="部门编码"
+                  label="org.departmentCode"
                   value={departmentForm.code}
                   onChange={(value) => setDepartmentForm({ ...departmentForm, code: value })}
                 />
                 <TextInput
-                  label="排序"
+                  label="org.sortOrder"
                   value={departmentForm.sort_order}
                   onChange={(value) => setDepartmentForm({ ...departmentForm, sort_order: value })}
                 />
               </div>
               <TextArea
-                label="部门描述"
+                label="org.departmentDescription"
                 value={departmentForm.description}
                 onChange={(value) => setDepartmentForm({ ...departmentForm, description: value })}
               />
-              <SubmitButton loading={loading || !selectedOrgId} label={selectedDepartment ? '保存部门' : '创建为选中部门的子部门'} />
+              <SubmitButton loading={loading || !selectedOrgId} label={selectedDepartment ? 'org.saveDepartment' : 'org.createChildDepartment'} />
             </form>
           </Panel>
 
-          <Panel icon={Users} title="岗位">
+          <Panel icon={Users} title="org.positions">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-950">{selectedDepartment?.name ?? t('未选择部门')}</p>
+                  <p className="truncate text-sm font-semibold text-slate-950">{selectedDepartment?.name ?? t('org.noDepartmentSelected')}</p>
                   <p className="mt-1 text-xs text-slate-500">
-                    {selectedPosition ? `${t('当前岗位')}：${selectedPosition.name}` : t('可在当前部门下创建岗位')}
+                    {selectedPosition ? t('org.currentPosition', { name: selectedPosition.name }) : t('org.createPositionHint')}
                   </p>
                 </div>
                 <button
@@ -1070,7 +1070,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Plus className="h-4 w-4" />
-                  {t('新建岗位')}
+                  {t('org.newPosition')}
                 </button>
               </div>
 
@@ -1088,36 +1088,36 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   >
                     <p className="truncate text-sm font-semibold text-slate-950">{position.name}</p>
                     <p className="mt-1 truncate text-xs text-slate-500">
-                      {position.code || t('未设置编码')} · {position.permission_level} · {position.status}
+                      {position.code || t('org.noCode')} · {position.permission_level} · {position.status}
                     </p>
                   </button>
                 ))}
                 {selectedDepartment && asArray<Position>(selectedDepartment.positions).length === 0 && (
-                  <p className="text-sm text-slate-500">{t('当前部门暂无岗位')}</p>
+                  <p className="text-sm text-slate-500">{t('org.noPositions')}</p>
                 )}
               </div>
 
               <form className="space-y-3" onSubmit={selectedPositionId ? updatePosition : createPosition}>
                 <TextInput
-                  label="岗位名称"
+                  label="org.positionName"
                   value={positionForm.name}
                   onChange={(value) => setPositionForm({ ...positionForm, name: value })}
                 />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <TextInput
-                    label="岗位编码"
+                    label="org.positionCode"
                     value={positionForm.code}
                     onChange={(value) => setPositionForm({ ...positionForm, code: value })}
                   />
                   <TextInput
-                    label="排序"
+                    label="org.sortOrder"
                     value={positionForm.sort_order}
                     onChange={(value) => setPositionForm({ ...positionForm, sort_order: value })}
                   />
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700">{t('权限级别')}</span>
+                    <span className="text-sm font-medium text-slate-700">{t('org.permissionLevel')}</span>
                     <select
                       value={positionForm.permission_level}
                       onChange={(event) => setPositionForm({ ...positionForm, permission_level: event.target.value })}
@@ -1130,7 +1130,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                     </select>
                   </label>
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700">{t('状态')}</span>
+                    <span className="text-sm font-medium text-slate-700">{t('org.status')}</span>
                     <select
                       value={positionForm.status}
                       onChange={(event) => setPositionForm({ ...positionForm, status: event.target.value })}
@@ -1143,37 +1143,37 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   </label>
                 </div>
                 <TextInput
-                  label="所需能力"
+                  label="org.requiredCapabilities"
                   value={positionForm.required_capabilities}
                   onChange={(value) => setPositionForm({ ...positionForm, required_capabilities: value })}
                   placeholder="planning, review"
                 />
                 <TextArea
-                  label="岗位描述"
+                  label="org.positionDescription"
                   value={positionForm.description}
                   onChange={(value) => setPositionForm({ ...positionForm, description: value })}
                 />
-                <SubmitButton loading={loading || !selectedDepartmentId} label={selectedPositionId ? '保存岗位' : '创建岗位'} />
+                <SubmitButton loading={loading || !selectedDepartmentId} label={selectedPositionId ? 'org.savePosition' : 'org.createPosition'} />
               </form>
 
               <form className="space-y-3 border-t border-slate-200 pt-4" onSubmit={assignPosition}>
-                <p className="text-sm font-semibold text-slate-950">{t('适配身份')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.assignActor')}</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700">{t('身份类型')}</span>
+                    <span className="text-sm font-medium text-slate-700">{t('org.actorType')}</span>
                     <select
                       value={positionAssignmentForm.actor_type}
                       onChange={(event) => setPositionActorType(event.target.value as PositionAssignment['actor_type'])}
                       className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                     >
-                      <option value="internal_human">{t('内部员工')}</option>
-                      <option value="external_human">{t('外部员工')}</option>
-                      <option value="internal_agent">{t('内部 Agent')}</option>
-                      <option value="external_agent">{t('外部 Agent')}</option>
+                      <option value="internal_human">{t('org.actor.internalHuman')}</option>
+                      <option value="external_human">{t('org.actor.externalHuman')}</option>
+                      <option value="internal_agent">{t('org.actor.internalAgent')}</option>
+                      <option value="external_agent">{t('org.actor.externalAgent')}</option>
                     </select>
                   </label>
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700">{t('适配类型')}</span>
+                    <span className="text-sm font-medium text-slate-700">{t('org.assignmentType')}</span>
                     <select
                       value={positionAssignmentForm.assignment_type}
                       onChange={(event) => setPositionAssignmentForm({ ...positionAssignmentForm, assignment_type: event.target.value })}
@@ -1187,7 +1187,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                 </div>
                 {assignmentActorOptions.length > 0 ? (
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700">{t('适配身份')}</span>
+                    <span className="text-sm font-medium text-slate-700">{t('org.assignActor')}</span>
                     <select
                       value={positionAssignmentForm.actor_id}
                       onChange={(event) => setPositionAssignmentForm({ ...positionAssignmentForm, actor_id: event.target.value })}
@@ -1202,19 +1202,19 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   </label>
                 ) : (
                   <TextInput
-                    label="适配身份 ID"
+                    label="org.actorId"
                     value={positionAssignmentForm.actor_id}
                     onChange={(value) => setPositionAssignmentForm({ ...positionAssignmentForm, actor_id: value })}
                   />
                 )}
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('承接 Meta')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.metaResource')}</span>
                   <select
                     value={positionAssignmentForm.meta_resource_id}
                     onChange={(event) => setPositionAssignmentForm({ ...positionAssignmentForm, meta_resource_id: event.target.value })}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="">{t('请选择 Meta 资源')}</option>
+                    <option value="">{t('org.selectMetaResource')}</option>
                     {assignmentMetaOptions.map((resource) => (
                       <option key={resource.id} value={resource.id}>
                         {resource.name} · {t(resource.resource_type)}
@@ -1223,15 +1223,15 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   </select>
                 </label>
                 <TextInput
-                  label="投入比例"
+                  label="org.allocationPercent"
                   value={positionAssignmentForm.allocation_percent}
                   onChange={(value) => setPositionAssignmentForm({ ...positionAssignmentForm, allocation_percent: value })}
                 />
-                <SubmitButton loading={loading || !selectedPositionId || !positionAssignmentForm.meta_resource_id} label="保存岗位适配" />
+                <SubmitButton loading={loading || !selectedPositionId || !positionAssignmentForm.meta_resource_id} label="org.savePositionAssignment" />
               </form>
 
               <div className="space-y-2 border-t border-slate-200 pt-4">
-                <p className="text-sm font-semibold text-slate-950">{t('当前岗位适配')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.currentPositionAssignments')}</p>
                 {asArray<PositionAssignment>(positionAssignments).map((assignment) => (
                   <div key={assignment.id} className="grid gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_auto]">
                     <div className="min-w-0">
@@ -1240,7 +1240,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                         {t(assignment.actor_type)} · {t(assignment.assignment_type)} · {assignment.allocation_percent}%
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
-                        {t('承接 Meta')}：{assignment.meta_resource_name || assignment.meta_resource_id || t('未绑定')}
+                        {t('org.metaResourceLabel', { name: assignment.meta_resource_name || assignment.meta_resource_id || t('org.unbound') })}
                         {assignment.meta_resource_type ? ` · ${t(assignment.meta_resource_type)}` : ''}
                       </p>
                     </div>
@@ -1249,22 +1249,22 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                       onClick={() => removePositionAssignment(assignment.id)}
                       className="h-9 rounded-lg border border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50"
                     >
-                      {t('移除')}
+                      {t('org.remove')}
                     </button>
                   </div>
                 ))}
                 {asArray<PositionAssignment>(positionAssignments).length === 0 && (
-                  <p className="text-sm text-slate-500">{t('暂无岗位适配')}</p>
+                  <p className="text-sm text-slate-500">{t('org.noPositionAssignments')}</p>
                 )}
               </div>
             </div>
           </Panel>
 
-          <Panel icon={GitBranch} title="任务矩阵">
+          <Panel icon={GitBranch} title="org.taskMatrix">
             <div className="space-y-4">
               <form className="space-y-3" onSubmit={createTaskMatrixAssignment}>
                 <TextInput
-                  label="任务 ID"
+                  label="org.taskId"
                   value={taskMatrixForm.task_id}
                   onChange={(value) => setTaskMatrixForm({ ...taskMatrixForm, task_id: value })}
                 />
@@ -1276,17 +1276,17 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                     className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <RefreshCw className="h-4 w-4" />
-                    {t('加载任务矩阵')}
+                    {t('org.loadTaskMatrix')}
                   </button>
                 </div>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('岗位 Meta 任命')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.positionMetaAssignment')}</span>
                   <select
                     value={taskMatrixForm.position_assignment_id}
                     onChange={(event) => setTaskMatrixForm({ ...taskMatrixForm, position_assignment_id: event.target.value })}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="">{t('请选择岗位 Meta 任命')}</option>
+                    <option value="">{t('org.selectPositionMetaAssignment')}</option>
                     {matrixAssignmentOptions.map((assignment) => (
                       <option key={assignment.id} value={assignment.id}>
                         {assignment.meta_resource_name || assignment.actor_name || assignment.actor_id} · {t(assignment.assignment_type)}
@@ -1296,7 +1296,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                 </label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="block">
-                    <span className="text-sm font-medium text-slate-700">{t('任务角色')}</span>
+                    <span className="text-sm font-medium text-slate-700">{t('org.taskRole')}</span>
                     <select
                       value={taskMatrixForm.role_in_task}
                       onChange={(event) => setTaskMatrixForm({ ...taskMatrixForm, role_in_task: event.target.value })}
@@ -1309,19 +1309,19 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                     </select>
                   </label>
                   <TextInput
-                    label="投入比例"
+                    label="org.allocationPercent"
                     value={taskMatrixForm.allocation_percent}
                     onChange={(value) => setTaskMatrixForm({ ...taskMatrixForm, allocation_percent: value })}
                   />
                 </div>
                 <SubmitButton
                   loading={loading || !selectedPositionId || !taskMatrixForm.task_id.trim() || !taskMatrixForm.position_assignment_id}
-                  label="写入任务矩阵"
+                  label="org.writeTaskMatrix"
                 />
               </form>
 
               <div className="space-y-2 border-t border-slate-200 pt-4">
-                <p className="text-sm font-semibold text-slate-950">{t('当前任务矩阵')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.currentTaskMatrix')}</p>
                 {asArray<TaskMatrixAssignment>(taskMatrixAssignments).map((assignment) => (
                   <div key={assignment.id} className="grid gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-[1fr_auto]">
                     <div className="min-w-0">
@@ -1337,47 +1337,47 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                       onClick={() => removeTaskMatrixAssignment(assignment.id)}
                       className="h-9 rounded-lg border border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50"
                     >
-                      {t('移除')}
+                      {t('org.remove')}
                     </button>
                   </div>
                 ))}
                 {asArray<TaskMatrixAssignment>(taskMatrixAssignments).length === 0 && (
-                  <p className="text-sm text-slate-500">{t('暂无任务矩阵')}</p>
+                  <p className="text-sm text-slate-500">{t('org.noTaskMatrix')}</p>
                 )}
               </div>
             </div>
           </Panel>
 
-          <Panel icon={UserPlus} title="添加成员">
+          <Panel icon={UserPlus} title="org.addMember">
             <form className="space-y-3" onSubmit={addDepartmentMember}>
               <label className="block">
-                <span className="text-sm font-medium text-slate-700">{t('成员类型')}</span>
+                <span className="text-sm font-medium text-slate-700">{t('org.memberType')}</span>
                 <select
                   value={memberForm.member_type}
                   onChange={(event) => setMemberForm({ ...memberForm, member_type: event.target.value })}
                   className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                 >
-                  <option value="internal">{t('内部员工')}</option>
-                  <option value="external">{t('外部员工')}</option>
+                  <option value="internal">{t('org.actor.internalHuman')}</option>
+                  <option value="external">{t('org.actor.externalHuman')}</option>
                   <option value="agent">Agent</option>
                 </select>
               </label>
               {memberForm.member_type === 'internal' && (
                 <TextInput
-                  label="内部员工 User ID"
+                  label="org.internalUserId"
                   value={memberForm.user_id}
                   onChange={(value) => setMemberForm({ ...memberForm, user_id: value })}
                 />
               )}
               {memberForm.member_type === 'external' && (
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('外部成员')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.externalMember')}</span>
                   <select
                     value={memberForm.external_member_id}
                     onChange={(event) => setMemberForm({ ...memberForm, external_member_id: event.target.value })}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="">{t('选择外部成员')}</option>
+                    <option value="">{t('org.selectExternalMember')}</option>
                     {asArray<ExternalMember>(externalMembers).map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.name}
@@ -1394,7 +1394,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                     onChange={(event) => setMemberForm({ ...memberForm, agent_id: event.target.value })}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="">{t('选择 Agent')}</option>
+                    <option value="">{t('org.selectAgent')}</option>
                     {asArray<AIAgent>(agents).map((agent) => (
                       <option key={agent.id} value={agent.id}>
                         {agent.name} · {agent.agent_origin} · {agent.risk_level}
@@ -1404,77 +1404,77 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                 </label>
               )}
               <TextInput
-                label="职位/职责"
+                label="org.memberTitle"
                 value={memberForm.title}
                 onChange={(value) => setMemberForm({ ...memberForm, title: value })}
               />
-              <SubmitButton loading={loading || !selectedDepartmentId} label="添加到当前部门" />
+              <SubmitButton loading={loading || !selectedDepartmentId} label="org.addToDepartment" />
             </form>
           </Panel>
         </div>
 
         <div className="space-y-5">
-          <Panel icon={Users} title="外部成员">
+          <Panel icon={Users} title="org.externalMembers">
             <form className="space-y-3" onSubmit={createExternalMember}>
               <TextInput
-                label="姓名"
+                label="org.fullName"
                 value={externalForm.name}
                 onChange={(value) => setExternalForm({ ...externalForm, name: value })}
               />
               <TextInput
-                label="邮箱"
+                label="org.email"
                 value={externalForm.email}
                 onChange={(value) => setExternalForm({ ...externalForm, email: value })}
               />
               <div className="grid gap-3 sm:grid-cols-2">
                 <TextInput
-                  label="供应商"
+                  label="org.vendor"
                   value={externalForm.vendor}
                   onChange={(value) => setExternalForm({ ...externalForm, vendor: value })}
                 />
                 <TextInput
-                  label="合同类型"
+                  label="org.contractType"
                   value={externalForm.contract_type}
                   onChange={(value) => setExternalForm({ ...externalForm, contract_type: value })}
                 />
               </div>
-              <SubmitButton loading={loading} label="创建外部成员" />
+              <SubmitButton loading={loading} label="org.createExternalMember" />
             </form>
           </Panel>
 
-          <Panel icon={Bot} title="Agent 服务">
+          <Panel icon={Bot} title="org.agentServices">
             <form className="space-y-3" onSubmit={createAgent}>
               <TextInput
-                label="名称"
+                label="common.name"
                 value={agentForm.name}
                 onChange={(value) => setAgentForm({ ...agentForm, name: value })}
               />
               <div className="grid gap-3 sm:grid-cols-2">
                 <TextInput
-                  label="模型/服务类型"
+                  label="org.modelType"
                   value={agentForm.model_type}
                   onChange={(value) => setAgentForm({ ...agentForm, model_type: value })}
                 />
                 <TextInput
-                  label="能力标签"
+                  label="org.capabilityTags"
                   value={agentForm.capabilities}
                   onChange={(value) => setAgentForm({ ...agentForm, capabilities: value })}
                 />
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('来源')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.agentOrigin')}</span>
                   <select
                     value={agentForm.agent_origin}
                     onChange={(event) => setAgentForm({ ...agentForm, agent_origin: event.target.value })}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="internal">{t('内部自建')}</option>
-                    <option value="external">{t('外部购买')}</option>
+                    <option value="internal">{t('org.agentOrigin.internal')}</option>
+                    <option value="external">{t('org.agentOrigin.external')}</option>
                   </select>
                 </label>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('权限')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.permission')}</span>
                   <select
                     value={agentForm.permission_level}
                     onChange={(event) => setAgentForm({ ...agentForm, permission_level: event.target.value })}
@@ -1487,7 +1487,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   </select>
                 </label>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('风险')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.risk')}</span>
                   <select
                     value={agentForm.risk_level}
                     onChange={(event) => setAgentForm({ ...agentForm, risk_level: event.target.value })}
@@ -1512,7 +1512,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   onChange={(value) => setAgentForm({ ...agentForm, vendor: value })}
                 />
               </div>
-              <SubmitButton loading={loading} label="创建 Agent" />
+              <SubmitButton loading={loading} label="org.createAgent" />
               {createdAgentKey && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
                   <p className="font-semibold">API Key</p>
@@ -1522,10 +1522,10 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
             </form>
           </Panel>
 
-          <Panel icon={Bot} title="Agent 分析创建">
+          <Panel icon={Bot} title="org.agentAnalysisCreate">
             <div className="space-y-3">
               <TextArea
-                label="组织需求"
+                label="org.organizationNeed"
                 value={agentPrompt}
                 onChange={setAgentPrompt}
                 placeholder="organization.agentPromptPlaceholder"
@@ -1537,7 +1537,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-300 px-3 text-sm font-semibold text-slate-700 hover:bg-slate-100"
                 >
                   <Sparkles className="h-4 w-4" />
-                  {t('分析')}
+                  {t('org.analyze')}
                 </button>
                 <button
                   type="button"
@@ -1546,7 +1546,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  {t('应用方案')}
+                  {t('org.applyPlan')}
                 </button>
               </div>
               {agentPlan && (
@@ -1566,14 +1566,14 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
           </Panel>
         </div>
 
-        <Panel icon={Users} title="当前组织成员">
+        <Panel icon={Users} title="org.currentMembers">
           <div className="space-y-2">
             {asArray<OrganizationMembership>(members).map((member) => (
               <div key={member.id} className="grid gap-2 border-t border-slate-100 py-3 first:border-t-0 first:pt-0 sm:grid-cols-[1fr_auto]">
                 <div>
                   <p className="text-sm font-semibold text-slate-950">{member.member_name || member.member_type}</p>
                   <p className="text-sm text-slate-500">
-                    {member.title || t('未设置职责')} · {t(member.authority_tier || 'executor')} · {member.member_type} · {member.status}
+                    {member.title || t('org.noTitle')} · {t(member.authority_tier || 'executor')} · {member.member_type} · {member.status}
                   </p>
                 </div>
                 <button
@@ -1581,27 +1581,27 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   onClick={() => removeMembership(member.id)}
                   className="h-9 rounded-lg border border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50"
                 >
-                  {t('移除')}
+                  {t('org.remove')}
                 </button>
               </div>
             ))}
-            {asArray<OrganizationMembership>(members).length === 0 && <p className="text-sm text-slate-500">{t('暂无成员')}</p>}
+            {asArray<OrganizationMembership>(members).length === 0 && <p className="text-sm text-slate-500">{t('org.noMembers')}</p>}
           </div>
         </Panel>
 
-        <Panel icon={ShieldCheck} title="权限治理">
+        <Panel icon={ShieldCheck} title="org.permissionGovernance">
           <div className="grid gap-5 xl:grid-cols-2">
             <div className="space-y-4">
               <form className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4" onSubmit={createPermissionChangeRequest}>
-                <p className="text-sm font-semibold text-slate-950">{t('提交权限变更复核')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.submitPermissionReview')}</p>
                 <label className="block">
-                  <span className="text-sm font-medium text-slate-700">{t('成员')}</span>
+                  <span className="text-sm font-medium text-slate-700">{t('org.member')}</span>
                   <select
                     value={permissionRequestForm.membership_id}
                     onChange={(event) => setPermissionRequestForm({ ...permissionRequestForm, membership_id: event.target.value })}
                     className="mt-1 h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
                   >
-                    <option value="">{t('选择成员')}</option>
+                    <option value="">{t('org.selectMember')}</option>
                     {asArray<OrganizationMembership>(members).map((member) => (
                       <option key={member.id} value={member.id}>
                         {member.member_name || member.member_type}
@@ -1611,35 +1611,35 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                 </label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <SelectField
-                    label="组织权限"
+                    label="org.organizationAuthority"
                     value={permissionRequestForm.authority_tier}
                     onChange={(value) => setPermissionRequestForm({ ...permissionRequestForm, authority_tier: value })}
                     options={['organization_admin', 'reviewer', 'executor']}
                   />
                   <SelectField
-                    label="状态"
+                    label="org.status"
                     value={permissionRequestForm.status}
                     onChange={(value) => setPermissionRequestForm({ ...permissionRequestForm, status: value })}
                     options={['active', 'inactive', 'archived']}
                   />
                 </div>
                 <TextArea
-                  label="原因"
+                  label="org.reason"
                   value={permissionRequestForm.reason}
                   onChange={(value) => setPermissionRequestForm({ ...permissionRequestForm, reason: value })}
                 />
-                <SubmitButton loading={loading || !selectedOrgId} label="提交复核" />
+                <SubmitButton loading={loading || !selectedOrgId} label="org.submitForReview" />
               </form>
 
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-950">{t('待复核请求')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.pendingRequests')}</p>
                 {asArray<PermissionChangeRequest>(permissionRequests).map((request) => (
                   <div key={request.id} className="rounded-lg border border-slate-200 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-slate-950">{request.membership_id}</p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {t('状态')} {t(request.status)} · {request.reason || t('未设置原因')}
+                          {t('org.status')} {t(request.status)} · {request.reason || t('org.noReason')}
                         </p>
                       </div>
                       {request.status === 'pending' && (
@@ -1649,90 +1649,90 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                             onClick={() => reviewPermissionChangeRequest(request.id, 'approve')}
                             className="h-8 rounded-md border border-emerald-200 px-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
                           >
-                            {t('批准')}
+                            {t('org.approve')}
                           </button>
                           <button
                             type="button"
                             onClick={() => reviewPermissionChangeRequest(request.id, 'reject')}
                             className="h-8 rounded-md border border-red-200 px-2 text-xs font-semibold text-red-700 hover:bg-red-50"
                           >
-                            {t('拒绝')}
+                            {t('org.reject')}
                           </button>
                         </div>
                       )}
                     </div>
                   </div>
                 ))}
-                {permissionRequests.length === 0 && <p className="text-sm text-slate-500">{t('暂无权限变更请求')}</p>}
+                {permissionRequests.length === 0 && <p className="text-sm text-slate-500">{t('org.noPermissionRequests')}</p>}
               </div>
             </div>
 
             <div className="space-y-4">
               <form className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-4" onSubmit={createAccessRule}>
-                <p className="text-sm font-semibold text-slate-950">{t('创建权限规则')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.createAccessRule')}</p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <SelectField
-                    label="范围"
+                    label="org.scope"
                     value={accessRuleForm.scope_type}
                     onChange={(value) => setAccessRuleForm({ ...accessRuleForm, scope_type: value })}
                     options={['organization', 'department', 'project', 'function', 'form', 'field']}
                   />
-                  <TextInput label="范围 ID" value={accessRuleForm.scope_id} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, scope_id: value })} />
+                  <TextInput label="org.scopeId" value={accessRuleForm.scope_id} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, scope_id: value })} />
                   <TextInput
-                    label="资源类型"
+                    label="org.resourceType"
                     value={accessRuleForm.resource_type}
                     onChange={(value) => setAccessRuleForm({ ...accessRuleForm, resource_type: value })}
                   />
                   <SelectField
-                    label="操作"
+                    label="org.action"
                     value={accessRuleForm.action}
                     onChange={(value) => setAccessRuleForm({ ...accessRuleForm, action: value })}
                     options={['read', 'write', 'delete', 'admin', 'execute']}
                   />
                   <SelectField
-                    label="行为"
+                    label="org.behavior"
                     value={accessRuleForm.behavior}
                     onChange={(value) => setAccessRuleForm({ ...accessRuleForm, behavior: value })}
                     options={['allow', 'notify', 'approve', 'deny']}
                   />
                   <SelectField
-                    label="所需级别"
+                    label="org.requiredLevel"
                     value={accessRuleForm.required_level}
                     onChange={(value) => setAccessRuleForm({ ...accessRuleForm, required_level: value })}
                     options={['L1', 'L2', 'L3', 'L4']}
                   />
                   <TextInput label="Actor ID" value={accessRuleForm.actor_id} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, actor_id: value })} />
-                  <TextInput label="优先级" value={accessRuleForm.priority} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, priority: value })} />
+                  <TextInput label="org.priority" value={accessRuleForm.priority} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, priority: value })} />
                 </div>
-                <TextArea label="原因" value={accessRuleForm.reason} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, reason: value })} />
-                <SubmitButton loading={loading || !selectedOrgId} label="创建权限规则" />
+                <TextArea label="org.reason" value={accessRuleForm.reason} onChange={(value) => setAccessRuleForm({ ...accessRuleForm, reason: value })} />
+                <SubmitButton loading={loading || !selectedOrgId} label="org.createAccessRule" />
               </form>
 
               <div className="space-y-2">
-                <p className="text-sm font-semibold text-slate-950">{t('组织权限规则')}</p>
+                <p className="text-sm font-semibold text-slate-950">{t('org.accessRules')}</p>
                 {asArray<OrganizationAccessRule>(accessRules).map((rule) => (
                   <div key={rule.id} className="rounded-lg border border-slate-200 p-3">
                     <p className="text-sm font-semibold text-slate-950">
                       {rule.scope_type}:{rule.scope_id || '*'} · {rule.resource_type}.{rule.action}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {t(rule.behavior)} · {rule.required_level} · {t('优先级')} {rule.priority}
+                      {t(rule.behavior)} · {rule.required_level} · {t('org.priority')} {rule.priority}
                     </p>
                   </div>
                 ))}
-                {accessRules.length === 0 && <p className="text-sm text-slate-500">{t('暂无权限规则')}</p>}
+                {accessRules.length === 0 && <p className="text-sm text-slate-500">{t('org.noAccessRules')}</p>}
               </div>
             </div>
           </div>
         </Panel>
 
-        <Panel icon={Sparkles} title="成员匹配">
+        <Panel icon={Sparkles} title="org.memberMatching">
           <div className="space-y-3">
-            <TextInput label="任务描述" value={matchTask} onChange={setMatchTask} />
+            <TextInput label="org.taskDescription" value={matchTask} onChange={setMatchTask} />
             <div className="grid gap-3 sm:grid-cols-3">
-              <TextInput label="所需能力" value={matchCapabilities} onChange={setMatchCapabilities} />
+              <TextInput label="org.requiredCapabilities" value={matchCapabilities} onChange={setMatchCapabilities} />
               <label className="block">
-                <span className="text-sm font-medium text-slate-700">{t('权限')}</span>
+                <span className="text-sm font-medium text-slate-700">{t('org.permission')}</span>
                 <select
                   value={matchLevel}
                   onChange={(event) => setMatchLevel(event.target.value)}
@@ -1745,7 +1745,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                 </select>
               </label>
               <label className="block">
-                <span className="text-sm font-medium text-slate-700">{t('风险')}</span>
+                <span className="text-sm font-medium text-slate-700">{t('org.risk')}</span>
                 <select
                   value={matchRisk}
                   onChange={(event) => setMatchRisk(event.target.value)}
@@ -1765,7 +1765,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
               className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {t('匹配成员')}
+              {t('org.matchMembers')}
             </button>
             <div className="grid gap-2 md:grid-cols-2">
               {asArray<MatchCandidate>(candidates).map((candidate) => (
@@ -1777,7 +1777,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                   <p className="mt-1 text-sm text-slate-500">{candidate.reason}</p>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
                     <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">
-                      {t('权重')} {Math.round(candidate.weight_snapshot * 100)}%
+                      {t('org.weight')} {Math.round(candidate.weight_snapshot * 100)}%
                     </span>
                     <span
                       className={`rounded-md border px-2 py-1 ${
@@ -1788,7 +1788,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
                             : 'border-red-200 bg-red-50 text-red-700'
                       }`}
                     >
-                      {candidate.requires_approval ? t('需审批') : candidate.access_decision}
+                      {candidate.requires_approval ? t('org.approvalRequired') : candidate.access_decision}
                     </span>
                   </div>
                 </div>

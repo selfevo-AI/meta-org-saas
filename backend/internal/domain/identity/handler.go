@@ -98,6 +98,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.AuthenticateUser(r.Context(), req.Email, req.Password)
 	if err != nil {
+		if errors.Is(err, ErrAccountDisabled) {
+			// Correct credentials for a disabled account: not a guessing attempt,
+			// so it neither counts against the limiter nor resets it.
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "account_disabled", "code": "account_disabled"})
+			return
+		}
 		h.recordFailures(r, buckets, h.authPolicy)
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
