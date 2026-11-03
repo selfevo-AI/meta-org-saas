@@ -1201,7 +1201,9 @@ function normalizeMenuGroups(input?: MenuGroup[]): MenuGroup[] {
 }
 
 function defaultExpandedGroups(): Record<string, boolean> {
-  return Object.fromEntries(defaultMenuGroups.map((group) => [group.id, ['business', 'supplyChain'].includes(group.id)]))
+  // Only the read-only business archive starts folded; its items stay out of
+  // the DOM until opened so retired domains never appear as navigation targets.
+  return Object.fromEntries(defaultMenuGroups.map((group) => [group.id, group.id !== 'archive']))
 }
 
 function loadMenuGroups(): MenuGroup[] {
@@ -3105,7 +3107,7 @@ function NavigationSidebar({
             <button type="button" className="sidebar-group-title" onClick={() => onToggleGroup(group.id)} aria-expanded={expanded} aria-controls={`navigation-items-${group.id}`}>
               <span>{t(`nav.group.${group.id}`)}</span>{expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
             </button>
-            <div id={`navigation-items-${group.id}`} className="sidebar-group-items" hidden={!expanded}>{group.domains.map((domain) => {
+            {expanded && <div id={`navigation-items-${group.id}`} className="sidebar-group-items">{group.domains.map((domain) => {
               const menuKey = `domain:${domain}` as const
               const Icon = domainIcons[domain] ?? FolderKanban
               const supplyChainFunctions = supplyChainFunctionsForDomain(domain)
@@ -3135,7 +3137,7 @@ function NavigationSidebar({
                   </button>)}
                 </div>}
               </div>
-            })}</div>
+            })}</div>}
           </div>
         })}
         {filteredGroups.length === 0 && <p className="px-3 py-5 text-xs ui-muted">{t('ui.nav.noResults')}</p>}
