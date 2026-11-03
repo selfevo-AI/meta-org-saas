@@ -11,6 +11,7 @@ export function DocumentPdfPreview({ url, name }: { url: string; name: string })
   const { t } = useI18n()
   const container = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
+  const renderTask = useRef<RenderTask | null>(null)
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null)
   const [width, setWidth] = useState(0)
   const [page, setPage] = useState(1)
@@ -45,9 +46,18 @@ export function DocumentPdfPreview({ url, name }: { url: string; name: string })
   useEffect(() => {
     if (!document || !width || !canvas.current) return
     let cancelled = false
-    let task: RenderTask | undefined
     const element = canvas.current
-    void document.getPage(page).then(async (content) => {
+    void (async () => {
+      // pdf.js releases a canvas asynchronously after cancel(); starting the next
+      // render before that settles throws "same canvas during multiple render()"
+      // (React StrictMode re-runs this effect immediately in development).
+      const previous = renderTask.current
+      if (previous) {
+        previous.cancel()
+        await previous.promise.catch(() => undefined)
+      }
+      if (cancelled) return
+      const content = await document.getPage(page)
       if (cancelled) return
       const natural = content.getViewport({ scale: 1 })
       const displayWidth = Math.min(width, 1600) * zoom
@@ -57,11 +67,16 @@ export function DocumentPdfPreview({ url, name }: { url: string; name: string })
       element.style.width = `${displayWidth}px`
       element.style.height = `${displayWidth * natural.height / natural.width}px`
       // Render page content only; embedded PDF scripts and interactive actions are never executed.
-      task = content.render({ canvas: element, viewport })
-      await task.promise
+      const task = content.render({ canvas: element, viewport })
+      renderTask.current = task
+      try {
+        await task.promise
+      } finally {
+        if (renderTask.current === task) renderTask.current = null
+      }
       if (!cancelled) setRendered(renderKey)
-    }).catch(() => { if (!cancelled) setFailed(true) })
-    return () => { cancelled = true; task?.cancel() }
+    })().catch(() => { if (!cancelled) setFailed(true) })
+    return () => { cancelled = true; renderTask.current?.cancel() }
   }, [document, width, page, zoom, renderKey])
 
   return <div className="import-pdf-viewer">

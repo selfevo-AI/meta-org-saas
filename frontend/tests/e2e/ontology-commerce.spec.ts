@@ -146,7 +146,8 @@ test('purchase-to-pay and order-to-cash use one governed ledger', async ({ page 
   await createHeader(page, 'MVPM', `PAY-${suffix}`, { CardCode: supplier, DocTotal: '113' })
   await action(page, 'Allocate', { TargetKey: payable, Amount: '50' })
   await action(page, 'Allocate', { TargetKey: payable, Amount: '63' })
-  await expect(page.getByTestId('document-header-form').getByLabel('Open Balance', { exact: true })).toHaveText('0')
+  // The read-only totals group renders the settled balance as a formatted amount.
+  await expect(page.getByTestId('field-value-OpenBal')).toHaveText('0.00')
   expect((await getRecord('MPCH', payable)).PaidToDate).toBe(113)
   const stockKey = `${item}|${warehouse}`
   expect(await getRecord('MITW', stockKey)).toMatchObject({ OnHand: 10, InventoryValue: 100 })
@@ -212,9 +213,18 @@ test('business archive is read-only without locking core inventory and accountin
     for (const archive of [true, false]) {
       await navigate(page, archive ? 'Manufacturing' : document.domain, archive ? `manufacturing:${document.archive}` : document.core)
       const workbench = page.getByTestId('document-workbench')
+      // The register panel auto-opens until the first record is selected and then
+      // auto-closes; wait for the toggle to be enabled (record selected) so the
+      // open/close decision below is stable.
+      const registerToggle = workbench.getByTestId('document-register-toggle')
+      await expect(registerToggle).toBeEnabled()
+      if (!(await workbench.getByTestId('document-register').isVisible())) {
+        await registerToggle.click()
+      }
+      await expect(workbench.getByTestId('document-register')).toBeVisible()
       await workbench.getByRole('textbox', { name: 'Search Records', exact: true }).fill(key)
       await workbench.getByRole('button', { name: 'Search Records', exact: true }).click()
-      await workbench.locator('aside').getByRole('button').filter({ hasText: key }).click()
+      await workbench.locator('.document-record-link').filter({ hasText: key }).click()
       const form = workbench.getByTestId('document-header-form')
       await expect(form.getByLabel('Key', { exact: true })).toHaveText(key)
       if (archive) {
