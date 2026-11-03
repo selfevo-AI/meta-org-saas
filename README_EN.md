@@ -98,7 +98,7 @@ The frontend is an operational single-page workspace:
 | Layer | Current Implementation |
 |---|---|
 | Frontend | Next.js 16 App Router, React 19, TypeScript, Tailwind CSS, lucide-react, @xyflow/react |
-| Backend | Go 1.24, Chi Router v5, modular domain-oriented monolith, pgx PostgreSQL driver |
+| Backend | Go 1.26, Chi Router v5, modular domain-oriented monolith, pgx PostgreSQL driver |
 | Database | PostgreSQL 16, root-level SQL migrations, automatically applied by the backend on startup |
 | Authentication | JWT Bearer Token with separate public and protected route groups |
 | Deployment | Docker Compose starts PostgreSQL, backend, and frontend |

@@ -98,7 +98,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | 层 | 当前实现 |
 |---|---|
 | 前端 | Next.js 16 App Router、React 19、TypeScript、Tailwind CSS、lucide-react、@xyflow/react |
-| 后端 | Go 1.24、Chi Router v5、领域模块化单体、pgx PostgreSQL 驱动 |
+| 后端 | Go 1.26、Chi Router v5、领域模块化单体、pgx PostgreSQL 驱动 |
 | 数据库 | PostgreSQL 16，根目录 SQL migrations，后端启动时自动执行 |
 | 鉴权 | JWT Bearer Token；公开路由与受保护业务路由分组注册 |
 | 部署 | Docker Compose 启动 PostgreSQL、backend、frontend |
