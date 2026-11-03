@@ -23,20 +23,20 @@ func NewClassifierService(repo *Repository) *ClassifierService {
 }
 
 type ClassifyInput struct {
-	TaskDescription string                 `json:"task_description"`
-	MVRUID          uuid.UUID              `json:"mvru_id,omitempty"`
-	ComplexityScore float64                `json:"complexity_score"`
-	RiskScore       float64                `json:"risk_score"`
-	StrategicScore  float64                `json:"strategic_score"`
-	Metadata        map[string]any         `json:"metadata,omitempty"`
+	TaskDescription string         `json:"task_description"`
+	MVRUID          uuid.UUID      `json:"mvru_id,omitempty"`
+	ComplexityScore float64        `json:"complexity_score"`
+	RiskScore       float64        `json:"risk_score"`
+	StrategicScore  float64        `json:"strategic_score"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
 type ClassifyOutput struct {
-	Layer           LayerType  `json:"layer"`
-	ComplexityScore float64    `json:"complexity_score"`
-	RiskScore       float64    `json:"risk_score"`
-	StrategicScore  float64    `json:"strategic_score"`
-	Explanation     string     `json:"explanation"`
+	Layer           LayerType `json:"layer"`
+	ComplexityScore float64   `json:"complexity_score"`
+	RiskScore       float64   `json:"risk_score"`
+	StrategicScore  float64   `json:"strategic_score"`
+	Explanation     string    `json:"explanation"`
 }
 
 func (s *ClassifierService) Classify(ctx context.Context, input ClassifyInput) (*ClassifyOutput, error) {

@@ -44,13 +44,13 @@ func (s *Service) ApplyEdgeEvent(ctx context.Context, instanceKey string, event 
 			return "skipped", nil
 		}
 		update := map[string]any{
-			"product_code": stringValue(data, "product_code", ""),
-			"line_code":    stringValue(data, "line_code", ""),
-			"plan_qty":     numericValue(data, "plan_qty"),
-			"done_qty":     numericValue(data, "done_qty"),
-			"customer_code": stringValue(data, "customer_code", ""),
-			"Status":       strings.ToUpper(stringValue(data, "status", "RUNNING")),
-			"status":       strings.ToUpper(stringValue(data, "status", "RUNNING")),
+			"product_code":   stringValue(data, "product_code", ""),
+			"line_code":      stringValue(data, "line_code", ""),
+			"plan_qty":       numericValue(data, "plan_qty"),
+			"done_qty":       numericValue(data, "done_qty"),
+			"customer_code":  stringValue(data, "customer_code", ""),
+			"Status":         strings.ToUpper(stringValue(data, "status", "RUNNING")),
+			"status":         strings.ToUpper(stringValue(data, "status", "RUNNING")),
 			"edge_synced_at": now,
 		}
 		if started := stringValue(data, "started_at", ""); started != "" {
@@ -186,9 +186,9 @@ func (s *Service) ApplyEdgeEvent(ctx context.Context, instanceKey string, event 
 			return "skipped", nil
 		}
 		update := map[string]any{
-			"part_no": stringValue(data, "part_no", ""),
-			"qty":     numericValue(data, "qty"),
-			"status":  strings.ToUpper(stringValue(data, "status", edgeReelStatusForEvent(event.Type))),
+			"part_no":        stringValue(data, "part_no", ""),
+			"qty":            numericValue(data, "qty"),
+			"status":         strings.ToUpper(stringValue(data, "status", edgeReelStatusForEvent(event.Type))),
 			"edge_synced_at": now,
 		}
 		if issuedWO := stringValue(data, "issued_wo_no", ""); issuedWO != "" {
@@ -301,7 +301,7 @@ func (s *Service) ApplyEdgeEvent(ctx context.Context, instanceKey string, event 
 		key := fmt.Sprintf("DT-%s-%s", firstNonEmptyString(machineCode, lineCode), strings.NewReplacer(":", "", "-", "", "T", "", "Z", "").Replace(startedAt))
 		if _, err := s.smtUpsertRecord(ctx, "MDWN", key, map[string]any{
 			"machine_code": machineCode, "line_code": lineCode,
-			"work_order": stringValue(data, "wo_no", ""),
+			"work_order":  stringValue(data, "wo_no", ""),
 			"reason_type": strings.ToUpper(stringValue(data, "reason_type", "OTHER")),
 			"reason":      stringValue(data, "reason", ""),
 			"planned":     isTruthy(data["planned"]),
@@ -345,8 +345,8 @@ func (s *Service) ApplyEdgeEvent(ctx context.Context, instanceKey string, event 
 			return "skipped", nil
 		}
 		if _, err := s.smtUpsertRecord(ctx, "MINS", inspNo, map[string]any{
-			"insp_type": strings.ToUpper(stringValue(data, "insp_type", "FAI")),
-			"work_order": stringValue(data, "wo_no", ""),
+			"insp_type":    strings.ToUpper(stringValue(data, "insp_type", "FAI")),
+			"work_order":   stringValue(data, "wo_no", ""),
 			"product_code": stringValue(data, "product_code", ""),
 			"sample_sn":    stringValue(data, "sample_sn", ""),
 			"result":       strings.ToUpper(stringValue(data, "result", "PASS")),
@@ -367,11 +367,11 @@ func (s *Service) ApplyEdgeEvent(ctx context.Context, instanceKey string, event 
 		case "andon.raised":
 			if _, err := s.smtAndonRaise(ctx, callNo, ActionInput{Data: map[string]any{
 				"line_code": stringValue(data, "line_code", ""), "machine_code": stringValue(data, "machine_code", ""),
-				"work_order": stringValue(data, "wo_no", ""),
-				"call_type":  strings.ToUpper(stringValue(data, "call_type", "OTHER")),
+				"work_order":  stringValue(data, "wo_no", ""),
+				"call_type":   strings.ToUpper(stringValue(data, "call_type", "OTHER")),
 				"description": stringValue(data, "description", ""),
-				"source":     strings.ToUpper(stringValue(data, "source", "MANUAL")),
-				"ref":        stringValue(data, "ref", ""),
+				"source":      strings.ToUpper(stringValue(data, "source", "MANUAL")),
+				"ref":         stringValue(data, "ref", ""),
 			}}); err != nil {
 				return "", err
 			}
@@ -501,7 +501,7 @@ func (s *Service) edgeLoadingError(ctx context.Context, prefix, eventKey string,
 	if _, err := s.smtUpsertRecord(ctx, "MVER", prefix+"-SS-"+eventKey, map[string]any{
 		"work_order": stringValue(data, "wo_no", ""), "machine_code": stringValue(data, "machine_code", ""),
 		"slot_code": stringValue(data, "slot_code", ""), "slot_no": stringValue(data, "slot_no", ""),
-		"reel_code": stringValue(data, "reel_code", ""),
+		"reel_code":        stringValue(data, "reel_code", ""),
 		"required_part_no": stringValue(data, "required_part_no", ""), "actual_part_no": stringValue(data, "actual_part_no", ""),
 		"result": "ERROR", "error_type": stringValue(data, "error_type", ""),
 		"message": stringValue(data, "message", ""), "voice": stringValue(data, "error_type_cn", ""),

@@ -169,7 +169,7 @@ var smtExecutorActions = map[string]bool{
 	"MUNT:pass": true, "MUNT:fail": true, "MUNT:repair": true,
 	"MPNL:bind": true, "MPNL:split": true,
 	"MINS:record": true,
-	"MAND:raise": true, "MAND:ack": true, "MAND:close": true,
+	"MAND:raise":  true, "MAND:ack": true, "MAND:close": true,
 	"MDWN:start": true, "MDWN:end": true,
 }
 

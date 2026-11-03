@@ -23,10 +23,10 @@ func NewRouter(repo *Repository) *Router {
 }
 
 type MatchRequest struct {
-	TaskDescription string                 `json:"task_description"`
-	MVRUID          uuid.UUID              `json:"mvru_id,omitempty"`
-	RequiredLevel   string                 `json:"required_level,omitempty"`
-	Metadata        map[string]any         `json:"metadata,omitempty"`
+	TaskDescription string         `json:"task_description"`
+	MVRUID          uuid.UUID      `json:"mvru_id,omitempty"`
+	RequiredLevel   string         `json:"required_level,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
 }
 
 type RankedCapability struct {

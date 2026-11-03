@@ -161,7 +161,7 @@ func (s *Service) SMTWorkOrderProgress(ctx context.Context, workOrder string) (m
 		})
 	}
 	return map[string]any{
-		"work_order": order.Key,
+		"work_order":   order.Key,
 		"product_code": stringValue(order.Data, "product_code", ""),
 		"line_code":    stringValue(order.Data, "line_code", ""),
 		"status":       smtStatusOf(order),
@@ -196,15 +196,15 @@ func (s *Service) SMTBoard(ctx context.Context, lineCode string) (map[string]any
 			return nil, err
 		}
 		card := map[string]any{
-			"machine_code": machine.Key,
-			"name":         stringValue(machine.Data, "Name", ""),
-			"line_code":    stringValue(machine.Data, "line_code", ""),
-			"work_order":   stringValue(machine.Data, "current_work_order", ""),
-			"ready":        contextData["ready"],
+			"machine_code":     machine.Key,
+			"name":             stringValue(machine.Data, "Name", ""),
+			"line_code":        stringValue(machine.Data, "line_code", ""),
+			"work_order":       stringValue(machine.Data, "current_work_order", ""),
+			"ready":            contextData["ready"],
 			"awaiting_signoff": contextData["awaiting_signoff"],
-			"verified_at":  contextData["verified_at"],
-			"signed_off_at": contextData["signed_off_at"],
-			"summary":      contextData["summary"],
+			"verified_at":      contextData["verified_at"],
+			"signed_off_at":    contextData["signed_off_at"],
+			"summary":          contextData["summary"],
 		}
 		if isTruthy(contextData["ready"]) {
 			readyCount++
@@ -231,7 +231,7 @@ func (s *Service) SMTBoard(ctx context.Context, lineCode string) (map[string]any
 		orderCards = append(orderCards, map[string]any{
 			"work_order": order.Key, "product_code": stringValue(order.Data, "product_code", ""),
 			"line_code": stringValue(order.Data, "line_code", ""),
-			"plan_qty": plan, "done_qty": done, "achievement": round4(achievement),
+			"plan_qty":  plan, "done_qty": done, "achievement": round4(achievement),
 			"customer_code": stringValue(order.Data, "customer_code", ""),
 		})
 	}
@@ -252,13 +252,13 @@ func (s *Service) SMTBoard(ctx context.Context, lineCode string) (map[string]any
 		openAndons = append(openAndons, map[string]any{
 			"call_no": call.Key, "call_type": stringValue(call.Data, "call_type", ""),
 			"machine_code": stringValue(call.Data, "machine_code", ""),
-			"status": status, "called_at": stringValue(call.Data, "called_at", ""),
+			"status":       status, "called_at": stringValue(call.Data, "called_at", ""),
 			"description": stringValue(call.Data, "description", ""),
 		})
 	}
 	return map[string]any{
-		"line_code": lineCode,
-		"machines":  machineCards,
+		"line_code":      lineCode,
+		"machines":       machineCards,
 		"ready_machines": readyCount,
 		"machine_count":  len(machineCards),
 		"work_orders":    orderCards,
