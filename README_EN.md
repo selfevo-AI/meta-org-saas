@@ -98,7 +98,7 @@ The frontend is an operational single-page workspace:
 | Layer | Current Implementation |
 |---|---|
 | Frontend | Next.js 16 App Router, React 19, TypeScript, Tailwind CSS, lucide-react, @xyflow/react |
-| Backend | Go 1.22, Chi Router v5, modular domain-oriented monolith, pgx PostgreSQL driver |
+| Backend | Go 1.24, Chi Router v5, modular domain-oriented monolith, pgx PostgreSQL driver |
 | Database | PostgreSQL 16, root-level SQL migrations, automatically applied by the backend on startup |
 | Authentication | JWT Bearer Token with separate public and protected route groups |
 | Deployment | Docker Compose starts PostgreSQL, backend, and frontend |
@@ -360,7 +360,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
   Select-Object StatusCode,Content
 ```
 
-The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health reporting `status: ok`, `platform_database.status: ok`, and `security_kernel.status: ok`, plus tenant-identifier-free pool aggregates in `tenant_database_pools`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
+The expected state is frontend `3000` and backend `8080` both in `Listen`, frontend HTTP `200`, and backend health reporting `status: ok`, `platform_database.status: ok`, and `security_kernel.status: ok`. The public `/api/v1/health` probe returns only that availability view; pool, rate-limit and background-worker aggregates (`tenant_database_pools` and friends) are served to platform administrators at `/api/v1/platform/admin/health`. To stop an old process, first confirm the `OwningProcess` from the port query, then run `Stop-Process -Id <PID> -Force` for one PID at a time.
 
 After the AI Gateway, Meta Resource, SaaS, security-kernel, and supply-chain refactors, startup must apply the staged baselines and compatibility repair: `000/001/002/004/008`. If backend startup, Model Settings, Meta Resource, SaaS module pages, or supply-chain pages fail with `column ... does not exist`, `relation model_provider_channels does not exist`, `relation ai_routing_rules does not exist`, `relation ai_model_groups does not exist`, `relation meta_resources does not exist`, `relation tenant_modules does not exist`, `relation security_policies does not exist`, or `relation inventory_items does not exist`, the usual cause is a wrong `MIGRATIONS_PATH`, an old database in `DATABASE_URL`, or pending migrations. If SaaS management endpoints fail with `relation platform.database_maintenance_jobs does not exist` or `relation platform.tenant_database_targets does not exist`, the backend is usually still connected to old `meta_org` or an incomplete platform database. Confirm `DATABASE_URL` and `PLATFORM_DATABASE_URL` point to `meta_org_saas`, use `MIGRATIONS_PATH=../migrations` when running from `backend/`, restart the backend so the migration runner applies `000_saas_platform_management_baseline.sql`, `001_erp_code_baseline.sql`, `002_erp_platform_integration_baseline.sql`, `004_ai_capability_baseline.sql`, and `008_ai_gateway_model_group_repair.sql`, verify Model Settings pages for Channels / Keys, Routing, and Usage Analysis, then run Sync Existing Resources in the Meta Resource workspace.
 
@@ -401,6 +401,7 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32-character key for model provider and finance adapter secret encryption. Replace in production. |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | Frontend origins allowed to call the API. |
 | `TRUSTED_PROXY_CIDRS` | empty | Trusted reverse-proxy CIDRs; forwarded client headers are used only from these peers. |
+| `OUTBOUND_ALLOW_PRIVATE_NETWORKS` | `true` in development/test, else `false` | Whether tenant-configured outbound integrations (finance adapters, SMT edge instances) may target loopback, private, link-local or cloud-metadata addresses. Keep `false` in production and SaaS: the server refuses internal destinations both at validation and at dial time (covering DNS rebinding and redirects). |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Attempt window for user login, Agent authentication, and registration. |
 | `AUTH_RATE_LIMIT_MAX_ATTEMPTS` | `10` | Maximum login attempts per client or subject during the window. |
 | `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | Authentication failures that trigger a temporary client or subject block. |
@@ -473,3 +474,7 @@ Important next steps:
 - Add automated frontend-state and end-to-end tests for critical workflows.
 - Improve production-grade secret management, audit reports, alerts, and permission-policy visualization.
 - Extend multi-organization tenant boundaries, approval-flow templates, and finer-grained operation audit trails.
+
+## License
+
+This project is released under the [GNU Affero General Public License v3.0](LICENSE). You may use, modify and distribute it freely; whenever you distribute a modified version **or let users interact with a modified version over a network**, you must make its corresponding source available to them under the same license (AGPL section 13).

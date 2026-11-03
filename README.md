@@ -98,7 +98,7 @@ Meta-Org 要解决的问题不是单点任务管理，而是“组织如何在 A
 | 层 | 当前实现 |
 |---|---|
 | 前端 | Next.js 16 App Router、React 19、TypeScript、Tailwind CSS、lucide-react、@xyflow/react |
-| 后端 | Go 1.22、Chi Router v5、领域模块化单体、pgx PostgreSQL 驱动 |
+| 后端 | Go 1.24、Chi Router v5、领域模块化单体、pgx PostgreSQL 驱动 |
 | 数据库 | PostgreSQL 16，根目录 SQL migrations，后端启动时自动执行 |
 | 鉴权 | JWT Bearer Token；公开路由与受保护业务路由分组注册 |
 | 部署 | Docker Compose 启动 PostgreSQL、backend、frontend |
@@ -383,7 +383,7 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/api/v1/health -UseBasicParsing -Tim
   Select-Object StatusCode,Content
 ```
 
-成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 的 `status`、`platform_database.status` 和 `security_kernel.status` 均为 `ok`，并在 `tenant_database_pools` 中返回无租户标识的连接池聚合指标。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
+成功状态应为前端 `3000` 和后端 `8080` 都处于 `Listen`，前端返回 HTTP `200`，后端 health 的 `status`、`platform_database.status` 和 `security_kernel.status` 均为 `ok`。公开的 `/api/v1/health` 只返回这些可用性信息；连接池、限流与后台 worker 的聚合指标（`tenant_database_pools` 等）由平台管理员通过 `/api/v1/platform/admin/health` 查看。如果需要停止旧进程，先用上面的端口查询确认 `OwningProcess`，再对单个 PID 执行 `Stop-Process -Id <PID> -Force`。
 
 AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启动时必须确认阶段基线与兼容性修复 `000/001/002/004/008` 都已执行。若后端启动、模型设置、Meta Resource、SaaS 模块或 ERP 工作台出现 `column ... does not exist`、`relation model_provider_channels does not exist`、`relation ai_routing_rules does not exist`、`relation ai_model_groups does not exist`、`relation meta_resources does not exist`、`relation tenant_modules does not exist`、`relation security_policies does not exist`，或缺少 `MITW`、`MPOR`、`MRDR`、`MRPS`、`MDRQ` 等 ERP code-table 关系，通常是 `MIGRATIONS_PATH` 指向错误、连接到了旧数据库，或迁移尚未执行。若出现 `relation platform.database_maintenance_jobs does not exist` 或 `relation platform.tenant_database_targets does not exist`，通常是后端仍连接旧 `meta_org` 或不完整的平台库。处理顺序：
 
@@ -432,6 +432,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | `MODEL_SECRET_KEY` | `0123456789abcdef0123456789abcdef` | 32 字符密钥，用于模型供应商和财务适配器密钥加密，生产环境必须替换。 |
 | `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000` | 允许访问 API 的前端来源。 |
 | `TRUSTED_PROXY_CIDRS` | 空 | 可信反向代理 CIDR；仅来自这些地址的请求可使用 `X-Forwarded-For` / `X-Real-IP`。 |
+| `OUTBOUND_ALLOW_PRIVATE_NETWORKS` | development/test 为 `true`，其余为 `false` | 是否允许租户配置的出站集成（财务适配器、SMT 边缘实例）指向回环/私网/链路本地/云元数据地址。生产与 SaaS 环境应保持 `false`，服务端在校验和拨号时都会拒绝内网目标（含 DNS 重绑定与重定向）。 |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | 登录、Agent 认证和注册尝试统计窗口。 |
 | `AUTH_RATE_LIMIT_MAX_ATTEMPTS` | `10` | 每个登录客户端或主体在窗口内的最大尝试数。 |
 | `AUTH_RATE_LIMIT_FAILURE_THRESHOLD` | `5` | 触发账号或客户端临时封禁的认证失败数。 |
@@ -506,3 +507,7 @@ docker-compose.production.yml 公网 HTTPS 环境编排
 - 为关键前端状态和端到端业务场景补充自动化测试。
 - 完善生产级密钥管理、审计报表、告警和权限策略可视化。
 - 扩展多组织租户边界、审批流模板和更细粒度的操作审计。
+
+## 许可证
+
+本项目以 [GNU Affero General Public License v3.0](LICENSE) 发布。你可以自由使用、修改和分发本软件；分发修改版本，**或以修改版本通过网络对外提供服务**时，都必须以同一许可证向用户开放对应源码（AGPL 第 13 条）。

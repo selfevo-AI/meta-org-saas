@@ -2,6 +2,7 @@
   "name": "meta-org-frontend",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "scripts": {
     "predev": "node prepare-pdf-assets.mjs",
     "dev": "next dev",
