@@ -14,8 +14,14 @@ var (
 	ErrValidation = errors.New("validation error")
 )
 
+// CapabilityLister is the subset of repository behavior the router needs; it
+// keeps the matching rules unit-testable without a database.
+type CapabilityLister interface {
+	ListCapabilities(ctx context.Context) ([]Capability, error)
+}
+
 type Router struct {
-	repo *Repository
+	repo CapabilityLister
 }
 
 func NewRouter(repo *Repository) *Router {

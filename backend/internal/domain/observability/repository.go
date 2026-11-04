@@ -49,11 +49,7 @@ func (r *Repository) GetTrace(ctx context.Context, id uuid.UUID) (*Trace, error)
 }
 
 func (r *Repository) ListTraces(ctx context.Context, limit int) ([]Trace, error) {
-	if limit <= 0 {
-		limit = 50
-	} else if limit > 100 {
-		limit = 100
-	}
+	limit = normalizeLimit(limit, 50, 100)
 	rows, err := r.db.Query(ctx,
 		`SELECT id, workflow_id, status, started_at, completed_at, metadata
 		 FROM traces ORDER BY started_at DESC LIMIT $1`, limit)
@@ -142,14 +138,22 @@ func (r *Repository) RecordMetric(ctx context.Context, input RecordMetricInput) 
 	return m, nil
 }
 
-func (r *Repository) QueryMetrics(ctx context.Context, q MetricsQuery) ([]Metric, error) {
-	limit := q.Limit
+// normalizeLimit clamps a caller-supplied limit to [defaultLimit..maxLimit],
+// falling back to the default for non-positive values.
+func normalizeLimit(limit, defaultLimit, maxLimit int) int {
 	if limit <= 0 {
-		limit = 50
-	} else if limit > 500 {
-		limit = 500
+		return defaultLimit
 	}
+	if limit > maxLimit {
+		return maxLimit
+	}
+	return limit
+}
 
+// buildMetricsQuery assembles the filtered metrics statement and its bound
+// arguments; it is pure so the filter/limit rules can be tested without a
+// database.
+func buildMetricsQuery(q MetricsQuery, limit int) (string, []any) {
 	where := "WHERE 1=1"
 	args := []any{}
 	argIdx := 1
@@ -183,6 +187,12 @@ func (r *Repository) QueryMetrics(ctx context.Context, q MetricsQuery) ([]Metric
 	query := fmt.Sprintf(`SELECT id, metric_type, metric_name, entity_id, entity_type, value, recorded_at, metadata
 		FROM metrics %s ORDER BY recorded_at DESC LIMIT $%d`, where, argIdx)
 	args = append(args, limit)
+	return query, args
+}
+
+func (r *Repository) QueryMetrics(ctx context.Context, q MetricsQuery) ([]Metric, error) {
+	limit := normalizeLimit(q.Limit, 50, 500)
+	query, args := buildMetricsQuery(q, limit)
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
