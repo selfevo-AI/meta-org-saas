@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
@@ -9,7 +10,16 @@ const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 
 const apiWorkbenchSource = readFileSync(`${frontendRoot}src/app/api-workbench.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
 const englishI18nSource = readFileSync(`${frontendRoot}src/lib/i18n.en.ts`, 'utf8')
-const operationsSource = readFileSync(`${frontendRoot}src/lib/operations.ts`, 'utf8')
+// operations.ts was split into a directory of per-domain catalog files.
+function readOperationsSource() {
+  return readdirSync(`${frontendRoot}src/lib/operations`, { recursive: true })
+    .filter((entry) => String(entry).endsWith('.ts'))
+    .sort()
+    .map((entry) => readFileSync(join(`${frontendRoot}src/lib/operations`, String(entry)), 'utf8'))
+    .join('\n')
+}
+
+const operationsSource = readOperationsSource()
 const workspacePath = `${frontendRoot}src/app/system-admin-workspace.tsx`
 const workspaceSource = existsSync(workspacePath) ? readFileSync(workspacePath, 'utf8') : ''
 

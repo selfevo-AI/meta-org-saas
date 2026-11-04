@@ -1,0 +1,71 @@
+import type { ApiOperation } from '../types'
+
+export const deliveryOperations: ApiOperation[] = [
+  {
+    id: 'delivery-create',
+    domain: 'Delivery',
+    title: '创建交付物',
+    method: 'POST',
+    path: '/projects/{id}/deliverables',
+    pathParams: [{ name: 'id', label: '项目 ID' }],
+    bodyTemplate: {
+      name: '交付物 v1',
+      deliverable_type: 'document',
+      uri: '',
+      version: '1.0',
+      status: 'draft',
+      metadata: {},
+    },
+  },
+  {
+    id: 'delivery-list',
+    domain: 'Delivery',
+    title: '交付物列表',
+    method: 'GET',
+    path: '/projects/{id}/deliverables',
+    pathParams: [{ name: 'id', label: '项目 ID' }],
+  },
+  {
+    id: 'delivery-update',
+    domain: 'Delivery',
+    title: '更新交付物',
+    method: 'PATCH',
+    path: '/deliverables/{id}',
+    pathParams: [{ name: 'id', label: '交付物 ID' }],
+    bodyTemplate: {
+      name: 'Updated deliverable',
+      status: 'draft',
+      metadata: {},
+    },
+  },
+  {
+    id: 'delivery-submit',
+    domain: 'Delivery',
+    title: '提交交付物',
+    method: 'POST',
+    path: '/deliverables/{id}/submit',
+    pathParams: [{ name: 'id', label: '交付物 ID' }],
+    bodyTemplate: { evidence: {} },
+  },
+  {
+    id: 'delivery-accept',
+    domain: 'Delivery',
+    title: '验收交付物',
+    method: 'POST',
+    path: '/deliverables/{id}/accept',
+    pathParams: [{ name: 'id', label: '交付物 ID' }],
+    bodyTemplate: { evidence: {} },
+  },
+  {
+    id: 'delivery-reject',
+    domain: 'Delivery',
+    title: '退回交付物',
+    method: 'POST',
+    path: '/deliverables/{id}/reject',
+    pathParams: [{ name: 'id', label: '交付物 ID' }],
+    bodyTemplate: {
+      reason: 'needs revision',
+      evidence: {},
+    },
+  },
+]

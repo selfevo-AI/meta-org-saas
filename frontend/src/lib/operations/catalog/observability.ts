@@ -1,0 +1,88 @@
+import type { ApiOperation } from '../types'
+
+export const observabilityOperations: ApiOperation[] = [
+  {
+    id: 'observability-start-trace',
+    domain: 'Observability',
+    title: '开始 Trace',
+    method: 'POST',
+    path: '/traces',
+    bodyTemplate: {
+      workflow_id: null,
+      metadata: {},
+    },
+  },
+  {
+    id: 'observability-list-traces',
+    domain: 'Observability',
+    title: 'Trace 列表',
+    method: 'GET',
+    path: '/traces',
+    queryParams: [{ name: 'limit', label: '数量', placeholder: '50' }],
+  },
+  {
+    id: 'observability-get-trace',
+    domain: 'Observability',
+    title: 'Trace 详情',
+    method: 'GET',
+    path: '/traces/{id}',
+    pathParams: [{ name: 'id', label: 'Trace ID' }],
+  },
+  {
+    id: 'observability-record-span',
+    domain: 'Observability',
+    title: '记录 Span',
+    method: 'POST',
+    path: '/traces/{id}/spans',
+    pathParams: [{ name: 'id', label: 'Trace ID' }],
+    bodyTemplate: {
+      span_type: 'task',
+      entity_id: null,
+      entity_type: 'task',
+      actor_id: null,
+      actor_type: 'human',
+      input: {},
+      output: {},
+      duration_ms: 120,
+      metadata: {},
+    },
+  },
+  {
+    id: 'observability-complete-trace',
+    domain: 'Observability',
+    title: '完成 Trace',
+    method: 'POST',
+    path: '/traces/{id}/complete',
+    pathParams: [{ name: 'id', label: 'Trace ID' }],
+    bodyTemplate: {
+      status: 'completed',
+    },
+  },
+  {
+    id: 'observability-record-metric',
+    domain: 'Observability',
+    title: '记录指标',
+    method: 'POST',
+    path: '/metrics',
+    bodyTemplate: {
+      metric_type: 'health',
+      metric_name: 'workflow_quality',
+      entity_id: null,
+      entity_type: 'workflow',
+      value: 0.92,
+      metadata: {},
+    },
+  },
+  {
+    id: 'observability-query-metrics',
+    domain: 'Observability',
+    title: '查询指标',
+    method: 'GET',
+    path: '/metrics',
+    queryParams: [
+      { name: 'metric_type', label: '类型' },
+      { name: 'metric_name', label: '名称' },
+      { name: 'limit', label: '数量', placeholder: '50' },
+    ],
+  },
+]
