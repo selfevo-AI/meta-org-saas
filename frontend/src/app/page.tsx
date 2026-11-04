@@ -132,8 +132,9 @@ const OrganizationWorkspace = dynamic(() => import('./organization-workspace').t
 const SystemAdminWorkspace = dynamic(() => import('./system-admin-workspace').then((module) => module.SystemAdminWorkspace), { loading: WorkspaceLoading })
 const SMTWorkspace = dynamic(() => import('./smt-workspace').then((module) => module.SMTWorkspace), { loading: WorkspaceLoading })
 
-type AuthMode = 'login' | 'register'
-type LoginSurface = 'tenant' | 'platform'
+import { LoginSurfaceView } from './login-surface'
+import type { AuthMode, LoginSurface } from './login-surface'
+
 type ThemeMode = 'dark' | 'light'
 
 function WorkspaceLoading() {
@@ -2507,59 +2508,22 @@ function WorkspaceApplication() {
       <UnsavedChangesDialog />
       <NavigationSearch open={searchOpen && !!token} onClose={() => setSearchOpen(false)} items={searchItems} />
       {!token ? (
-        <div data-testid="login-shell" className="login-shell">
-          <section className="ui-card login-form">
-            <div className="sidebar-brand">
-              <span className="sidebar-brand-mark"><Boxes size={23} strokeWidth={1.8} /></span>
-              <div><strong>{t('app.product')}</strong><small>{t('ui.brand.tagline')}</small></div>
-            </div>
-            <h1>{t(mode === 'login' ? 'ui.login.formTitle' : 'auth.createAccount')}</h1>
-            <p className="login-form-hint">{t('ui.login.formHint')}</p>
-            <div className="login-surface-switch">
-              <button type="button" data-testid="login-surface-tenant" onClick={() => handleLoginSurfaceChange('tenant')} aria-pressed={loginSurface === 'tenant'} title={t('auth.organizationLogin')}>
-                <Users size={16} />{t('auth.tenantConsole')}
-              </button>
-              <button type="button" data-testid="login-surface-platform" onClick={() => handleLoginSurfaceChange('platform')} aria-pressed={loginSurface === 'platform'} title={t('auth.platformLogin')}>
-                <ShieldCheck size={16} />{t('auth.platformAdmin')}
-              </button>
-            </div>
-            <form className="mt-6 space-y-5" onSubmit={handleAuth}>
-              {loginSurface === 'tenant' && mode === 'register' && <label className="ui-field"><span className="ui-field-label">{t('auth.name')}</span>
-                <input value={name} onChange={(event) => setName(event.target.value)} className="ui-input" autoComplete="name" required />
-              </label>}
-              <label className="ui-field"><span className="ui-field-label">{t('auth.email')}</span>
-                <input data-testid="auth-email" value={email} onChange={(event) => setEmail(event.target.value)} className="ui-input" autoComplete="email" type="email" required />
-              </label>
-              <label className="ui-field"><span className="ui-field-label">{t('auth.password')}</span>
-                <input data-testid="auth-password" value={password} onChange={(event) => setPassword(event.target.value)} className="ui-input" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} type="password" required />
-              </label>
-              {error && <FeedbackMessage error>{error}</FeedbackMessage>}
-              {notice && <FeedbackMessage>{notice}</FeedbackMessage>}
-              <button type="submit" data-testid="auth-submit" disabled={loading} className="ui-button ui-button-primary w-full">
-                {loading ? <RefreshCw size={16} className="animate-spin" /> : <ArrowRight size={16} />}
-                {t(loading ? 'auth.processing' : mode === 'login' ? 'auth.signIn' : 'auth.createAccount')}
-              </button>
-            </form>
-            {loginSurface === 'tenant' && <button type="button" className="ui-button ui-button-link mt-3 w-full" onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>{t(mode === 'login' ? 'auth.register' : 'auth.login')}</button>}
-            <div className="login-language"><div className="shell-language">
-              <button type="button" onClick={() => setLocale('zh')} aria-pressed={locale === 'zh'}>中文</button>
-              <button type="button" onClick={() => setLocale('en')} aria-pressed={locale === 'en'}>EN</button>
-            </div></div>
-          </section>
-          <section className="login-intro">
-            <span className="login-intro-label"><Boxes size={17} />{t('ui.brand.tagline')}</span>
-            <h2>{t('ui.login.welcome')}</h2>
-            <p>{t('ui.login.subtitle')}</p>
-            <div className="login-features">
-              {[
-                { key: 'work', icon: FolderKanban }, { key: 'review', icon: ClipboardCheck }, { key: 'ai', icon: Sparkles },
-              ].map(({ key, icon: Icon }) => <div className="login-feature" key={key}>
-                <span><Icon size={20} strokeWidth={1.7} /></span>
-                <div><strong>{t('ui.login.feature.' + key)}</strong><p>{t('ui.login.feature.' + key + 'Hint')}</p></div>
-              </div>)}
-            </div>
-          </section>
-        </div>
+        <LoginSurfaceView
+          mode={mode}
+          loginSurface={loginSurface}
+          name={name}
+          email={email}
+          password={password}
+          error={error}
+          notice={notice}
+          loading={loading}
+          onNameChange={setName}
+          onEmailChange={setEmail}
+          onPasswordChange={setPassword}
+          onModeChange={setMode}
+          onSurfaceChange={handleLoginSurfaceChange}
+          onSubmit={handleAuth}
+        />
       ) : onboardingRequired ? (
         <div className="mx-auto grid min-h-screen max-w-5xl gap-5 px-4 py-8 sm:px-6 lg:grid-cols-[380px_1fr] lg:items-center lg:px-8">
           <section className="studio-panel rounded-lg p-5">

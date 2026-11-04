@@ -14,7 +14,10 @@ function readApiSource() {
 
 const apiSource = readApiSource()
 const authSource = readFileSync(`${frontendRoot}src/lib/auth.ts`, 'utf8')
+// The login surface lives in its own module since the page was sliced; page
+// checks that reference login markup see both files.
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
+  + readFileSync(`${frontendRoot}src/app/login-surface.tsx`, 'utf8')
 const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 'utf8')
 const apiWorkbenchSource = readFileSync(`${frontendRoot}src/app/api-workbench.tsx`, 'utf8')
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
