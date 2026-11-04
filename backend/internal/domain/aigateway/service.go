@@ -24,6 +24,7 @@ var (
 	ErrNotFound    = errors.New("not found")
 	ErrForbidden   = errors.New("forbidden")
 	ErrUnavailable = errors.New("unavailable")
+	ErrConflict    = errors.New("conflict")
 )
 
 type AdapterRegistry map[string]ProviderAdapter
@@ -67,6 +68,7 @@ type CatalogRepository interface {
 	ListProviders(ctx context.Context, limit int) ([]ModelProvider, error)
 	ListActiveProviders(ctx context.Context, limit int) ([]ModelProvider, error)
 	UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error)
+	DeleteProvider(ctx context.Context, id uuid.UUID) error
 	RotateProviderKey(ctx context.Context, id uuid.UUID, apiKey string) (*ModelProvider, error)
 	UpdateProviderTestResult(ctx context.Context, id uuid.UUID, status string, message string) error
 	GetProviderSecret(ctx context.Context, id uuid.UUID) (ProviderSecret, error)
@@ -80,6 +82,7 @@ type CatalogRepository interface {
 	CreateChannel(ctx context.Context, input CreateChannelInput) (*ProviderChannel, error)
 	ListChannels(ctx context.Context, providerID *uuid.UUID, limit int) ([]ProviderChannel, error)
 	UpdateChannel(ctx context.Context, id uuid.UUID, input UpdateChannelInput) (*ProviderChannel, error)
+	DeleteChannel(ctx context.Context, id uuid.UUID) error
 	RotateChannelKey(ctx context.Context, id uuid.UUID, apiKey string) (*ProviderChannel, error)
 	GetChannelSecret(ctx context.Context, id uuid.UUID) (ChannelSecret, error)
 	UpdateChannelTestResult(ctx context.Context, id uuid.UUID, status string, message string) error
@@ -1070,6 +1073,25 @@ func (s *Service) UpdateProvider(ctx context.Context, id uuid.UUID, input Update
 		return nil, fmt.Errorf("%w: retry_count must be between 0 and 100", ErrValidation)
 	}
 	return s.catalogRepo().UpdateProvider(ctx, id, input)
+}
+
+// DeleteProvider removes a provider together with its channel pool. Providers
+// that still own catalog models are rejected: models reference the provider
+// with ON DELETE RESTRICT, and deleting them implicitly would silently change
+// routing for every consumer of the gateway.
+func (s *Service) DeleteProvider(ctx context.Context, id uuid.UUID) error {
+	models, err := s.catalogRepo().ListModels(ctx, &id, 1)
+	if err != nil {
+		return err
+	}
+	if len(models) > 0 {
+		return fmt.Errorf("%w: provider still owns models; delete them first", ErrConflict)
+	}
+	return s.catalogRepo().DeleteProvider(ctx, id)
+}
+
+func (s *Service) DeleteChannel(ctx context.Context, id uuid.UUID) error {
+	return s.catalogRepo().DeleteChannel(ctx, id)
 }
 
 func (s *Service) RotateProviderKey(ctx context.Context, id uuid.UUID, input RotateProviderKeyInput) (*ModelProvider, error) {

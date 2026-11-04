@@ -1,6 +1,6 @@
 'use client'
 
-import { Activity, Bot, FileCode2, Gauge, KeyRound, Network, Play, Plus, RefreshCw, Route, ServerCog, Wrench } from 'lucide-react'
+import { Activity, Bot, FileCode2, Gauge, KeyRound, Network, Play, Plus, RefreshCw, Route, ServerCog, Trash2, Wrench } from 'lucide-react'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -13,6 +13,8 @@ import {
   createAIModelGroup,
   createAIModelChannelAbility,
   createRoutingRule,
+  deleteModelProvider,
+  deleteProviderChannel,
   getAICostSummary,
   getAIGatewayBalance,
   listAIAccessTokens,
@@ -52,6 +54,7 @@ import {
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import { describeApiError } from '@/lib/api-error'
+import { Dialog, FeedbackMessage } from './workspace-ui'
 
 interface DeveloperToolsWorkspaceProps {
   token: string
@@ -117,6 +120,8 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
   const [error, setError] = useState('')
   const [lastPlainAccessToken, setLastPlainAccessToken] = useState('')
   const [loading, setLoading] = useState(false)
+  const [providerDeleteReview, setProviderDeleteReview] = useState<{ id: string; name: string } | null>(null)
+  const [channelDeleteReview, setChannelDeleteReview] = useState<{ id: string; name: string } | null>(null)
   const [providerForm, setProviderForm] = useState({
     name: '',
     provider_type: 'openai' as 'openai' | 'anthropic' | 'gemini',
@@ -323,8 +328,27 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
     }
   }
 
-  async function submitProvider(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function confirmProviderDelete() {
+    const target = providerDeleteReview
+    if (!target) return
+    setProviderDeleteReview(null)
+    await run(async () => {
+      await deleteModelProvider(token, target.id, apiScope)
+      if (selectedProviderID === target.id) setSelectedProviderID('')
+    }, 'developer.providerDeleted')
+  }
+
+  async function confirmChannelDelete() {
+    const target = channelDeleteReview
+    if (!target) return
+    setChannelDeleteReview(null)
+    await run(async () => {
+      await deleteProviderChannel(token, target.id, apiScope)
+      if (selectedChannelID === target.id) setSelectedChannelID('')
+    }, 'developer.channelDeleted')
+  }
+
+  async function submitProvider(event: FormEvent<HTMLFormElement>) {    event.preventDefault()
     if (!providerForm.name.trim() || !providerForm.base_url.trim() || !providerForm.api_key.trim()) {
       setError(t('developer.providerRequired'))
       return
@@ -652,26 +676,44 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       {effectiveActiveTab === 'providers' && (
         <div className={`grid min-w-0 gap-5 ${isPlatformScope ? 'xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]' : ''}`}>
           <Panel title="developer.modelProviders">
-            <div className="divide-y divide-slate-100">
+            <div className="mb-3 flex items-center justify-between gap-2 text-xs text-slate-500">
+              <span>{t('developer.providerTotal', { count: providers.length })}</span>
+              <span>{t('developer.providerListHint')}</span>
+            </div>
+            <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
               {providers.map((provider) => (
-                <button
+                <div
                   key={provider.id}
-                  type="button"
-                  onClick={() => { setSelectedProviderID(provider.id); setTestModel(''); setSecretInput('') }}
-                  className={`grid w-full gap-2 py-3 text-left md:grid-cols-[1fr_auto] ${
-                    selectedProvider?.id === provider.id ? 'text-slate-950' : 'text-slate-700'
-                  }`}
+                  className={`flex items-center gap-2 px-3 ${selectedProvider?.id === provider.id ? 'bg-slate-50' : ''}`}
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold">{provider.name}</p>
-                    <p className="mt-1 truncate text-xs text-slate-500">
-                      {t(`provider.${provider.provider_type}`)} · {provider.masked_api_key || t('common.none')}
-                    </p>
-                  </div>
-                  <StatusBadge label={provider.last_test_status || provider.status} />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedProviderID(provider.id); setTestModel(''); setSecretInput('') }}
+                    className={`grid min-w-0 flex-1 gap-2 py-3 text-left md:grid-cols-[1fr_auto] ${
+                      selectedProvider?.id === provider.id ? 'text-slate-950' : 'text-slate-700'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{provider.name}</p>
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        {t(`provider.${provider.provider_type}`)} · {provider.base_url || t('common.none')} · {provider.masked_api_key || t('common.none')}
+                      </p>
+                    </div>
+                    <StatusBadge label={provider.last_test_status || provider.status} />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`provider-delete-${provider.id}`}
+                    title={t('developer.deleteProvider')}
+                    aria-label={`${t('developer.deleteProvider')}: ${provider.name}`}
+                    onClick={() => setProviderDeleteReview({ id: provider.id, name: provider.name })}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               ))}
-              {providers.length === 0 && <EmptyText>{t('developer.noProviders')}</EmptyText>}
+              {providers.length === 0 && <div className="px-3 py-6"><EmptyText>{t('developer.noProviders')}</EmptyText></div>}
             </div>
           </Panel>
 
@@ -704,8 +746,8 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
             </form>
 
             <div className="mt-5 border-t border-slate-100 pt-4">
-              <p className="mb-3 break-all text-sm font-medium">{t('developer.savedProvider')}: {selectedProvider?.name || t('common.none')}</p>
-              <p className="text-sm font-semibold text-slate-950">{t('developer.keyRotation')}</p>
+              <p className="break-all text-sm font-semibold text-slate-950">{t('developer.manageProvider')}</p>
+              <p className="mb-3 break-all text-sm text-slate-600">{selectedProvider?.name || t('common.none')}</p>
               <TextInput label="developer.newKey" type="password" value={secretInput} onChange={setSecretInput} />
               <button
                 type="button"
@@ -725,6 +767,14 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
               >
                 <Play className="mr-2 h-4 w-4" />{t('developer.testProvider')}
               </button>
+              <button
+                type="button"
+                onClick={() => selectedProvider && setProviderDeleteReview({ id: selectedProvider.id, name: selectedProvider.name })}
+                disabled={!selectedProvider || loading}
+                className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-red-200 px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />{t('developer.deleteProvider')}
+              </button>
             </div>
           </Panel>
           )}
@@ -734,19 +784,21 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       {effectiveActiveTab === 'channels' && (
         <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_420px]">
           <Panel title="developer.channelPool">
-            <Table
-              headers={['developer.channel', 'developer.provider', 'developer.reliability', 'developer.load', 'developer.quota', 'developer.rateMultiplier']}
-              rows={channels.map((channel) => [
-                channel.name,
-                providerLabels[channel.provider_id] || channel.provider_id,
-                `${t(channel.health_status || channel.status)} · ${channel.success_count}/${channel.failure_count} (${channel.consecutive_failure_count})${
-                  channel.circuit_open_until ? ` · ${new Date(channel.circuit_open_until).toLocaleString()}` : ''
-                }`,
-                `${channel.inflight_requests}/${channel.concurrency_limit || t('common.none')}`,
-                `${money(channel.quota_used, channel.quota_currency)} / ${channel.quota_amount || t('common.none')}`,
-                String(channel.rate_multiplier),
-              ])}
-            />
+            {channels.length === 0
+              ? <EmptyText>{t('developer.noChannels')}</EmptyText>
+              : <Table
+                headers={['developer.channel', 'developer.provider', 'developer.reliability', 'developer.load', 'developer.quota', 'developer.rateMultiplier']}
+                rows={channels.map((channel) => [
+                  channel.name,
+                  providerLabels[channel.provider_id] || channel.provider_id,
+                  `${t(channel.health_status || channel.status)} · ${channel.success_count}/${channel.failure_count} (${channel.consecutive_failure_count})${
+                    channel.circuit_open_until ? ` · ${new Date(channel.circuit_open_until).toLocaleString()}` : ''
+                  }`,
+                  `${channel.inflight_requests}/${channel.concurrency_limit || t('common.none')}`,
+                  `${money(channel.quota_used, channel.quota_currency)} / ${channel.quota_amount || t('common.none')}`,
+                  String(channel.rate_multiplier),
+                ])}
+              />}
           </Panel>
 
           <Panel title="developer.channelSettings">
@@ -769,6 +821,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
             </form>
 
             <div className="mt-5 border-t border-slate-100 pt-4">
+              <p className="break-all text-sm font-semibold text-slate-950">{t('developer.manageChannel')}</p>
               <SelectInput label="developer.channel" value={selectedChannel?.id || ''} onChange={setSelectedChannelID} options={channels.map((channel) => channel.id)} labels={channelLabels} />
               <TextInput label="developer.newKey" type="password" value={channelSecretInput} onChange={setChannelSecretInput} />
               <button
@@ -779,6 +832,15 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
               >
                 <KeyRound className="h-4 w-4" />
                 {t('developer.rotateChannelKey')}
+              </button>
+              <button
+                type="button"
+                data-testid="channel-delete"
+                onClick={() => selectedChannel && setChannelDeleteReview({ id: selectedChannel.id, name: selectedChannel.name })}
+                disabled={!selectedChannel || loading}
+                className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-red-200 px-3 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />{t('developer.deleteChannel')}
               </button>
               <TextInput label="developer.testModel" value={channelTestModel} onChange={setChannelTestModel} />
               <button
@@ -1128,6 +1190,52 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
           </Panel>
         </div>
       )}
+
+      <Dialog
+        open={!!providerDeleteReview}
+        title={t('developer.deleteProvider')}
+        description={t('developer.deleteProviderWarning')}
+        onClose={() => setProviderDeleteReview(null)}
+        busy={loading}
+        danger
+        size="sm"
+        footer={<>
+          <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel disabled={loading} onClick={() => setProviderDeleteReview(null)}>{t('common.cancel')}</button>
+          <button type="button" data-testid="confirm-provider-delete" className="ui-button ui-button-danger" disabled={loading} onClick={() => void confirmProviderDelete()}>{t('ui.admin.confirm')}</button>
+        </>}
+      >
+        <div className="ui-dialog-context">
+          <Trash2 size={22} />
+          <div>
+            <strong>{providerDeleteReview?.name}</strong>
+            <small>{t('developer.deleteProviderDetail')}</small>
+          </div>
+        </div>
+        {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+      </Dialog>
+
+      <Dialog
+        open={!!channelDeleteReview}
+        title={t('developer.deleteChannel')}
+        description={t('developer.deleteChannelWarning')}
+        onClose={() => setChannelDeleteReview(null)}
+        busy={loading}
+        danger
+        size="sm"
+        footer={<>
+          <button type="button" className="ui-button ui-button-secondary" data-dialog-cancel disabled={loading} onClick={() => setChannelDeleteReview(null)}>{t('common.cancel')}</button>
+          <button type="button" data-testid="confirm-channel-delete" className="ui-button ui-button-danger" disabled={loading} onClick={() => void confirmChannelDelete()}>{t('ui.admin.confirm')}</button>
+        </>}
+      >
+        <div className="ui-dialog-context">
+          <Trash2 size={22} />
+          <div>
+            <strong>{channelDeleteReview?.name}</strong>
+            <small>{t('developer.deleteChannelDetail')}</small>
+          </div>
+        </div>
+        {error && <FeedbackMessage error>{error}</FeedbackMessage>}
+      </Dialog>
     </div>
   )
 }

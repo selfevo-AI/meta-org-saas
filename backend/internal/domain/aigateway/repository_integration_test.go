@@ -460,3 +460,69 @@ func TestFinishReservationIsIdempotent(t *testing.T) {
 		t.Fatalf("finish transaction counts = settle:%d refund:%d, want 1/1", settleCount, refundCount)
 	}
 }
+
+func TestDeleteProviderCascadesChannelsAndRejectsProvidersWithModels(t *testing.T) {
+	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {
+		t.Skip("set RUN_AI_GATEWAY_DB_TEST=1 to run AI Gateway database verification")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	url := os.Getenv("AI_GATEWAY_TEST_DATABASE_URL")
+	if url == "" {
+		url = "postgres://postgres:postgres@localhost:5432/meta_org_saas?sslmode=disable"
+	}
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	box, err := secretbox.New(strings.Repeat("d", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepository(pool, box)
+	service := NewService(repo, nil)
+
+	provider, err := repo.CreateProvider(ctx, CreateProviderInput{
+		Name: "integration-delete-provider", ProviderType: ProviderOpenAI, BaseURL: "http://127.0.0.1:1/v1", APIKey: "sk-delete-test",
+	})
+	if err != nil {
+		t.Fatalf("CreateProvider error = %v", err)
+	}
+	if _, err := repo.CreateChannel(ctx, CreateChannelInput{ProviderID: provider.ID, Name: "integration-delete-channel", APIKey: "sk-channel"}); err != nil {
+		t.Fatalf("CreateChannel error = %v", err)
+	}
+
+	if err := service.DeleteProvider(ctx, provider.ID); err != nil {
+		t.Fatalf("DeleteProvider error = %v", err)
+	}
+	var remaining int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM model_provider_channels WHERE provider_id = $1`, provider.ID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("channels remaining after provider delete = %d, want 0 (cascade)", remaining)
+	}
+	if err := service.DeleteProvider(ctx, provider.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("second DeleteProvider error = %v, want ErrNotFound", err)
+	}
+
+	referenced, err := repo.CreateProvider(ctx, CreateProviderInput{
+		Name: "integration-delete-provider-with-model", ProviderType: ProviderOpenAI, BaseURL: "http://127.0.0.1:1/v1", APIKey: "sk-delete-test-2",
+	})
+	if err != nil {
+		t.Fatalf("CreateProvider (referenced) error = %v", err)
+	}
+	model, err := repo.CreateModel(ctx, CreateModelInput{ProviderID: referenced.ID, ModelKey: "integration-delete-model", Status: "active"})
+	if err != nil {
+		t.Fatalf("CreateModel error = %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM models WHERE id = $1`, model.ID)
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM model_providers WHERE id = $1`, referenced.ID)
+	}()
+
+	if err := service.DeleteProvider(ctx, referenced.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("DeleteProvider with models error = %v, want ErrConflict", err)
+	}
+}

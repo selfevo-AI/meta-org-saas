@@ -110,6 +110,19 @@ func (r *PostgresRepository) ListActiveProviders(ctx context.Context, limit int)
 	return scanProviders(rows)
 }
 
+// DeleteProvider removes a provider row; its channels cascade with it while
+// models referencing the provider keep the row alive (ON DELETE RESTRICT).
+func (r *PostgresRepository) DeleteProvider(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM model_providers WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete model provider: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *PostgresRepository) UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error) {
 	tagsJSON, metaJSON, err := providerJSON(input.Tags, input.Metadata)
 	if err != nil {
@@ -784,6 +797,18 @@ func (r *PostgresRepository) ListChannels(ctx context.Context, providerID *uuid.
 	}
 	defer rows.Close()
 	return scanChannels(rows)
+}
+
+// DeleteChannel removes one channel from a provider pool.
+func (r *PostgresRepository) DeleteChannel(ctx context.Context, id uuid.UUID) error {
+	tag, err := r.db.Exec(ctx, `DELETE FROM model_provider_channels WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete model provider channel: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (r *PostgresRepository) UpdateChannel(ctx context.Context, id uuid.UUID, input UpdateChannelInput) (*ProviderChannel, error) {

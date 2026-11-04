@@ -280,7 +280,14 @@ test('AI provider presets configure a real gateway connection to the local fixtu
     await expect(page.getByText('Provider tested', { exact: true })).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1)
     await page.screenshot({ path: testInfo.outputPath('ai-provider-configuration.png'), fullPage: true })
+    // Remove the throwaway provider through the row action and its confirmation
+    // step, so repeated runs do not accumulate test providers.
+    await page.getByTestId(`provider-delete-${provider.id}`).click()
+    const confirmed = page.waitForResponse((candidate) => candidate.request().method() === 'DELETE' && candidate.url().endsWith(`/model-providers/${provider.id}`))
+    await page.getByTestId('confirm-provider-delete').click()
+    expect((await confirmed).status()).toBe(200)
+    await expect(page.getByTestId(`provider-delete-${provider.id}`)).toHaveCount(0)
   } finally {
-    await page.request.patch(`${apiBase}/platform/admin/model-providers/${provider.id}`, { headers, data: { status: 'disabled' } })
+    await page.request.delete(`${apiBase}/platform/admin/model-providers/${provider.id}`, { headers }).catch(() => undefined)
   }
 })

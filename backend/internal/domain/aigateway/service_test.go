@@ -35,6 +35,9 @@ type fakeGatewayRepo struct {
 	lastAdjustment     AdjustGatewayBalanceInput
 	catalogProviders   []ModelProvider
 	catalogModels      []Model
+	providerModels     []Model
+	deletedProviders   []uuid.UUID
+	deletedChannels    []uuid.UUID
 	abilities          []ModelChannelAbility
 	reserveErr         error
 	releaseCount       int
@@ -943,11 +946,24 @@ func (f *fakeGatewayRepo) CreateModel(context.Context, CreateModelInput) (*Model
 	return nil, errors.New("unexpected catalog call")
 }
 
-func (f *fakeGatewayRepo) ListModels(context.Context, *uuid.UUID, int) ([]Model, error) {
+func (f *fakeGatewayRepo) ListModels(_ context.Context, providerID *uuid.UUID, _ int) ([]Model, error) {
+	if providerID != nil && f.providerModels != nil {
+		return f.providerModels, nil
+	}
 	if f.catalogModels == nil {
 		return nil, errors.New("unexpected catalog call")
 	}
 	return f.catalogModels, nil
+}
+
+func (f *fakeGatewayRepo) DeleteProvider(_ context.Context, id uuid.UUID) error {
+	f.deletedProviders = append(f.deletedProviders, id)
+	return nil
+}
+
+func (f *fakeGatewayRepo) DeleteChannel(_ context.Context, id uuid.UUID) error {
+	f.deletedChannels = append(f.deletedChannels, id)
+	return nil
 }
 
 func (f *fakeGatewayRepo) ListActiveModels(context.Context) ([]Model, error) {
@@ -1186,4 +1202,46 @@ type fakeSecurityKernel struct {
 func (f *fakeSecurityKernel) Authorize(_ context.Context, request securitykernel.Request) (securitykernel.Decision, error) {
 	f.lastRequest = request
 	return f.decision, f.err
+}
+
+func TestDeleteProviderRejectsProvidersThatStillOwnModels(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	providerID := uuid.New()
+	repo.providerModels = []Model{{ID: uuid.New(), ProviderID: providerID, ModelKey: "gpt-4", Status: "active"}}
+	service := NewService(repo, nil)
+
+	err := service.DeleteProvider(context.Background(), providerID)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("DeleteProvider error = %v, want ErrConflict", err)
+	}
+	if len(repo.deletedProviders) != 0 {
+		t.Fatalf("provider deleted despite owning models: %v", repo.deletedProviders)
+	}
+}
+
+func TestDeleteProviderRemovesProviderWithoutModels(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	providerID := uuid.New()
+	repo.providerModels = []Model{}
+	service := NewService(repo, nil)
+
+	if err := service.DeleteProvider(context.Background(), providerID); err != nil {
+		t.Fatalf("DeleteProvider error = %v", err)
+	}
+	if len(repo.deletedProviders) != 1 || repo.deletedProviders[0] != providerID {
+		t.Fatalf("deleted providers = %v, want [%s]", repo.deletedProviders, providerID)
+	}
+}
+
+func TestDeleteChannelDelegatesToRepository(t *testing.T) {
+	repo := newFakeGatewayRepo()
+	channelID := uuid.New()
+	service := NewService(repo, nil)
+
+	if err := service.DeleteChannel(context.Background(), channelID); err != nil {
+		t.Fatalf("DeleteChannel error = %v", err)
+	}
+	if len(repo.deletedChannels) != 1 || repo.deletedChannels[0] != channelID {
+		t.Fatalf("deleted channels = %v, want [%s]", repo.deletedChannels, channelID)
+	}
 }

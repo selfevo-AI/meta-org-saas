@@ -29,12 +29,14 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/model-providers", h.createProvider)
 	r.Get("/model-providers", h.listProviders)
 	r.Patch("/model-providers/{id}", h.updateProvider)
+	r.Delete("/model-providers/{id}", h.deleteProvider)
 	r.Post("/model-providers/{id}/rotate-key", h.rotateProviderKey)
 	r.Post("/model-providers/{id}/test", h.testProvider)
 	r.Post("/model-providers/{id}/channels", h.createChannel)
 	r.Get("/model-providers/{id}/channels", h.listProviderChannels)
 	r.Get("/model-provider-channels", h.listChannels)
 	r.Patch("/model-provider-channels/{id}", h.updateChannel)
+	r.Delete("/model-provider-channels/{id}", h.deleteChannel)
 	r.Post("/model-provider-channels/{id}/rotate-key", h.rotateChannelKey)
 	r.Post("/model-provider-channels/{id}/test", h.testChannel)
 	r.Post("/models", h.createModel)
@@ -381,6 +383,24 @@ func (h *Handler) updateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.service.UpdateProvider(r.Context(), id, input)
 	writeResult(w, http.StatusOK, result, err)
+}
+
+func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	err := h.service.DeleteProvider(r.Context(), id)
+	writeResult(w, http.StatusOK, map[string]string{"status": "deleted"}, err)
+}
+
+func (h *Handler) deleteChannel(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "id")
+	if !ok {
+		return
+	}
+	err := h.service.DeleteChannel(r.Context(), id)
+	writeResult(w, http.StatusOK, map[string]string{"status": "deleted"}, err)
 }
 
 func (h *Handler) rotateProviderKey(w http.ResponseWriter, r *http.Request) {
@@ -837,6 +857,8 @@ func statusFromError(err error) int {
 		return http.StatusBadGateway
 	case errors.Is(err, ErrValidation):
 		return http.StatusBadRequest
+	case errors.Is(err, ErrConflict):
+		return http.StatusConflict
 	case errors.Is(err, ErrForbidden):
 		return http.StatusForbidden
 	case errors.Is(err, ErrUnavailable):

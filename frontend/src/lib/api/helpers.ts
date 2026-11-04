@@ -4,6 +4,16 @@ export async function createModelProvider(token: string, input: CreateModelProvi
   return apiRequest<ModelProvider>(platformAdminPath('/model-providers', scope), { method: 'POST', token, body: input })
 }
 
+// Removes a provider together with its channel pool; the backend rejects the
+// call with a conflict while catalog models still reference the provider.
+export async function deleteModelProvider(token: string, id: string, scope: 'tenant' | 'platform' = 'tenant'): Promise<{ status: string }> {
+  return apiRequest<{ status: string }>(platformAdminPath(`/model-providers/${id}`, scope), { method: 'DELETE', token })
+}
+
+export async function deleteProviderChannel(token: string, id: string, scope: 'tenant' | 'platform' = 'tenant'): Promise<{ status: string }> {
+  return apiRequest<{ status: string }>(platformAdminPath(`/model-provider-channels/${id}`, scope), { method: 'DELETE', token })
+}
+
 export async function rotateModelProviderKey(token: string, id: string, apiKey: string, scope: 'tenant' | 'platform' = 'tenant'): Promise<ModelProvider> {
   return apiRequest<ModelProvider>(platformAdminPath(`/model-providers/${id}/rotate-key`, scope), {
     method: 'POST',
