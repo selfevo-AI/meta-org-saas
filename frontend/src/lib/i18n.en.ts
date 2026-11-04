@@ -3514,6 +3514,7 @@ const en: Record<string, string> = {
   'org.matchMembers': 'Match members',
   'org.weight': 'Weight',
   'org.approvalRequired': 'Approval required',
+  'auth.sessionRevoked': 'Your session is no longer valid. Sign in again.',
   // i18n-anchor: new workspace keys are appended above this line (keep in sync with i18n.tsx)
 }
 

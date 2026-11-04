@@ -2960,6 +2960,7 @@ const zh: Dictionary = {
   'org.matchMembers': '匹配成员',
   'org.weight': '权重',
   'org.approvalRequired': '需审批',
+  'auth.sessionRevoked': '登录状态已失效，请重新登录。',
   // i18n-anchor: new workspace keys are appended above this line (keep in sync with i18n.en.ts)
 }
 

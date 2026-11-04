@@ -5,6 +5,10 @@ import type { ApiOperation } from './operations'
 
 export const API_BASE = '/api/v1'
 
+// Fired when the backend rejects a request because the token belongs to a
+// revoked session (password change, reset, or disable); the shell signs out.
+export const SESSION_REVOKED_EVENT = 'meta-org:session-revoked'
+
 interface RequestOptions {
   method?: string
   body?: unknown
@@ -46,7 +50,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   })
 
   if (!response.ok) {
-    throw await apiErrorFromResponse(response)
+    const error = await apiErrorFromResponse(response)
+    if (error.code === 'session_revoked' && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event(SESSION_REVOKED_EVENT))
+    }
+    throw error
   }
 
   if (response.status === 204) {

@@ -47,6 +47,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import type { CSSProperties, DragEvent, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
 import {
+  SESSION_REVOKED_EVENT,
   activateAssistantSkill,
   activatePlatformAssistantSkill,
   approvePlatformToolApproval,
@@ -433,6 +434,8 @@ const dedicatedDomains = new Set([
 const menuStorageKey = 'meta_org.menu.groups.v2'
 const expandedMenuStorageKey = 'meta_org.menu.expanded.v2'
 const themeStorageKey = 'meta_org.theme.v1'
+// Survives the remount that happens when a revoked session navigates back to '/'.
+const pendingAuthNoticeKey = 'meta_org.auth.pending-notice.v1'
 const workspaceLayoutPreferenceKey = 'workspace.layout.widths.v1'
 const modelPreferenceKey = 'meta_org.assistant.model_by_module.v1'
 const legacyMenuStorageKey = 'harness.menu.groups.v1'
@@ -1697,7 +1700,9 @@ function WorkspaceApplication() {
 
   useEffect(() => {
     if (!token) {
+      const pendingNotice = window.sessionStorage.getItem(pendingAuthNoticeKey)
       Promise.resolve().then(() => {
+        if (pendingNotice) setNotice(pendingNotice)
         setOnboardingRequired(false)
         setOrganizations([])
         setCurrentOrganizationID(null)
@@ -1938,6 +1943,39 @@ function WorkspaceApplication() {
     setOperationContext((current) => ({ ...current, ...context }))
   }, [])
 
+  const handleSignOut = useCallback(() => {
+    const scope = activeSessionScope
+    clearSession(scope)
+    setToken(null)
+    setUserId(null)
+    setUserType(null)
+    setPlatformRole(null)
+    setOnboardingRequired(false)
+    setOrganizations([])
+    setCurrentOrganizationID(null)
+    setOverview(null)
+    setInbox([])
+    setBusinessNodesByDomain({})
+    setBusinessSelection(null)
+    setError(null)
+    setLoginSurface(scope)
+    setWorkspaceView('overview')
+    router.replace('/')
+  }, [activeSessionScope, router])
+
+  // A password change, reset, or disable revokes the session server-side; the
+  // next API call fires this event and the shell returns to the login surface.
+  // The notice is handed over through sessionStorage because signing out
+  // navigates to '/', which remounts this component with fresh state.
+  useEffect(() => {
+    function handleSessionRevoked() {
+      window.sessionStorage.setItem(pendingAuthNoticeKey, t('auth.sessionRevoked'))
+      handleSignOut()
+    }
+    window.addEventListener(SESSION_REVOKED_EVENT, handleSessionRevoked)
+    return () => window.removeEventListener(SESSION_REVOKED_EVENT, handleSessionRevoked)
+  }, [handleSignOut, t])
+
   if (!ready) {
     return (
       <main className="app-dark">
@@ -1969,6 +2007,7 @@ function WorkspaceApplication() {
     setLoginSurface(surface)
     setError(null)
     setNotice(null)
+    window.sessionStorage.removeItem(pendingAuthNoticeKey)
     if (surface === 'platform') {
       setMode('login')
     }
@@ -1979,6 +2018,7 @@ function WorkspaceApplication() {
     setLoading(true)
     setError(null)
     setNotice(null)
+    window.sessionStorage.removeItem(pendingAuthNoticeKey)
 
     try {
       const response =
@@ -2093,26 +2133,6 @@ function WorkspaceApplication() {
     } finally {
       setLoading(false)
     }
-  }
-
-  function handleSignOut() {
-    const scope = activeSessionScope
-    clearSession(scope)
-    setToken(null)
-    setUserId(null)
-    setUserType(null)
-    setPlatformRole(null)
-    setOnboardingRequired(false)
-    setOrganizations([])
-    setCurrentOrganizationID(null)
-    setOverview(null)
-    setInbox([])
-    setBusinessNodesByDomain({})
-    setBusinessSelection(null)
-    setError(null)
-    setLoginSurface(scope)
-    setWorkspaceView('overview')
-    router.replace('/')
   }
 
   function closePasswordDialog() {
