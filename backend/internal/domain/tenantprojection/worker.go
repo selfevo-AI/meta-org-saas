@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -96,7 +96,7 @@ func (w *Worker) Start(ctx context.Context) {
 		for {
 			processed, err := w.runOnceGuarded(ctx)
 			if err != nil {
-				log.Printf("tenant projection worker failed: %v", err)
+				slog.Error("tenant projection worker failed", "error", err)
 			}
 			if processed > 0 {
 				continue
@@ -257,7 +257,7 @@ func (w *Worker) failEvents(ctx context.Context, db tenantdb.DB, eventIDs []uuid
 	w.stats.LastError = cause.Error()
 	w.statsMu.Unlock()
 	if markErr != nil {
-		log.Printf("tenant projection event failure update failed: %v", markErr)
+		slog.Error("tenant projection event failure update failed", "error", markErr)
 	}
 }
 

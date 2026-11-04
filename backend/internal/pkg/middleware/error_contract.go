@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -117,7 +117,7 @@ func (w *errorContractWriter) finish(ctx context.Context, requestID string) {
 		code = errorCodeForStatus(status)
 	}
 	if status >= http.StatusInternalServerError && !isStablePublicError(message) {
-		log.Printf("api request failed: request_id=%s status=%d error=%s", requestID, status, message)
+		slog.Error("api request failed", "request_id", requestID, "status", status, "error", message)
 		message = publicMessageForCode(code)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -125,7 +125,7 @@ func (w *errorContractWriter) finish(ctx context.Context, requestID string) {
 	w.Header().Set("X-Error-Code", code)
 	w.ResponseWriter.WriteHeader(status)
 	if err := json.NewEncoder(w.ResponseWriter).Encode(errorEnvelope{Error: message, Code: code, RequestID: requestID}); err != nil {
-		log.Printf("api error response failed: request_id=%s error=%v", requestID, err)
+		slog.Error("api error response failed", "request_id", requestID, "error", err)
 	}
 }
 

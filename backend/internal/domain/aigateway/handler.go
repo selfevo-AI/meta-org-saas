@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -854,7 +854,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("aigateway writeJSON error: %v", err)
+		slog.Error("aigateway writeJSON error", "error", err)
 	}
 }
 
@@ -865,11 +865,11 @@ func writeSSE(w http.ResponseWriter, event string, payload any) {
 		event = "error"
 	}
 	if _, err := w.Write([]byte("event: " + event + "\n")); err != nil {
-		log.Printf("aigateway stream write error: %v", err)
+		slog.Error("aigateway stream write error", "error", err)
 		return
 	}
 	if _, err := w.Write([]byte("data: " + string(data) + "\n\n")); err != nil {
-		log.Printf("aigateway stream write error: %v", err)
+		slog.Error("aigateway stream write error", "error", err)
 	}
 }
 
@@ -879,6 +879,6 @@ func writeCompatibleSSEData(w http.ResponseWriter, payload any) {
 		data = []byte(`{"error":{"message":"encode stream event failed","type":"ai_gateway_error"}}`)
 	}
 	if _, err := w.Write([]byte("data: " + string(data) + "\n\n")); err != nil {
-		log.Printf("aigateway compatible stream write error: %v", err)
+		slog.Error("aigateway compatible stream write error", "error", err)
 	}
 }

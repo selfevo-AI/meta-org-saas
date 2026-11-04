@@ -3,7 +3,7 @@ package monitoringagent
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,7 +80,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 				return
 			case now := <-ticker.C:
 				if _, executed, err := s.runIfDueGuarded(ctx, now); executed && err != nil {
-					log.Printf("monitoring agent scheduled run failed: %v", err)
+					slog.Error("monitoring agent scheduled run failed", "error", err)
 				}
 			}
 		}

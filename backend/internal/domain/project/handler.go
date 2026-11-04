@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -180,7 +180,7 @@ func (h *Handler) downloadRequirementDocument(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", strings.ReplaceAll(doc.FileName, `"`, "")))
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(doc.Content); err != nil {
-		log.Printf("download requirement document error: %v", err)
+		slog.Error("download requirement document error", "error", err)
 	}
 }
 
@@ -641,6 +641,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("writeJSON error: %v", err)
+		slog.Error("writeJSON error", "error", err)
 	}
 }

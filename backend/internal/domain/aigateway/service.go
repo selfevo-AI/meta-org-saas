@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -1597,7 +1597,7 @@ func (s *Service) recordCancelledStream(cause error, invocationID uuid.UUID, tar
 // later — but a silent failure here hides real money and channel-pool issues.
 func logCompensationFailure(operation string, err error) {
 	if err != nil {
-		log.Printf("aigateway: %s failed: %v", operation, err)
+		slog.Error("aigateway operation failed", "operation", operation, "error", err)
 	}
 }
 

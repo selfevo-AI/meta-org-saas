@@ -375,6 +375,7 @@ Backend configuration is loaded in `backend/internal/pkg/config/config.go`:
 | Environment Variable | Default | Description |
 |---|---|---|
 | `SERVER_PORT` | `8080` | Backend listen port. |
+| `LOG_LEVEL` | `info` | Structured (JSON) log level: `debug`, `info`, `warn`, or `error`. |
 | `DATABASE_URL` | `postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable` | Backward-compatible PostgreSQL connection string; also used as the platform control database when `PLATFORM_DATABASE_URL` is unset. |
 | `PLATFORM_DATABASE_URL` | Follows `DATABASE_URL` | SaaS platform control database connection string for platform administration, tenant organizations, capability packages, marketplace catalog, and tenant database routing metadata. The platform pool defaults to `MaxConns=20`/`MinConns=2` with 30-minute connection lifetimes; override with standard pgx URL parameters (`pool_max_conns`, ...). |
 | `TENANT_DATABASE_ADMIN_URL` | `postgres` database on the same instance as `DATABASE_URL` | Administrative connection string for physical tenant business database creation and maintenance. SaaS onboarding uses it to try creating tenant databases in `dedicated_database` mode. |

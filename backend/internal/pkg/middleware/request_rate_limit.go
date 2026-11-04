@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,13 +36,13 @@ func RequestRateLimit(
 				}
 				decision, err := limiter.Consume(r.Context(), bucket.Scope, bucket.Key, policy)
 				if err != nil {
-					log.Printf("request rate limit check failed scope=%s: %v", bucket.Scope, err)
+					slog.Warn("request rate limit check failed", "scope", bucket.Scope, "error", err)
 					writeRateLimitError(w, http.StatusServiceUnavailable, "rate_limit_unavailable", 0)
 					return
 				}
 				if !decision.Allowed {
 					retryAfter := retryAfterSeconds(decision.RetryAfter)
-					log.Printf("request rate limited scope=%s attempts=%d retry_after_seconds=%d", bucket.Scope, decision.Attempts, retryAfter)
+					slog.Warn("request rate limited", "scope", bucket.Scope, "attempts", decision.Attempts, "retry_after_seconds", retryAfter)
 					writeRateLimitError(w, http.StatusTooManyRequests, "rate_limited", retryAfter)
 					return
 				}

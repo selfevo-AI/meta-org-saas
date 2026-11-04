@@ -3,7 +3,7 @@ package metaresource
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -195,6 +195,6 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		log.Printf("metaresource writeJSON error: %v", err)
+		slog.Error("metaresource writeJSON error", "error", err)
 	}
 }

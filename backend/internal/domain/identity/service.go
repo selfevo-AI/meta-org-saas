@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -116,12 +116,12 @@ func (s *Service) AuthenticateUser(ctx context.Context, email, password string) 
 
 	user, err := s.repo.GetUserByEmail(ctx, email)
 	if err != nil {
-		log.Printf("authenticate user: %v", err)
+		slog.Error("authenticate user", "error", err)
 		return nil, ErrInvalidCredentials
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
-		log.Printf("password mismatch for user %s: %v", email, err)
+		slog.Warn("password mismatch", "email", email, "error", err)
 		return nil, ErrInvalidCredentials
 	}
 	// Checked after the password so a disabled account is only revealed to
@@ -151,7 +151,7 @@ func (s *Service) AuthenticateAgent(ctx context.Context, agentID uuid.UUID, apiK
 
 	agent, err := s.repo.GetAgentByID(ctx, agentID)
 	if err != nil {
-		log.Printf("authenticate agent: %v", err)
+		slog.Error("authenticate agent", "error", err)
 		return nil, ErrInvalidCredentials
 	}
 
@@ -160,7 +160,7 @@ func (s *Service) AuthenticateAgent(ctx context.Context, agentID uuid.UUID, apiK
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(agent.APIKeyHash), []byte(apiKey)); err != nil {
-		log.Printf("api key mismatch for agent %s: %v", agentID, err)
+		slog.Warn("api key mismatch", "agent_id", agentID, "error", err)
 		return nil, ErrInvalidCredentials
 	}
 

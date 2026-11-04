@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -91,7 +91,7 @@ func (w *TenantDatabaseProvisioningWorker) Start(ctx context.Context) {
 		for {
 			processed, err := w.runOnceGuarded(ctx)
 			if err != nil {
-				log.Printf("tenant database provisioning job failed: %v", err)
+				slog.Error("tenant database provisioning job failed", "error", err)
 			}
 			if processed {
 				continue

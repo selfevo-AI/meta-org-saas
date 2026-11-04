@@ -3,7 +3,7 @@ package identity
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -287,7 +287,7 @@ func (h *Handler) consumeBuckets(w http.ResponseWriter, r *http.Request, buckets
 	for _, bucket := range buckets {
 		decision, err := h.limiter.Consume(r.Context(), bucket.scope, bucket.key, policy)
 		if err != nil {
-			log.Printf("authentication rate limit check failed scope=%s: %v", bucket.scope, err)
+			slog.Warn("authentication rate limit check failed", "scope", bucket.scope, "error", err)
 			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "authentication protection unavailable"})
 			return false
 		}
@@ -296,7 +296,7 @@ func (h *Handler) consumeBuckets(w http.ResponseWriter, r *http.Request, buckets
 			if seconds < 1 {
 				seconds = 1
 			}
-			log.Printf("authentication request rate limited scope=%s attempts=%d retry_after_seconds=%d", bucket.scope, decision.Attempts, seconds)
+			slog.Warn("authentication request rate limited", "scope", bucket.scope, "attempts", decision.Attempts, "retry_after_seconds", seconds)
 			w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many authentication attempts"})
 			return false
@@ -312,12 +312,12 @@ func (h *Handler) recordFailures(r *http.Request, buckets []rateLimitBucket, pol
 	for _, bucket := range buckets {
 		decision, err := h.limiter.RecordFailure(r.Context(), bucket.scope, bucket.key, policy)
 		if err != nil {
-			log.Printf("authentication failure tracking failed scope=%s: %v", bucket.scope, err)
+			slog.Warn("authentication failure tracking failed", "scope", bucket.scope, "error", err)
 			continue
 		}
 		if !decision.Allowed {
 			seconds := int64((decision.RetryAfter + time.Second - 1) / time.Second)
-			log.Printf("authentication failure block applied scope=%s failures=%d retry_after_seconds=%d", bucket.scope, decision.Failures, seconds)
+			slog.Warn("authentication failure block applied", "scope", bucket.scope, "failures", decision.Failures, "retry_after_seconds", seconds)
 		}
 	}
 }
@@ -327,7 +327,7 @@ func (h *Handler) resetBucket(r *http.Request, bucket rateLimitBucket) {
 		return
 	}
 	if err := h.limiter.Reset(r.Context(), bucket.scope, bucket.key); err != nil {
-		log.Printf("authentication rate limit reset failed scope=%s: %v", bucket.scope, err)
+		slog.Warn("authentication rate limit reset failed", "scope", bucket.scope, "error", err)
 	}
 }
 
@@ -342,6 +342,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("writeJSON error: %v", err)
+		slog.Error("writeJSON error", "error", err)
 	}
 }

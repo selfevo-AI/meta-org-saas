@@ -406,6 +406,7 @@ AI Gateway、Meta Resource、SaaS、安全内核和 ERP code-table 工作台启�
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
 | `SERVER_PORT` | `8080` | 后端监听端口。 |
+| `LOG_LEVEL` | `info` | 结构化日志（JSON）级别：`debug`、`info`、`warn`、`error`。 |
 | `DATABASE_URL` | `postgres://postgres:postgres@127.0.0.1:5432/meta_org_saas?sslmode=disable` | 兼容旧入口的 PostgreSQL 连接串；未设置 `PLATFORM_DATABASE_URL` 时也作为平台控制库连接串。 |
 | `PLATFORM_DATABASE_URL` | 跟随 `DATABASE_URL` | SaaS 平台控制库连接串，保存平台管理、租户组织、能力包、市场和租户数据库目录。平台连接池默认 `MaxConns=20`/`MinConns=2`/生命周期 30 分钟，可用标准 pgx URL 参数（`pool_max_conns` 等）覆盖。 |
 | `TENANT_DATABASE_ADMIN_URL` | `DATABASE_URL` 同实例的 `postgres` 库 | 租户物理业务库创建/维护的管理连接串；SaaS onboarding 在 `dedicated_database` 模式下会用它尝试创建租户库。 |

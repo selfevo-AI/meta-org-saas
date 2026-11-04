@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -68,16 +69,18 @@ func RunMigrations(ctx context.Context, pool *pgxpool.Pool, migrationsDir string
 	for _, file := range files {
 		if appliedChecksum, ok := applied[file.Filename]; ok {
 			if appliedChecksum == file.Checksum {
-				fmt.Printf("migration skipped (already applied): %s\n", file.Filename)
+				slog.Info("migration skipped (already applied)", "file", file.Filename)
 			} else {
-				fmt.Printf("migration checksum reconciliation pending: %s via %s\n", file.Filename, pendingPlatformChecksumRepairFor(files, applied, platformMigrationIndex(files, file.Filename), file.Filename))
+				slog.Info("migration checksum reconciliation pending",
+					"file", file.Filename,
+					"via", pendingPlatformChecksumRepairFor(files, applied, platformMigrationIndex(files, file.Filename), file.Filename))
 			}
 			continue
 		}
 		if err := applyPlatformMigration(ctx, pool, file, reconciliationsByRepair[file.Filename]); err != nil {
 			return err
 		}
-		fmt.Printf("migration applied: %s\n", file.Filename)
+		slog.Info("migration applied", "file", file.Filename)
 	}
 	return nil
 }

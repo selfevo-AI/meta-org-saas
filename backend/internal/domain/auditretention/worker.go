@@ -3,7 +3,7 @@ package auditretention
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -67,7 +67,7 @@ func (w *Worker) Start(ctx context.Context) {
 	go func() {
 		defer w.setRunning(false)
 		if _, err := w.runOnceGuarded(ctx); err != nil {
-			log.Printf("audit retention run failed: %v", err)
+			slog.Error("audit retention run failed", "error", err)
 		}
 		ticker := time.NewTicker(w.config.PollInterval)
 		defer ticker.Stop()
@@ -77,7 +77,7 @@ func (w *Worker) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if _, err := w.runOnceGuarded(ctx); err != nil {
-					log.Printf("audit retention run failed: %v", err)
+					slog.Error("audit retention run failed", "error", err)
 				}
 			}
 		}

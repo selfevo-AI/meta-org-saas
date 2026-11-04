@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -1024,7 +1024,7 @@ func (s *Service) finishRun(ctx context.Context, send func(RunEvent) bool, sessi
 	// client disconnects right after the final event, which would strand the
 	// session in "running" forever.
 	if err := s.repo.UpdateSessionStatus(context.Background(), session.ID, StatusCompleted, ""); err != nil {
-		log.Printf("assistant: mark session %s completed failed: %v", session.ID, err)
+		slog.Error("assistant: mark session completed failed", "session_id", session.ID, "error", err)
 	}
 	send(RunEvent{Type: "done", Done: true, Data: map[string]any{"status": StatusCompleted}})
 }

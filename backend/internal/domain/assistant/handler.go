@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -471,7 +471,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("assistant writeJSON error: %v", err)
+		slog.Error("assistant writeJSON error", "error", err)
 	}
 }
 
@@ -482,10 +482,10 @@ func writeSSE(w http.ResponseWriter, event string, payload any) {
 		event = "error"
 	}
 	if _, err := w.Write([]byte("event: " + event + "\n")); err != nil {
-		log.Printf("assistant stream write error: %v", err)
+		slog.Error("assistant stream write error", "error", err)
 		return
 	}
 	if _, err := w.Write([]byte("data: " + string(data) + "\n\n")); err != nil {
-		log.Printf("assistant stream write error: %v", err)
+		slog.Error("assistant stream write error", "error", err)
 	}
 }

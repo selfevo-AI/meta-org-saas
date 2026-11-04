@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -100,7 +100,7 @@ func (w *ReservationRecoveryWorker) Start(ctx context.Context) {
 	go func() {
 		defer w.setRunning(false)
 		if _, err := w.runOnceGuarded(ctx); err != nil {
-			log.Printf("ai gateway reservation recovery failed: %v", err)
+			slog.Error("ai gateway reservation recovery failed", "error", err)
 		}
 		ticker := time.NewTicker(w.config.PollInterval)
 		defer ticker.Stop()
@@ -110,7 +110,7 @@ func (w *ReservationRecoveryWorker) Start(ctx context.Context) {
 				return
 			case <-ticker.C:
 				if _, err := w.runOnceGuarded(ctx); err != nil {
-					log.Printf("ai gateway reservation recovery failed: %v", err)
+					slog.Error("ai gateway reservation recovery failed", "error", err)
 				}
 			}
 		}

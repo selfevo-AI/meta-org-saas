@@ -2,7 +2,7 @@ package panicguard
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"runtime/debug"
 )
 
@@ -12,7 +12,7 @@ import (
 // runs during unwinding.
 func Recover(scope string) {
 	if r := recover(); r != nil {
-		log.Printf("%s: recovered panic: %v\n%s", scope, r, debug.Stack())
+		slog.Error("recovered panic", "scope", scope, "panic", r, "stack", string(debug.Stack()))
 	}
 }
 
@@ -21,7 +21,7 @@ func Recover(scope string) {
 // serving subsequent iterations.
 func RecoverAs(scope string, errp *error) {
 	if r := recover(); r != nil {
-		log.Printf("%s: recovered panic: %v\n%s", scope, r, debug.Stack())
+		slog.Error("recovered panic", "scope", scope, "panic", r, "stack", string(debug.Stack()))
 		if errp != nil && *errp == nil {
 			*errp = fmt.Errorf("%s: recovered panic: %v", scope, r)
 		}

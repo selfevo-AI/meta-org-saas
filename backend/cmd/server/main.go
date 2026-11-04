@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,10 +53,31 @@ import (
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
+// setupLogging installs the structured JSON logger; LOG_LEVEL tunes verbosity.
+func setupLogging() {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})))
+}
+
+// fail reports a fatal startup error and exits.
+func fail(message string, args ...any) {
+	slog.Error(message, args...)
+	os.Exit(1)
+}
+
 func main() {
+	setupLogging()
 	cfg, err := config.LoadValidated()
 	if err != nil {
-		log.Fatalf("configuration invalid: %v", err)
+		fail("configuration invalid", "error", err)
 	}
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
@@ -65,12 +87,12 @@ func main() {
 
 	db, err := database.Connect(connCtx, cfg.PlatformDatabaseURL)
 	if err != nil {
-		log.Fatalf("database connection failed: %v", err)
+		fail("database connection failed", "error", err)
 	}
 	defer db.Close()
 
 	if err := database.RunMigrations(context.Background(), db, cfg.MigrationsPath); err != nil {
-		log.Fatalf("migrations failed: %v", err)
+		fail("migrations failed", "error", err)
 	}
 	retentionWorker := auditretention.NewWorker(
 		auditretention.NewRepository(db),
@@ -85,7 +107,7 @@ func main() {
 	retentionWorker.Start(appCtx)
 	clientIPResolver, err := middleware.NewClientIPResolver(cfg.TrustedProxyCIDRs)
 	if err != nil {
-		log.Fatalf("trusted proxy configuration invalid: %v", err)
+		fail("trusted proxy configuration invalid", "error", err)
 	}
 	authLimiter := authlimit.NewPostgresLimiter(db)
 	sensitiveOperationRateLimit := middleware.RequestRateLimit(
@@ -131,11 +153,11 @@ func main() {
 
 	modelSecretBox, err := secretbox.New(cfg.ModelSecretKey)
 	if err != nil {
-		log.Fatalf("model secret key invalid: %v", err)
+		fail("model secret key invalid", "error", err)
 	}
 	outboundPolicy := safeurl.Policy{AllowPrivate: cfg.OutboundAllowPrivateNetworks}
 	if cfg.OutboundAllowPrivateNetworks {
-		log.Printf("outbound policy: tenant integrations may target private networks (OUTBOUND_ALLOW_PRIVATE_NETWORKS)")
+		slog.Info("outbound policy: tenant integrations may target private networks (OUTBOUND_ALLOW_PRIVATE_NETWORKS)")
 	}
 	securityKernelConfig := securitykernel.Config{
 		URL:             cfg.SecurityKernelURL,
@@ -144,7 +166,7 @@ func main() {
 		Required:        cfg.MetaOrgMode == saas.ModeSaaS,
 	}
 	if err := securitykernel.ValidateConfig(securityKernelConfig); err != nil {
-		log.Fatalf("security kernel configuration invalid: %v", err)
+		fail("security kernel configuration invalid", "error", err)
 	}
 	securityKernel := securitykernel.NewClient(securityKernelConfig)
 
@@ -166,7 +188,7 @@ func main() {
 		tenantAdminDB, err := database.Connect(tenantConnCtx, cfg.TenantDatabaseAdminURL)
 		tenantConnCancel()
 		if err != nil {
-			log.Fatalf("tenant database admin connection failed: %v", err)
+			fail("tenant database admin connection failed", "error", err)
 		}
 		defer tenantAdminDB.Close()
 		provisioner := tenantdb.NewProvisioner(tenantdb.ProvisionerConfig{
@@ -208,7 +230,7 @@ func main() {
 	}
 	saasSvc := saas.NewService(saasRepo, cfg.MetaOrgMode, saasOptions...)
 	if err := saasSvc.BootstrapPlatformAdmin(context.Background(), cfg.PlatformAdminEmail, cfg.PlatformAdminPasswordHash); err != nil {
-		log.Fatalf("platform admin bootstrap failed: %v", err)
+		fail("platform admin bootstrap failed", "error", err)
 	}
 	if tenantProvisioningWorker != nil {
 		tenantProvisioningWorker.Start(appCtx)
@@ -465,9 +487,9 @@ func main() {
 
 	srv := server.New(router, cfg.ServerPort)
 	go func() {
-		log.Printf("server starting on :%d", cfg.ServerPort)
+		slog.Info("server starting", "port", cfg.ServerPort)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+			fail("server error", "error", err)
 		}
 	}()
 

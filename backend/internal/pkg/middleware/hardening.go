@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 )
@@ -21,7 +21,7 @@ func Recoverer(next http.Handler) http.Handler {
 			if err, ok := recovered.(error); ok && err == http.ErrAbortHandler {
 				panic(recovered)
 			}
-			log.Printf("panic serving %s %s request_id=%s: %v\n%s", r.Method, r.URL.Path, RequestIDFromContext(r.Context()), recovered, debug.Stack())
+			slog.Error("panic serving request", "method", r.Method, "path", r.URL.Path, "request_id", RequestIDFromContext(r.Context()), "panic", recovered, "stack", string(debug.Stack()))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal_error", "code": "internal_error"})

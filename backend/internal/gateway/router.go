@@ -3,7 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -160,7 +160,7 @@ func writeRouteError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
-		log.Printf("route error response failed: %v", err)
+		slog.Error("route error response failed", "error", err)
 	}
 }
 
@@ -346,7 +346,7 @@ func healthCheck(deps *Dependencies, detailed bool) http.HandlerFunc {
 		}
 		if deps.PlatformDatabaseHealthProvider != nil {
 			if err := deps.PlatformDatabaseHealthProvider.Ping(healthCtx); err != nil {
-				log.Printf("platform database health check failed: %v", err)
+				slog.Error("platform database health check failed", "error", err)
 				response.Status = "unavailable"
 				response.PlatformDatabase = &dependencyHealth{Status: "unavailable", Reason: "platform_database_unavailable"}
 				statusCode = http.StatusServiceUnavailable
@@ -357,7 +357,7 @@ func healthCheck(deps *Dependencies, detailed bool) http.HandlerFunc {
 		if deps.SecurityKernelHealthProvider != nil {
 			err := deps.SecurityKernelHealthProvider.CheckHealth(healthCtx)
 			if err != nil {
-				log.Printf("security kernel health check failed: %v", err)
+				slog.Error("security kernel health check failed", "error", err)
 				response.Status = "unavailable"
 				response.SecurityKernel = &dependencyHealth{Status: "unavailable", Reason: "security_kernel_unavailable"}
 				statusCode = http.StatusServiceUnavailable
@@ -368,7 +368,7 @@ func healthCheck(deps *Dependencies, detailed bool) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
 		if err := json.NewEncoder(w).Encode(response); err != nil {
-			log.Printf("health check write error: %v", err)
+			slog.Error("health check write error", "error", err)
 		}
 	}
 }
