@@ -87,6 +87,7 @@ func (r *Repository) BootstrapPlatformAdmin(ctx context.Context, email string, p
 	if _, err := tx.Exec(ctx, `
 		UPDATE users
 		SET account_status = 'active',
+		    session_version = session_version + (password_hash IS DISTINCT FROM $2)::int,
 		    password_hash = $2,
 		    onboarding_status = CASE WHEN default_organization_id IS NULL THEN 'complete' ELSE onboarding_status END,
 		    updated_at = NOW()
@@ -957,6 +958,7 @@ func (r *Repository) UpdateOrganizationAccount(ctx context.Context, record Updat
 		UPDATE users
 		SET name = COALESCE(NULLIF($2, ''), name),
 		    email = COALESCE(NULLIF($3, ''), email),
+		    session_version = session_version + (COALESCE(NULLIF($4, ''), account_status) = 'disabled' AND account_status <> 'disabled')::int,
 		    account_status = COALESCE(NULLIF($4, ''), account_status),
 		    updated_at = NOW()
 		WHERE id = $1
@@ -1010,7 +1012,7 @@ func (r *Repository) ResetOrganizationAccountPassword(ctx context.Context, orgID
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE users
-		SET password_hash = $2, updated_at = NOW()
+		SET password_hash = $2, session_version = session_version + 1, updated_at = NOW()
 		WHERE id = $1
 	`, userID, passwordHash); err != nil {
 		return nil, fmt.Errorf("reset organization account password: %w", err)

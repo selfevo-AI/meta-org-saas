@@ -20,15 +20,22 @@ func TestChangeOwnPasswordRequiresCurrentPasswordAndStoresHash(t *testing.T) {
 	}
 	service := NewService(repo, "test-secret")
 
-	if err := service.ChangeOwnPassword(context.Background(), userID, "wrong", "NewPass!2026"); !errors.Is(err, ErrInvalidCredentials) {
+	if _, _, err := service.ChangeOwnPassword(context.Background(), userID, "wrong", "NewPass!2026"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("ChangeOwnPassword wrong current error = %v, want ErrInvalidCredentials", err)
 	}
 	if repo.updatedHash != "" {
 		t.Fatal("password hash updated despite wrong current password")
 	}
 
-	if err := service.ChangeOwnPassword(context.Background(), userID, "OldPass!2026", "NewPass!2026"); err != nil {
+	token, expiresAt, err := service.ChangeOwnPassword(context.Background(), userID, "OldPass!2026", "NewPass!2026")
+	if err != nil {
 		t.Fatalf("ChangeOwnPassword error = %v", err)
+	}
+	if token == "" || expiresAt == 0 {
+		t.Fatalf("ChangeOwnPassword replacement token = (%q, %d), want a fresh session token", token, expiresAt)
+	}
+	if repo.user.SessionVersion == 0 {
+		t.Fatal("session version not bumped by password change")
 	}
 	if repo.updatedHash == "" || repo.updatedHash == "NewPass!2026" {
 		t.Fatalf("updatedHash = %q, want non-empty bcrypt hash", repo.updatedHash)
@@ -87,9 +94,14 @@ func (r *passwordChangeRepo) GetUserByID(context.Context, uuid.UUID) (*User, err
 	return r.user, nil
 }
 
-func (r *passwordChangeRepo) UpdateUserPassword(_ context.Context, _ uuid.UUID, passwordHash string) error {
+func (r *passwordChangeRepo) GetSessionVersion(context.Context, uuid.UUID) (int64, error) {
+	return r.user.SessionVersion, nil
+}
+
+func (r *passwordChangeRepo) UpdateUserPassword(_ context.Context, _ uuid.UUID, passwordHash string) (int64, error) {
 	r.updatedHash = passwordHash
-	return nil
+	r.user.SessionVersion++
+	return r.user.SessionVersion, nil
 }
 
 func (r *passwordChangeRepo) CreateAgent(context.Context, CreateAgentInput) (*AIAgent, string, error) {

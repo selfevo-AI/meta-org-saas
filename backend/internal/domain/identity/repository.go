@@ -2,7 +2,9 @@ package identity
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,9 +30,9 @@ func (r *Repository) CreateUser(ctx context.Context, input CreateUserInput) (*Us
 	user := &User{}
 	err = r.db.QueryRow(ctx,
 		`INSERT INTO users (name, email, password_hash) VALUES ($1, $2, $3)
-		 RETURNING id, name, email, password_hash, COALESCE(avatar_url, ''), created_at, updated_at`,
+		 RETURNING id, name, email, password_hash, COALESCE(avatar_url, ''), created_at, updated_at, session_version`,
 		strings.TrimSpace(input.Name), strings.ToLower(strings.TrimSpace(input.Email)), string(hash),
-	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt, &user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
@@ -40,9 +42,9 @@ func (r *Repository) CreateUser(ctx context.Context, input CreateUserInput) (*Us
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	user := &User{}
 	err := r.db.QueryRow(ctx,
-		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), COALESCE(account_status, 'active'), created_at, updated_at
+		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), COALESCE(account_status, 'active'), created_at, updated_at, COALESCE(session_version, 0)
 		 FROM users WHERE lower(email) = lower($1)`, strings.TrimSpace(email),
-	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.AccountStatus, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.AccountStatus, &user.CreatedAt, &user.UpdatedAt, &user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("get user by email: %w", err)
 	}
@@ -52,24 +54,42 @@ func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, e
 func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*User, error) {
 	user := &User{}
 	err := r.db.QueryRow(ctx,
-		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), COALESCE(account_status, 'active'), created_at, updated_at
+		`SELECT id, name, email, password_hash, COALESCE(avatar_url, ''), COALESCE(account_status, 'active'), created_at, updated_at, COALESCE(session_version, 0)
 		 FROM users WHERE id = $1`, id,
-	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.AccountStatus, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.AvatarURL, &user.AccountStatus, &user.CreatedAt, &user.UpdatedAt, &user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("get user by id: %w", err)
 	}
 	return user, nil
 }
 
-func (r *Repository) UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
-	tag, err := r.db.Exec(ctx, `UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1`, id, passwordHash)
+// GetSessionVersion returns the current session version used to validate that a
+// token has not been revoked by a password change, reset, or disable.
+func (r *Repository) GetSessionVersion(ctx context.Context, id uuid.UUID) (int64, error) {
+	var sessionVersion int64
+	err := r.db.QueryRow(ctx, `SELECT COALESCE(session_version, 0) FROM users WHERE id = $1`, id).Scan(&sessionVersion)
 	if err != nil {
-		return fmt.Errorf("update user password: %w", err)
+		return 0, fmt.Errorf("get session version: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return ErrUserNotFound
+	return sessionVersion, nil
+}
+
+// UpdateUserPassword stores a new password hash and revokes every token issued
+// before the change by incrementing session_version. It returns the new version
+// so the caller can mint a replacement token for the session that made the change.
+func (r *Repository) UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) (int64, error) {
+	var sessionVersion int64
+	err := r.db.QueryRow(ctx,
+		`UPDATE users SET password_hash = $2, session_version = session_version + 1, updated_at = NOW()
+		 WHERE id = $1 RETURNING session_version`, id, passwordHash,
+	).Scan(&sessionVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrUserNotFound
 	}
-	return nil
+	if err != nil {
+		return 0, fmt.Errorf("update user password: %w", err)
+	}
+	return sessionVersion, nil
 }
 
 func (r *Repository) CreateAgent(ctx context.Context, input CreateAgentInput) (*AIAgent, string, error) {

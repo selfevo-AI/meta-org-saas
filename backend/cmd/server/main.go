@@ -441,6 +441,7 @@ func main() {
 		SystemAdminHandler:                   systemAdminHandler,
 		TenantResolver:                       saasSvc,
 		PlatformRoleResolver:                 systemAdminRepo,
+		SessionVersionResolver:               identSvc,
 		ObservabilityHandler:                 obsHandler,
 		VerificationHandler:                  verHandler,
 		GovernanceHandler:                    govHandler,

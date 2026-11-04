@@ -40,6 +40,7 @@ This directory now uses staged baseline migrations instead of the historical
 35. `035_migration_line_endings.sql`
 36. `036_smt_mes_solution.sql`
 37. `037_smt_edge_platform.sql`
+38. `038_users_session_version.sql`
 
 Physical tenant databases use their own tenant migration directory:
 
@@ -648,6 +649,16 @@ dedicated tenant database owns the same shop-floor tables without cross-database
 foreign keys. Both files are additive and idempotent; they do not edit or accept
 drift for any earlier baseline. See `docs/SMT-MES-SOLUTION.md` for the action
 catalog, edge bridge contract, and verification steps.
+
+`038_users_session_version.sql` owns JWT session revocation. It adds
+`users.session_version` (platform database only) and accepts checksum drift for
+`000_saas_platform_management_baseline.sql`, whose staged `ALTER TABLE users`
+block also gained the same column for fresh installs. The version is embedded in
+issued tokens as the `ver` claim, checked per authenticated request, and
+incremented by password changes, admin password resets and disable operations;
+missing `ver` claims are treated as version 0 so existing sessions are not all
+logged out at rollout. The tenant-side `users` projection needs no column: it is
+rebuilt by the existing identity-master refresh trigger.
 
 ## AI Audit Retention
 

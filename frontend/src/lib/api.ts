@@ -584,8 +584,8 @@ export async function resetPlatformUserPassword(token: string, userID: string): 
   })
 }
 
-export async function changeOwnPassword(token: string, currentPassword: string, newPassword: string): Promise<{ status: string }> {
-  return apiRequest<{ status: string }>('/auth/me/password', {
+export async function changeOwnPassword(token: string, currentPassword: string, newPassword: string): Promise<{ status: string; token?: string; expires_at?: number }> {
+  return apiRequest<{ status: string; token?: string; expires_at?: number }>('/auth/me/password', {
     method: 'POST',
     token,
     body: { current_password: currentPassword, new_password: newPassword },

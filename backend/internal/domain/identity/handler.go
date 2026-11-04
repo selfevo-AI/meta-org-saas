@@ -163,7 +163,8 @@ func (h *Handler) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	if err := h.service.ChangeOwnPassword(r.Context(), user, req.CurrentPassword, req.NewPassword); err != nil {
+	token, expiresAt, err := h.service.ChangeOwnPassword(r.Context(), user, req.CurrentPassword, req.NewPassword)
+	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, ErrValidation) {
 			status = http.StatusBadRequest
@@ -173,7 +174,9 @@ func (h *Handler) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	// The password change revoked all previous tokens, including the caller's;
+	// the response carries the replacement token for this session.
+	writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "token": token, "expires_at": expiresAt})
 }
 
 func currentHumanUser(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool) {

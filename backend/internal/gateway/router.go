@@ -68,6 +68,7 @@ type Dependencies struct {
 	SystemAdminHandler      *systemadmin.Handler
 	TenantResolver          middleware.TenantResolver
 	PlatformRoleResolver    middleware.PlatformRoleResolver
+	SessionVersionResolver  middleware.SessionVersionResolver
 	ObservabilityHandler    *observability.Handler
 	VerificationHandler     *verification.Handler
 	GovernanceHandler       *governance.Handler
@@ -129,7 +130,7 @@ func RegisterRoutes(r *chi.Mux, deps *Dependencies) {
 			deps.SMTMESHandler.RegisterHookRoutes(r)
 		}
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.AuthMiddleware(deps.JWTSecret))
+			r.Use(middleware.AuthMiddleware(deps.JWTSecret, deps.SessionVersionResolver))
 			if deps.AuthenticatedSensitiveLimit != nil {
 				r.Use(deps.AuthenticatedSensitiveLimit)
 			}

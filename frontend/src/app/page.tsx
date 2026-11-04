@@ -102,6 +102,7 @@ import {
   getCurrentOrganizationId,
   getSessionUser,
   getToken,
+  saveToken,
   setActiveSessionScope,
   setCurrentOrganizationId,
   setSession,
@@ -2133,7 +2134,13 @@ function WorkspaceApplication() {
     setPasswordChanging(true)
     setPasswordError('')
     try {
-      await changeOwnPassword(token, currentOwnPassword, newOwnPassword)
+      const result = await changeOwnPassword(token, currentOwnPassword, newOwnPassword)
+      // The change revokes every previously issued token; adopt the
+      // replacement so this session keeps working.
+      if (result.token) {
+        saveToken(result.token)
+        setToken(result.token)
+      }
       setCurrentOwnPassword('')
       setNewOwnPassword('')
       setConfirmOwnPassword('')

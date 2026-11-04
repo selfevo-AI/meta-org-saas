@@ -380,7 +380,7 @@ func (r *Repository) SetPlatformUserRoles(ctx context.Context, userID uuid.UUID,
 func (r *Repository) ResetPlatformUserPassword(ctx context.Context, userID uuid.UUID, passwordHash string, actorID uuid.UUID) (*PlatformUser, error) {
 	if _, err := r.db.Exec(ctx, `
 		UPDATE public.users
-		SET password_hash = $2, updated_at = NOW()
+		SET password_hash = $2, session_version = session_version + 1, updated_at = NOW()
 		WHERE id = $1
 	`, userID, passwordHash); err != nil {
 		return nil, fmt.Errorf("reset platform user password: %w", err)
@@ -396,7 +396,7 @@ func (r *Repository) DisablePlatformUser(ctx context.Context, userID uuid.UUID, 
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
 		UPDATE public.users
-		SET account_status = 'disabled', updated_at = NOW()
+		SET account_status = 'disabled', session_version = session_version + 1, updated_at = NOW()
 		WHERE id = $1
 	`, userID); err != nil {
 		return nil, fmt.Errorf("disable user account: %w", err)

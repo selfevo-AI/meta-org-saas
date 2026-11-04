@@ -149,6 +149,14 @@ export function getToken(scope: SessionScope = getActiveSessionScope()): string 
   return localStorage.getItem(SESSION_KEYS[scope].token)
 }
 
+// Replaces the stored token for an existing session, e.g. after a password
+// change revokes the previous token and the response carries its replacement.
+export function saveToken(token: string, scope: SessionScope = getActiveSessionScope()): void {
+  if (typeof window === 'undefined') return
+  migrateLegacySession()
+  localStorage.setItem(SESSION_KEYS[scope].token, token)
+}
+
 export function getSessionUser(scope: SessionScope = getActiveSessionScope()): SessionUser | null {
   if (typeof window === 'undefined') return null
   migrateLegacySession()

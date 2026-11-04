@@ -17,9 +17,17 @@ type contextKey string
 const UserContextKey contextKey = "user"
 
 type AuthenticatedUser struct {
-	ID   string
-	Type string
-	Name string
+	ID             string
+	Type           string
+	Name           string
+	SessionVersion int64
+}
+
+// SessionVersionResolver returns the current session version of a human
+// account so tokens revoked by a password change, reset, or disable are
+// rejected on the next request.
+type SessionVersionResolver interface {
+	SessionVersion(ctx context.Context, userID string) (int64, error)
 }
 
 func UserFromContext(ctx context.Context) (AuthenticatedUser, bool) {
@@ -27,13 +35,26 @@ func UserFromContext(ctx context.Context) (AuthenticatedUser, bool) {
 	return user, ok
 }
 
-func AuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
+func AuthMiddleware(jwtSecret string, sessions SessionVersionResolver) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, err := authenticateBearer(r.Header.Get("Authorization"), jwtSecret)
 			if err != nil {
 				writeUnauthorized(w)
 				return
+			}
+			if user.Type == "human" && sessions != nil {
+				current, err := sessions.SessionVersion(r.Context(), user.ID)
+				if err != nil {
+					// Fail closed: a token whose revocation state cannot be
+					// verified must not be trusted.
+					writeSessionCheckUnavailable(w)
+					return
+				}
+				if current != user.SessionVersion {
+					writeSessionRevoked(w)
+					return
+				}
 			}
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -110,12 +131,28 @@ func validateJWT(tokenString string, jwtSecret string) (AuthenticatedUser, error
 		return AuthenticatedUser{}, errors.New("token expired")
 	}
 	name, _ := claims["name"].(string)
+	sessionVersion := int64(0)
+	if raw, ok := claims["ver"].(float64); ok {
+		sessionVersion = int64(raw)
+	}
 
-	return AuthenticatedUser{ID: sub, Type: userType, Name: name}, nil
+	return AuthenticatedUser{ID: sub, Type: userType, Name: name, SessionVersion: sessionVersion}, nil
 }
 
 func writeUnauthorized(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)
 	_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+}
+
+func writeSessionRevoked(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(`{"error":"session revoked","code":"session_revoked"}`))
+}
+
+func writeSessionCheckUnavailable(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_, _ = w.Write([]byte(`{"error":"session verification unavailable","code":"service_unavailable"}`))
 }

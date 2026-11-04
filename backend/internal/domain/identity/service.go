@@ -31,7 +31,8 @@ type UserRepository interface {
 	CreateUser(ctx context.Context, input CreateUserInput) (*User, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (*User, error)
-	UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) error
+	GetSessionVersion(ctx context.Context, id uuid.UUID) (int64, error)
+	UpdateUserPassword(ctx context.Context, id uuid.UUID, passwordHash string) (int64, error)
 	CreateAgent(ctx context.Context, input CreateAgentInput) (*AIAgent, string, error)
 	GetAgentByID(ctx context.Context, id uuid.UUID) (*AIAgent, error)
 	ListAgents(ctx context.Context, limit int) ([]AIAgent, error)
@@ -129,7 +130,7 @@ func (s *Service) AuthenticateUser(ctx context.Context, email, password string) 
 		return nil, ErrAccountDisabled
 	}
 
-	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name)
+	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name, user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -163,7 +164,7 @@ func (s *Service) AuthenticateAgent(ctx context.Context, agentID uuid.UUID, apiK
 		return nil, ErrInvalidCredentials
 	}
 
-	token, expiresAt, err := s.generateJWT(agent.ID.String(), "ai", agent.Name)
+	token, expiresAt, err := s.generateJWT(agent.ID.String(), "ai", agent.Name, 0)
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -189,7 +190,7 @@ func (s *Service) RegisterUser(ctx context.Context, input CreateUserInput) (*Aut
 		}
 		return nil, err
 	}
-	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name)
+	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name, user.SessionVersion)
 	if err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
@@ -202,22 +203,42 @@ func (s *Service) RegisterUser(ctx context.Context, input CreateUserInput) (*Aut
 	return s.enrichAuthResponse(ctx, resp, user.ID), nil
 }
 
-func (s *Service) ChangeOwnPassword(ctx context.Context, userID uuid.UUID, currentPassword string, newPassword string) error {
+func (s *Service) ChangeOwnPassword(ctx context.Context, userID uuid.UUID, currentPassword string, newPassword string) (string, int64, error) {
 	if userID == uuid.Nil || strings.TrimSpace(currentPassword) == "" || strings.TrimSpace(newPassword) == "" {
-		return fmt.Errorf("%w: current_password and new_password are required", ErrValidation)
+		return "", 0, fmt.Errorf("%w: current_password and new_password are required", ErrValidation)
 	}
 	user, err := s.repo.GetUserByID(ctx, userID)
 	if err != nil {
-		return ErrInvalidCredentials
+		return "", 0, ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)); err != nil {
-		return ErrInvalidCredentials
+		return "", 0, ErrInvalidCredentials
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return fmt.Errorf("hash new password: %w", err)
+		return "", 0, fmt.Errorf("hash new password: %w", err)
 	}
-	return s.repo.UpdateUserPassword(ctx, userID, string(hash))
+	sessionVersion, err := s.repo.UpdateUserPassword(ctx, userID, string(hash))
+	if err != nil {
+		return "", 0, err
+	}
+	// The update bumps session_version and revokes every token issued earlier,
+	// including the caller's own; mint a replacement so this session survives.
+	token, expiresAt, err := s.generateJWT(user.ID.String(), "human", user.Name, sessionVersion)
+	if err != nil {
+		return "", 0, fmt.Errorf("generate token: %w", err)
+	}
+	return token, expiresAt, nil
+}
+
+// SessionVersion resolves the current session version of a human account for
+// per-request token revocation checks (implements middleware.SessionVersionResolver).
+func (s *Service) SessionVersion(ctx context.Context, userID string) (int64, error) {
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		return 0, ErrInvalidCredentials
+	}
+	return s.repo.GetSessionVersion(ctx, id)
 }
 
 func (s *Service) RegisterAgent(ctx context.Context, input CreateAgentInput) (*RegisterAgentResponse, error) {
@@ -327,7 +348,7 @@ type jwtHeader struct {
 	Typ string `json:"typ"`
 }
 
-func (s *Service) generateJWT(subject, userType, name string) (string, int64, error) {
+func (s *Service) generateJWT(subject, userType, name string, sessionVersion int64) (string, int64, error) {
 	expiresAt := time.Now().Add(s.tokenTTL)
 	expiresAtUnix := expiresAt.Unix()
 
@@ -341,6 +362,7 @@ func (s *Service) generateJWT(subject, userType, name string) (string, int64, er
 		"sub":  subject,
 		"type": userType,
 		"name": name,
+		"ver":  sessionVersion,
 		"exp":  expiresAtUnix,
 		"iat":  time.Now().Unix(),
 	}
