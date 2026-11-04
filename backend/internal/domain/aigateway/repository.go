@@ -110,8 +110,9 @@ func (r *PostgresRepository) ListActiveProviders(ctx context.Context, limit int)
 	return scanProviders(rows)
 }
 
-// DeleteProvider removes a provider row; its channels cascade with it while
-// models referencing the provider keep the row alive (ON DELETE RESTRICT).
+// DeleteProvider removes a provider row; its channels and catalog models
+// cascade with it, while invocation history keeps the row alive
+// (ai_invocations.provider_id is ON DELETE RESTRICT).
 func (r *PostgresRepository) DeleteProvider(ctx context.Context, id uuid.UUID) error {
 	tag, err := r.db.Exec(ctx, `DELETE FROM model_providers WHERE id = $1`, id)
 	if err != nil {
@@ -121,6 +122,16 @@ func (r *PostgresRepository) DeleteProvider(ctx context.Context, id uuid.UUID) e
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CountProviderInvocations reports how many invocation rows reference the
+// provider; a non-zero count blocks provider deletion.
+func (r *PostgresRepository) CountProviderInvocations(ctx context.Context, providerID uuid.UUID) (int, error) {
+	var count int
+	if err := r.db.QueryRow(ctx, `SELECT COUNT(*) FROM ai_invocations WHERE provider_id = $1`, providerID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count provider invocations: %w", err)
+	}
+	return count, nil
 }
 
 func (r *PostgresRepository) UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error) {

@@ -69,6 +69,7 @@ type CatalogRepository interface {
 	ListActiveProviders(ctx context.Context, limit int) ([]ModelProvider, error)
 	UpdateProvider(ctx context.Context, id uuid.UUID, input UpdateProviderInput) (*ModelProvider, error)
 	DeleteProvider(ctx context.Context, id uuid.UUID) error
+	CountProviderInvocations(ctx context.Context, providerID uuid.UUID) (int, error)
 	RotateProviderKey(ctx context.Context, id uuid.UUID, apiKey string) (*ModelProvider, error)
 	UpdateProviderTestResult(ctx context.Context, id uuid.UUID, status string, message string) error
 	GetProviderSecret(ctx context.Context, id uuid.UUID) (ProviderSecret, error)
@@ -1075,17 +1076,17 @@ func (s *Service) UpdateProvider(ctx context.Context, id uuid.UUID, input Update
 	return s.catalogRepo().UpdateProvider(ctx, id, input)
 }
 
-// DeleteProvider removes a provider together with its channel pool. Providers
-// that still own catalog models are rejected: models reference the provider
-// with ON DELETE RESTRICT, and deleting them implicitly would silently change
-// routing for every consumer of the gateway.
+// DeleteProvider removes a provider together with its channel pool and its
+// catalog models (both cascade in the schema). Providers that already have
+// invocation history are rejected: ai_invocations references providers with
+// ON DELETE RESTRICT so the usage/audit trail cannot lose its provider.
 func (s *Service) DeleteProvider(ctx context.Context, id uuid.UUID) error {
-	models, err := s.catalogRepo().ListModels(ctx, &id, 1)
+	invocations, err := s.catalogRepo().CountProviderInvocations(ctx, id)
 	if err != nil {
 		return err
 	}
-	if len(models) > 0 {
-		return fmt.Errorf("%w: provider still owns models; delete them first", ErrConflict)
+	if invocations > 0 {
+		return fmt.Errorf("%w: provider has invocation history and cannot be deleted", ErrConflict)
 	}
 	return s.catalogRepo().DeleteProvider(ctx, id)
 }

@@ -461,7 +461,7 @@ func TestFinishReservationIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDeleteProviderCascadesChannelsAndRejectsProvidersWithModels(t *testing.T) {
+func TestDeleteProviderCascadesChannelsAndModelsAndRejectsInvocationHistory(t *testing.T) {
 	if os.Getenv("RUN_AI_GATEWAY_DB_TEST") != "1" {
 		t.Skip("set RUN_AI_GATEWAY_DB_TEST=1 to run AI Gateway database verification")
 	}
@@ -492,37 +492,49 @@ func TestDeleteProviderCascadesChannelsAndRejectsProvidersWithModels(t *testing.
 	if _, err := repo.CreateChannel(ctx, CreateChannelInput{ProviderID: provider.ID, Name: "integration-delete-channel", APIKey: "sk-channel"}); err != nil {
 		t.Fatalf("CreateChannel error = %v", err)
 	}
+	if _, err := repo.CreateModel(ctx, CreateModelInput{ProviderID: provider.ID, ModelKey: "integration-delete-model", Status: "active"}); err != nil {
+		t.Fatalf("CreateModel error = %v", err)
+	}
 
+	// No invocation history: the provider, its channel and its models all go.
 	if err := service.DeleteProvider(ctx, provider.ID); err != nil {
 		t.Fatalf("DeleteProvider error = %v", err)
 	}
-	var remaining int
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM model_provider_channels WHERE provider_id = $1`, provider.ID).Scan(&remaining); err != nil {
+	var channels, models int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM model_provider_channels WHERE provider_id = $1`, provider.ID).Scan(&channels); err != nil {
 		t.Fatal(err)
 	}
-	if remaining != 0 {
-		t.Fatalf("channels remaining after provider delete = %d, want 0 (cascade)", remaining)
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM models WHERE provider_id = $1`, provider.ID).Scan(&models); err != nil {
+		t.Fatal(err)
+	}
+	if channels != 0 || models != 0 {
+		t.Fatalf("after provider delete: %d channels, %d models remaining; want 0/0 (cascade)", channels, models)
 	}
 	if err := service.DeleteProvider(ctx, provider.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second DeleteProvider error = %v, want ErrNotFound", err)
 	}
 
+	// Invocation history blocks the delete: the audit trail keeps working.
 	referenced, err := repo.CreateProvider(ctx, CreateProviderInput{
-		Name: "integration-delete-provider-with-model", ProviderType: ProviderOpenAI, BaseURL: "http://127.0.0.1:1/v1", APIKey: "sk-delete-test-2",
+		Name: "integration-delete-provider-with-invocation", ProviderType: ProviderOpenAI, BaseURL: "http://127.0.0.1:1/v1", APIKey: "sk-delete-test-2",
 	})
 	if err != nil {
 		t.Fatalf("CreateProvider (referenced) error = %v", err)
 	}
-	model, err := repo.CreateModel(ctx, CreateModelInput{ProviderID: referenced.ID, ModelKey: "integration-delete-model", Status: "active"})
+	model, err := repo.CreateModel(ctx, CreateModelInput{ProviderID: referenced.ID, ModelKey: "integration-delete-model-2", Status: "active"})
 	if err != nil {
-		t.Fatalf("CreateModel error = %v", err)
+		t.Fatalf("CreateModel (referenced) error = %v", err)
 	}
 	defer func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM ai_invocations WHERE provider_id = $1`, referenced.ID)
 		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM models WHERE id = $1`, model.ID)
 		_, _ = pool.Exec(context.WithoutCancel(ctx), `DELETE FROM model_providers WHERE id = $1`, referenced.ID)
 	}()
+	if _, err := pool.Exec(ctx, `INSERT INTO ai_invocations (provider_id, model_id, mode, status) VALUES ($1, $2, 'sync', 'completed')`, referenced.ID, model.ID); err != nil {
+		t.Fatalf("insert invocation history: %v", err)
+	}
 
 	if err := service.DeleteProvider(ctx, referenced.ID); !errors.Is(err, ErrConflict) {
-		t.Fatalf("DeleteProvider with models error = %v, want ErrConflict", err)
+		t.Fatalf("DeleteProvider with invocation history error = %v, want ErrConflict", err)
 	}
 }

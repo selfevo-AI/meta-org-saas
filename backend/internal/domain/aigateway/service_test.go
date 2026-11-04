@@ -15,37 +15,37 @@ import (
 )
 
 type fakeGatewayRepo struct {
-	target             ResolvedModel
-	recorded           bool
-	completed          bool
-	failed             bool
-	pricingResolved    bool
-	ledgerCount        int
-	lastLedger         CreateUsageLedgerInput
-	lastComplete       CompleteInvocationInput
-	lastFailure        FailInvocationInput
-	accessToken        AccessTokenContext
-	reserved           bool
-	settled            bool
-	refunded           bool
-	reservation        BalanceReservation
-	lastReserve        ReserveBalanceInput
-	lastSettle         SettleBalanceInput
-	lastTokenStore     CreateAccessTokenStoreInput
-	lastAdjustment     AdjustGatewayBalanceInput
-	catalogProviders   []ModelProvider
-	catalogModels      []Model
-	providerModels     []Model
-	deletedProviders   []uuid.UUID
-	deletedChannels    []uuid.UUID
-	abilities          []ModelChannelAbility
-	reserveErr         error
-	releaseCount       int
-	lastReleaseCost    float64
-	lastReleaseOutcome string
-	ledgerErr          error
-	attached           bool
-	attachErr          error
+	target              ResolvedModel
+	recorded            bool
+	completed           bool
+	failed              bool
+	pricingResolved     bool
+	ledgerCount         int
+	lastLedger          CreateUsageLedgerInput
+	lastComplete        CompleteInvocationInput
+	lastFailure         FailInvocationInput
+	accessToken         AccessTokenContext
+	reserved            bool
+	settled             bool
+	refunded            bool
+	reservation         BalanceReservation
+	lastReserve         ReserveBalanceInput
+	lastSettle          SettleBalanceInput
+	lastTokenStore      CreateAccessTokenStoreInput
+	lastAdjustment      AdjustGatewayBalanceInput
+	catalogProviders    []ModelProvider
+	catalogModels       []Model
+	providerInvocations int
+	deletedProviders    []uuid.UUID
+	deletedChannels     []uuid.UUID
+	abilities           []ModelChannelAbility
+	reserveErr          error
+	releaseCount        int
+	lastReleaseCost     float64
+	lastReleaseOutcome  string
+	ledgerErr           error
+	attached            bool
+	attachErr           error
 }
 
 func newFakeGatewayRepo() *fakeGatewayRepo {
@@ -946,14 +946,15 @@ func (f *fakeGatewayRepo) CreateModel(context.Context, CreateModelInput) (*Model
 	return nil, errors.New("unexpected catalog call")
 }
 
-func (f *fakeGatewayRepo) ListModels(_ context.Context, providerID *uuid.UUID, _ int) ([]Model, error) {
-	if providerID != nil && f.providerModels != nil {
-		return f.providerModels, nil
-	}
+func (f *fakeGatewayRepo) ListModels(context.Context, *uuid.UUID, int) ([]Model, error) {
 	if f.catalogModels == nil {
 		return nil, errors.New("unexpected catalog call")
 	}
 	return f.catalogModels, nil
+}
+
+func (f *fakeGatewayRepo) CountProviderInvocations(context.Context, uuid.UUID) (int, error) {
+	return f.providerInvocations, nil
 }
 
 func (f *fakeGatewayRepo) DeleteProvider(_ context.Context, id uuid.UUID) error {
@@ -1204,10 +1205,10 @@ func (f *fakeSecurityKernel) Authorize(_ context.Context, request securitykernel
 	return f.decision, f.err
 }
 
-func TestDeleteProviderRejectsProvidersThatStillOwnModels(t *testing.T) {
+func TestDeleteProviderRejectsProvidersWithInvocationHistory(t *testing.T) {
 	repo := newFakeGatewayRepo()
 	providerID := uuid.New()
-	repo.providerModels = []Model{{ID: uuid.New(), ProviderID: providerID, ModelKey: "gpt-4", Status: "active"}}
+	repo.providerInvocations = 3
 	service := NewService(repo, nil)
 
 	err := service.DeleteProvider(context.Background(), providerID)
@@ -1215,14 +1216,13 @@ func TestDeleteProviderRejectsProvidersThatStillOwnModels(t *testing.T) {
 		t.Fatalf("DeleteProvider error = %v, want ErrConflict", err)
 	}
 	if len(repo.deletedProviders) != 0 {
-		t.Fatalf("provider deleted despite owning models: %v", repo.deletedProviders)
+		t.Fatalf("provider deleted despite invocation history: %v", repo.deletedProviders)
 	}
 }
 
-func TestDeleteProviderRemovesProviderWithoutModels(t *testing.T) {
+func TestDeleteProviderRemovesProviderWithoutInvocationHistory(t *testing.T) {
 	repo := newFakeGatewayRepo()
 	providerID := uuid.New()
-	repo.providerModels = []Model{}
 	service := NewService(repo, nil)
 
 	if err := service.DeleteProvider(context.Background(), providerID); err != nil {
