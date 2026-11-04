@@ -25,7 +25,7 @@ import {
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { API_BASE, apiRequest, getUserFieldPreference, saveUserFieldPreference } from '@/lib/api'
-import { apiErrorFromResponse, createRequestId } from '@/lib/api-error'
+import { apiErrorFromResponse, createRequestId, describeApiError } from '@/lib/api-error'
 import { getCurrentOrganizationId, normalizeOrganizationId } from '@/lib/auth'
 import { useI18n } from '@/lib/i18n'
 
@@ -522,7 +522,7 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
         }))
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('加载生命周期数据失败'))
+        if (!cancelled) setError(describeApiError(err, t, t('加载生命周期数据失败')))
       })
 
     return () => {
@@ -608,7 +608,7 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
         if (!cancelled) {
           setOverview(null)
           setCostEntries([])
-          setError(err instanceof Error ? err.message : t('加载项目详情失败'))
+          setError(describeApiError(err, t, t('加载项目详情失败')))
         }
       })
 
@@ -683,7 +683,7 @@ export function ProjectLifecycleWorkspace({ token, currentUserId, mode, external
       await action()
       setMessage(t(success))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('操作失败'))
+      setError(describeApiError(err, t, t('操作失败')))
     } finally {
       setLoading(false)
     }

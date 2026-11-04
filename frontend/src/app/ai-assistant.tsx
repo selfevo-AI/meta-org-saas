@@ -27,6 +27,7 @@ import {
 import { useI18n } from '@/lib/i18n'
 import { streamSSEPost } from '@/lib/stream'
 import { Dialog, FeedbackMessage } from './workspace-ui'
+import { describeApiError } from '@/lib/api-error'
 
 type AssistantState = 'idle' | 'streaming' | 'approval_required' | 'completed' | 'provider_error' | 'governance_denied' | 'cancelled'
 
@@ -382,7 +383,7 @@ export function AIAssistant({
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantMessage.id
-            ? { ...message, content: err instanceof Error ? err.message : t('assistant.error') }
+            ? { ...message, content: describeApiError(err, t, t('assistant.error')) }
             : message,
         ),
       )
@@ -477,7 +478,7 @@ export function AIAssistant({
       setMessages((current) =>
         current.map((message) =>
           message.id === assistantMessage.id
-            ? { ...message, content: err instanceof Error ? err.message : t('assistant.error') }
+            ? { ...message, content: describeApiError(err, t, t('assistant.error')) }
             : message,
         ),
       )
@@ -506,11 +507,11 @@ export function AIAssistant({
       }
       await resumeAfterApproval(result.approval.id)
     } catch (err) {
-      setApprovalError(err instanceof Error ? err.message : t('assistant.approvalExecutionFailed'))
+      setApprovalError(describeApiError(err, t, t('assistant.approvalExecutionFailed')))
       setState('provider_error')
       setMessages((current) => [
         ...current,
-        { id: `assistant-approval-error-${Date.now()}`, role: 'assistant', content: err instanceof Error ? err.message : t('assistant.approvalExecutionFailed') },
+        { id: `assistant-approval-error-${Date.now()}`, role: 'assistant', content: describeApiError(err, t, t('assistant.approvalExecutionFailed')) },
       ])
     } finally {
       approvalLock.current = false
@@ -535,11 +536,11 @@ export function AIAssistant({
         { id: `assistant-approval-rejected-${Date.now()}`, role: 'assistant', content: t('assistant.approvalRejected') },
       ])
     } catch (err) {
-      setApprovalError(err instanceof Error ? err.message : t('assistant.error'))
+      setApprovalError(describeApiError(err, t, t('assistant.error')))
       setState('provider_error')
       setMessages((current) => [
         ...current,
-        { id: `assistant-approval-error-${Date.now()}`, role: 'assistant', content: err instanceof Error ? err.message : t('assistant.error') },
+        { id: `assistant-approval-error-${Date.now()}`, role: 'assistant', content: describeApiError(err, t, t('assistant.error')) },
       ])
     } finally {
       approvalLock.current = false
@@ -729,7 +730,7 @@ function StepCard({ step, token, apiScope }: { step: AssistantStep; token: strin
       const loader = apiScope === 'platform' ? getPlatformAssistantContextPackageDiagnostic : getAssistantContextPackageDiagnostic
       setDiagnostic(await loader(token, contextPackageID))
     } catch (err) {
-      setDiagnosticError(err instanceof Error ? err.message : t('assistant.contextLoadFailed'))
+      setDiagnosticError(describeApiError(err, t, t('assistant.contextLoadFailed')))
     } finally {
       setLoadingDiagnostic(false)
     }

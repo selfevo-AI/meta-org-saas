@@ -109,7 +109,7 @@ import {
   setSession,
 } from '@/lib/auth'
 import type { SessionScope } from '@/lib/auth'
-import { APIError } from '@/lib/api-error'
+import { APIError, describeApiError } from '@/lib/api-error'
 import { ActionMenu, Dialog, FeedbackMessage, NavigationSearch, StatusBadge, UnsavedChangesDialog, WorkspaceInteractionProvider, lockPageScroll, useWorkspaceInteraction } from './workspace-ui'
 import { useI18n } from '@/lib/i18n'
 import { apiOperations, getOperationProfile } from '@/lib/operations'
@@ -1814,7 +1814,7 @@ function WorkspaceApplication() {
           if (!cancelled) {
             setOverviewSkills([])
             setOverviewSkillID('')
-            setOverviewControlError(err instanceof Error ? err.message : t('assistant.global.loadFailed'))
+            setOverviewControlError(describeApiError(err, t, t('assistant.global.loadFailed')))
           }
         })
         .finally(() => {
@@ -1870,7 +1870,7 @@ function WorkspaceApplication() {
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('shell.loadOverviewFailed'))
+        if (!cancelled) setError(describeApiError(err, t, t('shell.loadOverviewFailed')))
       })
 
     return () => {
@@ -1914,7 +1914,7 @@ function WorkspaceApplication() {
         })
         .catch((err) => {
           if (!cancelled) {
-            setBusinessTreeError(err instanceof Error ? err.message : t('businessTree.loadFailed'))
+            setBusinessTreeError(describeApiError(err, t, t('businessTree.loadFailed')))
             setBusinessNodesByDomain((current) => ({ ...current, [businessTreeCacheKey]: buildOperationNodes(activeDomain) }))
           }
         })
@@ -1997,7 +1997,7 @@ function WorkspaceApplication() {
       setOverview(overviewData)
       setInbox(inboxData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('shell.loadOverviewFailed'))
+      setError(describeApiError(err, t, t('shell.loadOverviewFailed')))
     } finally {
       setOverviewLoading(false)
     }
@@ -2073,7 +2073,7 @@ function WorkspaceApplication() {
         message === 'email already registered'
       const accountDisabled = err instanceof APIError && err.code === 'account_disabled'
       setError(
-        emailTaken ? t('auth.emailAlreadyRegistered') : accountDisabled ? t('auth.accountDisabled') : message || t('auth.failed'),
+        emailTaken ? t('auth.emailAlreadyRegistered') : accountDisabled ? t('auth.accountDisabled') : describeApiError(err, t, t('auth.failed')),
       )
     } finally {
       setLoading(false)
@@ -2129,7 +2129,7 @@ function WorkspaceApplication() {
       router.replace(workspacePath('tenant', nextOrgID, 'overview'))
       await loadOverview(token)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('onboarding.failed'))
+      setError(describeApiError(err, t, t('onboarding.failed')))
     } finally {
       setLoading(false)
     }
@@ -2318,7 +2318,7 @@ function WorkspaceApplication() {
       .catch((err) => {
         setSkillLibrary([])
         setSkillImportID('')
-        setOverviewControlError(err instanceof Error ? err.message : t('assistant.global.loadFailed'))
+        setOverviewControlError(describeApiError(err, t, t('assistant.global.loadFailed')))
       })
       .finally(() => setOverviewControlLoading(false))
   }
@@ -2362,7 +2362,7 @@ function WorkspaceApplication() {
       setSkillImportOpen(false)
       setOverviewControlNotice(t('overview.skillImported'))
     } catch (err) {
-      setOverviewControlError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setOverviewControlError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setOverviewControlLoading(false)
     }
@@ -2466,7 +2466,7 @@ function WorkspaceApplication() {
       }
       await loadOverview(token)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
       throw err
     } finally {
       setOverviewLoading(false)
@@ -3672,7 +3672,7 @@ function OverviewAssistantHome({
       setReviewRequest(null)
       setReviewReason('')
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setReviewError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setReviewing(false)
     }
@@ -4111,7 +4111,7 @@ function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScop
       session_id: nextSessionID,
     })
       .then(() => setNotice(t('assistant.global.skillRunCreated')))
-      .catch((err) => setError(err instanceof Error ? err.message : t('common.operationFailed')))
+      .catch((err) => setError(describeApiError(err, t, t('common.operationFailed'))))
       .finally(() => setBusy(false))
   }
 
@@ -4127,7 +4127,7 @@ function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScop
         setSelectedSkillID((current) => (skillItems.some((skill) => skill.id === current) ? current : skillItems[0]?.id || ''))
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('assistant.global.loadFailed'))
+        if (!cancelled) setError(describeApiError(err, t, t('assistant.global.loadFailed')))
       })
     return () => {
       cancelled = true
@@ -4163,7 +4163,7 @@ function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScop
       const loadProposals = apiScope === 'platform' ? listPlatformAssistantProposals : listAssistantProposals
       setProposals(await loadProposals(token, sessionID))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('assistant.global.loadFailed'))
+      setError(describeApiError(err, t, t('assistant.global.loadFailed')))
     } finally {
       setBusy(false)
     }
@@ -4185,7 +4185,7 @@ function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScop
       }
       await refreshProposals()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setBusy(false)
     }
@@ -4217,7 +4217,7 @@ function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScop
       setSkillPrompt('')
       setNotice(t('assistant.global.skillSaved'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setBusy(false)
     }
@@ -4232,7 +4232,7 @@ function GlobalBusinessInteraction({ token, apiScope }: { token: string; apiScop
       setSkills((current) => current.map((skill) => (skill.id === id ? updated : skill)))
       setNotice(t('assistant.global.skillActivated'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setBusy(false)
     }

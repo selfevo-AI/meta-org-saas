@@ -21,6 +21,7 @@ import {
   type PDCACycle,
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface MetaResourceWorkspaceProps {
   token: string
@@ -102,7 +103,7 @@ export function MetaResourceWorkspace({ token }: MetaResourceWorkspaceProps) {
       setCycleForm((current) => ({ ...current, demand_profile_id: current.demand_profile_id || demandData[0]?.id || '' }))
       setEventForm((current) => ({ ...current, cycle_id: current.cycle_id || cycleData[0]?.id || '' }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('metaresource.loadFailed'))
+      setError(describeApiError(err, t, t('metaresource.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -124,7 +125,7 @@ export function MetaResourceWorkspace({ token }: MetaResourceWorkspaceProps) {
       setNotice(t(success))
       await loadAll()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

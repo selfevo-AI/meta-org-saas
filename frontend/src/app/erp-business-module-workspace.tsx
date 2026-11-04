@@ -18,6 +18,7 @@ import { DocumentWorkbench, type WorkbenchLookupOptions } from './document-workb
 import { DocumentImportWorkspace } from './document-import-workspace'
 import { BusinessAIWorkbench } from './business-ai-workbench'
 import { FeedbackMessage, useWorkspaceInteraction } from './workspace-ui'
+import { describeApiError } from '@/lib/api-error'
 
 type ERPBusinessModule = 'project' | 'procurement' | 'sales' | 'inventory' | 'finance' | 'retail' | 'manufacturing' | 'smt_mes'
 type BusinessSelection = { targetID?: string; label?: string }
@@ -282,7 +283,7 @@ function BusinessDocument({ token, module, document, initialKey, onOpenLink }: {
           setSelectedKey((current) => current || items[0]?.key || '')
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('erp.business.loadFailed'))
+        if (!cancelled) setError(describeApiError(err, t, t('erp.business.loadFailed')))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -305,7 +306,7 @@ function BusinessDocument({ token, module, document, initialKey, onOpenLink }: {
         ])
         if (!cancelled) setDetail({ record: { ...record.data, key: record.key }, rows, history, links })
       } catch (err) {
-        if (!cancelled) { setDetail(null); setError(err instanceof Error ? err.message : t('erp.business.loadFailed')) }
+        if (!cancelled) { setDetail(null); setError(describeApiError(err, t, t('erp.business.loadFailed'))) }
       } finally {
         if (!cancelled) setDetailLoading(false)
       }
@@ -379,7 +380,7 @@ function TrialBalanceReport({ token }: { token: string }) {
   useEffect(() => {
     let cancelled = false
     getFinanceGLTrialBalance(token, filters).then((value) => { if (!cancelled) { setBalance(value); setError('') } })
-      .catch((err) => { if (!cancelled) { setBalance(null); setError(err instanceof Error ? err.message : t('erp.business.loadFailed')) } })
+      .catch((err) => { if (!cancelled) { setBalance(null); setError(describeApiError(err, t, t('erp.business.loadFailed'))) } })
       .finally(() => { if (!cancelled) setBusy(false) })
     return () => { cancelled = true }
   }, [token, filters, version, t])

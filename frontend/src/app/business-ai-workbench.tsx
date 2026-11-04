@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 import { apiRequest } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import { Dialog, FeedbackMessage } from './workspace-ui'
+import { describeApiError } from '@/lib/api-error'
 
 type BusinessAIStage = 'plan' | 'do' | 'change' | 'accept' | 'learn'
 
@@ -108,7 +109,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
         })
         const failedResult = [providerResult, modelResult, projectResult].find((result) => result.status === 'rejected')
         if (failedResult?.status === 'rejected') {
-          setError(failedResult.reason instanceof Error ? failedResult.reason.message : t('common.operationFailed'))
+          setError(describeApiError(failedResult.reason, t, t('common.operationFailed')))
         }
       })
     return () => {
@@ -134,7 +135,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
         if (!cancelled) setRuns(Array.isArray(data) ? data : [])
       })
       .catch((requestError) => {
-        if (!cancelled) setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+        if (!cancelled) setError(describeApiError(requestError, t, t('common.operationFailed')))
       })
     return () => {
       cancelled = true
@@ -162,7 +163,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
       setRuns(Array.isArray(data) ? data : [])
       setNeedsAnalysis(false)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+      setError(describeApiError(requestError, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -186,7 +187,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
       setRuns((current) => [run, ...current.filter((item) => item.id !== run.id)])
       setReviewAction(null)
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+      setError(describeApiError(requestError, t, t('common.operationFailed')))
     } finally {
       reviewLock.current = false
       setLoading(false)
@@ -205,7 +206,7 @@ export function BusinessAIWorkbench({ token, projectID }: { token: string; proje
       setReviewAction(null)
       await refreshRuns()
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : t('common.operationFailed'))
+      setError(describeApiError(requestError, t, t('common.operationFailed')))
     } finally {
       reviewLock.current = false
       setLoading(false)

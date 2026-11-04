@@ -43,6 +43,7 @@ import {
   quantity,
   type SupplyChainSelection,
 } from './supply-chain-ui'
+import { describeApiError } from '@/lib/api-error'
 
 interface ProcurementWorkspaceProps {
   token: string
@@ -188,7 +189,7 @@ export function ProcurementWorkspace({ token, currentSupplyChainFunctionID, exte
         receipt_id: current.receipt_id || receiptData[0]?.id || '',
       }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('procurement.loadFailed'))
+      setError(describeApiError(err, t, t('procurement.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -217,7 +218,7 @@ export function ProcurementWorkspace({ token, currentSupplyChainFunctionID, exte
       setNotice(t(success))
       await loadProcurement()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

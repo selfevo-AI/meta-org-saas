@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { apiRequest } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import { getOperationProfile, type ApiOperation, type OperationDangerLevel, type OperationKind } from '@/lib/operations'
+import { describeApiError } from '@/lib/api-error'
 
 interface OperationFormState {
   path: Record<string, string>
@@ -148,7 +149,7 @@ export function OperationRunner({
       })
       setResponse(result)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('operation.requestFailed'))
+      setError(describeApiError(err, t, t('operation.requestFailed')))
     } finally {
       setLoading(false)
     }

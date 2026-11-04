@@ -115,6 +115,7 @@ import {
   updatePlatformOrganizationProfile,
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface SystemAdminWorkspaceProps {
   token: string
@@ -371,7 +372,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       if (await actionReview.execute()) setActionReview(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       confirmationLock.current = false
       setConfirmingAction(false)
@@ -486,7 +487,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       setPlatformPermissions(await getPlatformPermissionProfile(token))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     }
   }, [t, token])
 
@@ -499,7 +500,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       setContextHealth(await getPlatformAssistantContextHealth(token, activeOrganizationID || undefined))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     }
   }, [activeOrganizationID, canPlatform, t, token])
 
@@ -519,7 +520,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setMonitoringStatus(status)
       setMonitoringRuns(runs)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -541,7 +542,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         current && selectableItems.some((item) => item.id === current) ? current : selectableItems[0]?.id || '',
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -554,7 +555,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       setPlatformFeatures(await listPlatformFeatures(token, '', 200))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -578,7 +579,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         return next
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -591,7 +592,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       setPlatformUsers(await listPlatformUsers(token, 100))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -604,7 +605,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       setDatabaseMaintenanceJobs(await listDatabaseMaintenanceJobs(token, 100))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -644,7 +645,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       ])))
       setInvitations(invitationItems)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -683,7 +684,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         setIndustryExtensions(extensionItems.status === 'fulfilled' ? extensionItems.value : [])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -701,7 +702,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         setDetails([])
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -714,7 +715,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
     try {
       setTargets(await listOrganizationIndustrySolutionTargets(token, 100))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+      setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -833,7 +834,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
         if (!cancelled) setDetails(items)
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('systemAdmin.loadFailed'))
+        if (!cancelled) setError(describeApiError(err, t, t('systemAdmin.loadFailed')))
       })
     return () => {
       cancelled = true
@@ -850,7 +851,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       await loadTargets()
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
       return false
     } finally {
       setLoading(false)
@@ -867,7 +868,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       await loadOrganizationSaaSDetails()
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
       return false
     } finally {
       setLoading(false)
@@ -910,7 +911,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setInvitations([])
       setNotice(t('systemAdmin.sampleTenantCreated'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -926,7 +927,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       await loadDatabaseMaintenance()
       setNotice(t('systemAdmin.privateExportReserved'))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -945,7 +946,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setNotice(t('systemAdmin.monitoringRunCreated'))
       await loadMonitoringAgent()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -1241,7 +1242,7 @@ export function SystemAdminWorkspace({ token, organizations, currentOrganization
       setNotice(t('systemAdmin.organizationClosed'))
       return true
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
       return false
     } finally {
       setLoading(false)

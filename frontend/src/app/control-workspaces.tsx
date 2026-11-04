@@ -28,6 +28,7 @@ import {
 import type { Connection, Edge, Node } from '@xyflow/react'
 import { apiRequest } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface WorkspaceProps {
   token: string
@@ -297,6 +298,7 @@ function flattenDepartmentPositions(nodes: Department[]): Position[] {
 }
 
 export function GovernanceWorkspace({ token, currentUserId }: WorkspaceProps) {
+  const { t } = useI18n()
   const [permissions, setPermissions] = useState<Permission[]>([])
   const [decisions, setDecisions] = useState<AccessDecision[]>([])
   const [permissionForm, setPermissionForm] = useState(emptyPermission)
@@ -348,7 +350,7 @@ export function GovernanceWorkspace({ token, currentUserId }: WorkspaceProps) {
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'common.operationFailed')
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -535,7 +537,7 @@ export function WeightWorkspace({ token, currentUserId }: WorkspaceProps) {
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'common.operationFailed')
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -717,7 +719,7 @@ export function CapabilityEvaluationWorkspace({ token, currentUserId }: Workspac
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'common.operationFailed')
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -862,7 +864,7 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
         setDepartmentId((current) => current || flatDepartments[0]?.id || '')
         setPositions(flattenDepartmentPositions(tree))
       })
-      .catch((err) => setError(err instanceof Error ? err.message : t('control.loadOrganizationFailed')))
+      .catch((err) => setError(describeApiError(err, t, t('control.loadOrganizationFailed'))))
 
     apiRequest<WorkflowTemplate[]>('/workflows/templates', { token })
       .then((data) => setTemplates(Array.isArray(data) ? data : []))
@@ -962,7 +964,7 @@ export function WorkflowDesignerWorkspace({ token }: WorkspaceProps) {
       setTemplates(Array.isArray(data) ? data : [])
       setMessage('control.templateCreated')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'common.operationFailed')
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
@@ -1125,7 +1127,7 @@ export function WorkflowMatchingWorkspace({ token }: WorkspaceProps) {
       await action()
       setMessage(success)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'common.operationFailed')
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

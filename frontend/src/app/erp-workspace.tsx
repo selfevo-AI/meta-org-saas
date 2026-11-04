@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Database, RefreshCw, Save } from 'lucide-react'
 import { apiRequest } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface ERPField {
   name: string
@@ -101,11 +102,11 @@ export function ERPCodeWorkspace({ token, module = 'sale' }: ERPCodeWorkspacePro
         setSelectedCode(nextCode)
         setBody(JSON.stringify(defaultPayload(nextCode), null, 2))
       })
-      .catch((error: Error) => setMessage(error.message))
+      .catch((error: Error) => setMessage(describeApiError(error, t, t('erp.loadFailed'))))
     return () => {
       cancelled = true
     }
-  }, [module, token])
+  }, [module, token, t])
 
   useEffect(() => {
     if (!selectedCode) return
@@ -121,7 +122,7 @@ export function ERPCodeWorkspace({ token, module = 'sale' }: ERPCodeWorkspacePro
       setRecords(data.records)
       setMessage('')
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('erp.loadFailed'))
+      setMessage(describeApiError(error, t, t('erp.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -138,7 +139,7 @@ export function ERPCodeWorkspace({ token, module = 'sale' }: ERPCodeWorkspacePro
       setMessage(t('erp.recordSaved'))
       await refreshRecords()
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t('erp.saveFailed'))
+      setMessage(describeApiError(error, t, t('erp.saveFailed')))
     }
   }
 

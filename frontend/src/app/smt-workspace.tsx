@@ -43,6 +43,7 @@ import {
   updateSMTSettings,
 } from '@/lib/api'
 import type { ERPActionResult, SMTEdgeEvent, SMTEdgeInstance, SMTMachineContext } from '@/lib/api'
+import { describeApiError } from '@/lib/api-error'
 import { useI18n } from '@/lib/i18n'
 import { smtBeep, smtSpeak } from '@/lib/smt-feedback'
 import { FeedbackMessage } from './workspace-ui'
@@ -97,7 +98,8 @@ function smtKey(prefix: string): string {
   return `${prefix}-${stamp}-${Math.floor(Math.random() * 9000 + 1000)}`
 }
 
-function smtErrorText(error: unknown): string {
+function smtErrorText(error: unknown, t?: (key: string) => string): string {
+  if (t) return describeApiError(error, t)
   if (error instanceof Error && error.message) return error.message
   return String(error)
 }
@@ -212,6 +214,7 @@ function useSMTFeedback() {
 }
 
 function useSMTResource<T>(loader: () => Promise<T>, deps: DependencyList, enabled = true) {
+  const { t } = useI18n()
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -227,7 +230,7 @@ function useSMTResource<T>(loader: () => Promise<T>, deps: DependencyList, enabl
           if (!cancelled) setData(result)
         })
         .catch((err: unknown) => {
-          if (!cancelled) setError(smtErrorText(err))
+          if (!cancelled) setError(smtErrorText(err, t))
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -328,10 +331,10 @@ function SMTStationTab({ token }: { token: string }) {
         setContextError('')
       } catch (err) {
         setContext(null)
-        setContextError(smtErrorText(err))
+        setContextError(smtErrorText(err, t))
       }
     },
-    [token],
+    [token, t],
   )
 
   const reloadAlerts = useCallback(async () => {
@@ -412,7 +415,7 @@ function SMTStationTab({ token }: { token: string }) {
         await reloadContext(machineCode)
         await reloadAlerts()
       } catch (err) {
-        notify('ERROR', smtErrorText(err))
+        notify('ERROR', smtErrorText(err, t))
       } finally {
         setBusy(false)
       }
@@ -432,7 +435,7 @@ function SMTStationTab({ token }: { token: string }) {
         applyResult(result)
         await reloadContext(machineCode)
       } catch (err) {
-        notify('ERROR', smtErrorText(err))
+        notify('ERROR', smtErrorText(err, t))
       } finally {
         setBusy(false)
       }
@@ -449,12 +452,12 @@ function SMTStationTab({ token }: { token: string }) {
         applyResult(result)
         await reloadContext(machineCode)
       } catch (err) {
-        notify('ERROR', smtErrorText(err))
+        notify('ERROR', smtErrorText(err, t))
       } finally {
         setBusy(false)
       }
     },
-    [applyResult, machineCode, notify, reloadContext, token],
+    [applyResult, machineCode, notify, reloadContext, token, t],
   )
 
   const unload = useCallback(async () => {
@@ -473,11 +476,11 @@ function SMTStationTab({ token }: { token: string }) {
       setUnloadQty('')
       await reloadContext(machineCode)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
-  }, [applyResult, machineCode, notify, reloadContext, token, unloadDisposition, unloadQty, unloadReason, unloadTarget])
+  }, [applyResult, machineCode, notify, reloadContext, token, unloadDisposition, unloadQty, unloadReason, unloadTarget, t])
 
   const reportProgress = useCallback(async () => {
     const workOrder = context?.work_order
@@ -489,11 +492,11 @@ function SMTStationTab({ token }: { token: string }) {
       await reloadContext(machineCode)
       await reloadAlerts()
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
-  }, [applyResult, context?.work_order, machineCode, notify, progressQty, reloadAlerts, reloadContext, token])
+  }, [applyResult, context?.work_order, machineCode, notify, progressQty, reloadAlerts, reloadContext, token, t])
 
   const slots = objectList(context?.slots)
   const summary: Record<string, number> = context?.summary ?? {}
@@ -918,10 +921,10 @@ function SMTUnitsTab({ token }: { token: string }) {
         setHistoryError('')
       } catch (err) {
         setHistory(null)
-        setHistoryError(smtErrorText(err))
+        setHistoryError(smtErrorText(err, t))
       }
     },
-    [token],
+    [token, t],
   )
 
   const runUnitAction = useCallback(
@@ -952,7 +955,7 @@ function SMTUnitsTab({ token }: { token: string }) {
         }
         await loadHistory(target)
       } catch (err) {
-        notify('ERROR', smtErrorText(err))
+        notify('ERROR', smtErrorText(err, t))
       } finally {
         setBusy(false)
       }
@@ -973,7 +976,7 @@ function SMTUnitsTab({ token }: { token: string }) {
       const status = result.status.toUpperCase()
       notify(status === 'OK' || status === '' ? 'OK' : 'ERROR', t('common.save'))
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -989,7 +992,7 @@ function SMTUnitsTab({ token }: { token: string }) {
       setPanelCode('')
       setPanelUnits('')
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -1252,7 +1255,7 @@ function SMTQualityTab({ token }: { token: string }) {
         setRootCause('')
         setVersion((value) => value + 1)
       } catch (err) {
-        notify('ERROR', smtErrorText(err))
+        notify('ERROR', smtErrorText(err, t))
       } finally {
         setBusy(false)
       }
@@ -1274,7 +1277,7 @@ function SMTQualityTab({ token }: { token: string }) {
       setInspSample('')
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -1514,7 +1517,7 @@ function SMTAndonTab({ token }: { token: string }) {
       setDescription('')
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -1530,7 +1533,7 @@ function SMTAndonTab({ token }: { token: string }) {
         setSolution('')
         setVersion((value) => value + 1)
       } catch (err) {
-        notify('ERROR', smtErrorText(err))
+        notify('ERROR', smtErrorText(err, t))
       } finally {
         setBusy(false)
       }
@@ -1953,11 +1956,11 @@ function SMTTraceTab({ token }: { token: string }) {
       setSnResult(await getSMTTraceSN(token, sn))
     } catch (err) {
       setSnResult(null)
-      setError(smtErrorText(err))
+      setError(smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
-  }, [snInput, token])
+  }, [snInput, token, t])
 
   const queryReel = useCallback(async () => {
     const reel = reelInput.trim()
@@ -1968,11 +1971,11 @@ function SMTTraceTab({ token }: { token: string }) {
       setReelResult(await getSMTReelUnits(token, reel))
     } catch (err) {
       setReelResult(null)
-      setError(smtErrorText(err))
+      setError(smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
-  }, [reelInput, token])
+  }, [reelInput, token, t])
 
   const unit = (snResult?.unit ?? null) as Record<string, unknown> | null
   const events = objectList(snResult?.events)
@@ -2594,7 +2597,7 @@ function SMTSettingsTab({ token }: { token: string }) {
       setDraft({})
       settings.reload()
     } catch (err) {
-      setError(smtErrorText(err))
+      setError(smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -2701,7 +2704,7 @@ function SMTEdgesTab({ token }: { token: string }) {
       setApiKey('')
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -2714,11 +2717,11 @@ function SMTEdgesTab({ token }: { token: string }) {
       await updateSMTEdge(token, current.instance_key, { status: current.status === 'active' ? 'disabled' : 'active' })
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
-  }, [current, notify, token])
+  }, [current, notify, token, t])
 
   const removeInstance = useCallback(async () => {
     if (!current) return
@@ -2728,11 +2731,11 @@ function SMTEdgesTab({ token }: { token: string }) {
       setSelected('')
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
-  }, [current, notify, token])
+  }, [current, notify, token, t])
 
   const runPush = useCallback(async () => {
     if (!current) return
@@ -2747,7 +2750,7 @@ function SMTEdgesTab({ token }: { token: string }) {
       notify('OK', summary || t('common.save'))
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }
@@ -2761,7 +2764,7 @@ function SMTEdgesTab({ token }: { token: string }) {
       notify('OK', `${t('smt.edges.pulled')} · ${fieldText(result, 'processed', 'received') || 0}`)
       setVersion((value) => value + 1)
     } catch (err) {
-      notify('ERROR', smtErrorText(err))
+      notify('ERROR', smtErrorText(err, t))
     } finally {
       setBusy(false)
     }

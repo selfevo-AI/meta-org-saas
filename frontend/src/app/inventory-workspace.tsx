@@ -43,6 +43,7 @@ import {
   quantity,
   type SupplyChainSelection,
 } from './supply-chain-ui'
+import { describeApiError } from '@/lib/api-error'
 
 interface InventoryWorkspaceProps {
   token: string
@@ -188,7 +189,7 @@ export function InventoryWorkspace({ token, currentSupplyChainFunctionID, extern
       setAdjustmentForm((current) => ({ ...current, item_id: current.item_id || itemData[0]?.id || '', warehouse_id: current.warehouse_id || warehouseData[0]?.id || '' }))
       setCountForm((current) => ({ ...current, item_id: current.item_id || itemData[0]?.id || '', warehouse_id: current.warehouse_id || warehouseData[0]?.id || '' }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('inventory.loadFailed'))
+      setError(describeApiError(err, t, t('inventory.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -217,7 +218,7 @@ export function InventoryWorkspace({ token, currentSupplyChainFunctionID, extern
       setNotice(t(success))
       await loadInventory()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

@@ -51,6 +51,7 @@ import {
   type ToolExecution,
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface DeveloperToolsWorkspaceProps {
   token: string
@@ -294,7 +295,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       }))
       setBalanceForm((current) => ({ ...current, organization_id: current.organization_id || organizationID || '' }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('developer.loadFailed'))
+      setError(describeApiError(err, t, t('developer.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -316,7 +317,7 @@ export function DeveloperToolsWorkspace({ token, apiScope = 'tenant' }: Develope
       setNotice(t(success))
       await loadAll()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

@@ -41,6 +41,7 @@ import {
   quantity,
   type SupplyChainSelection,
 } from './supply-chain-ui'
+import { describeApiError } from '@/lib/api-error'
 
 interface SalesWorkspaceProps {
   token: string
@@ -188,7 +189,7 @@ export function SalesWorkspace({ token, currentSupplyChainFunctionID, externalSe
         shipment_id: current.shipment_id || shipmentData[0]?.id || '',
       }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('sales.loadFailed'))
+      setError(describeApiError(err, t, t('sales.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -217,7 +218,7 @@ export function SalesWorkspace({ token, currentSupplyChainFunctionID, externalSe
       setNotice(t(success))
       await loadSales()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

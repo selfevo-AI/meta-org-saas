@@ -34,6 +34,7 @@ import {
   type ExchangeRateVersion,
 } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface CostingWorkspaceProps {
   token: string
@@ -154,7 +155,7 @@ export function CostingWorkspace({ token }: CostingWorkspaceProps) {
       setLedgerEntries(ledgerData)
       setSummary(summaryData)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('costing.loadFailed'))
+      setError(describeApiError(err, t, t('costing.loadFailed')))
     } finally {
       setLoading(false)
     }
@@ -176,7 +177,7 @@ export function CostingWorkspace({ token }: CostingWorkspaceProps) {
       setNotice(t(success))
       await loadCosting()
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }

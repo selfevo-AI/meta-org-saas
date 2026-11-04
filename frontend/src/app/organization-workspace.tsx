@@ -17,6 +17,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { apiRequest, type AIAgent, type MetaResource } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { describeApiError } from '@/lib/api-error'
 
 interface OrganizationWorkspaceProps {
   token: string
@@ -350,7 +351,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('org.loadOrganizationFailed'))
+        if (!cancelled) setError(describeApiError(err, t, t('org.loadOrganizationFailed')))
       })
 
     apiRequest<ExternalMember[]>('/external-members?limit=100', { token })
@@ -407,7 +408,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
         }
       })
       .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : t('org.loadDepartmentsFailed'))
+        if (!cancelled) setError(describeApiError(err, t, t('org.loadDepartmentsFailed')))
       })
 
     apiRequest<OrganizationMembership[]>(`/organizations/${selectedOrgId}/members`, { token })
@@ -509,7 +510,7 @@ export function OrganizationWorkspace({ token, currentUserId, currentOrganizatio
       await action()
       setMessage(t(success))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.operationFailed'))
+      setError(describeApiError(err, t, t('common.operationFailed')))
     } finally {
       setLoading(false)
     }
