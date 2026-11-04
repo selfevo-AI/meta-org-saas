@@ -55,6 +55,7 @@ Physical tenant databases use their own tenant migration directory:
 9. `tenant/009_ontology_document_imports.sql`
 10. `tenant/010_migration_line_endings.sql`
 11. `tenant/011_smt_mes_solution.sql`
+12. `tenant/012_tenant_audit_events.sql`
 
 The tenant baseline creates tenant-local projections for platform-owned actors,
 organizations, departments, memberships, workflow metadata, module snapshots,
@@ -649,6 +650,12 @@ dedicated tenant database owns the same shop-floor tables without cross-database
 foreign keys. Both files are additive and idempotent; they do not edit or accept
 drift for any earlier baseline. See `docs/SMT-MES-SOLUTION.md` for the action
 catalog, edge bridge contract, and verification steps.
+
+`012_tenant_audit_events.sql` owns the tenant audit trail: a per-tenant
+`audit_events` table (actor, action, entity, organization, JSONB detail) written
+by `internal/pkg/auditlog.Record` from governance-relevant mutations in the
+workflow, project, costing, and finance domains. It is additive and idempotent
+and does not edit or accept drift for any earlier baseline.
 
 `038_users_session_version.sql` owns JWT session revocation. It adds
 `users.session_version` (platform database only) and accepts checksum drift for

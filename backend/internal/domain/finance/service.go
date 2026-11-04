@@ -14,6 +14,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/observability"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
+	"log/slog"
+
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/auditlog"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/safeurl"
 )
@@ -25,6 +28,7 @@ var (
 )
 
 type Repository interface {
+	Audit(ctx context.Context, event auditlog.Event) error
 	CreateAdapter(ctx context.Context, input CreateAdapterInput) (*FinanceAdapter, error)
 	ListAdapters(ctx context.Context, limit int) ([]FinanceAdapter, error)
 	UpdateAdapter(ctx context.Context, id uuid.UUID, input UpdateAdapterInput) (*FinanceAdapter, error)
@@ -155,7 +159,20 @@ func (s *Service) CreateAdapter(ctx context.Context, input CreateAdapterInput) (
 	if !validAdapterStatus(input.Status) {
 		return nil, fmt.Errorf("%w: unsupported adapter status %q", ErrValidation, input.Status)
 	}
-	return s.repo.CreateAdapter(ctx, input)
+	adapter, err := s.repo.CreateAdapter(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "finance.adapter_created", "finance_adapter", adapter.ID.String(), map[string]any{"name": adapter.Name, "auth_type": adapter.AuthType})
+	return adapter, nil
+}
+
+// audit records a governance event on the tenant trail; a failed audit write
+// is logged but never fails the mutation that already committed.
+func (s *Service) audit(ctx context.Context, action, entityType, entityKey string, detail map[string]any) {
+	if err := s.repo.Audit(ctx, auditlog.Event{Action: action, EntityType: entityType, EntityKey: entityKey, Detail: detail}); err != nil {
+		slog.Error("audit event failed", "action", action, "entity_type", entityType, "entity_key", entityKey, "error", err)
+	}
 }
 
 func (s *Service) ListAdapters(ctx context.Context, limit int) ([]FinanceAdapter, error) {
@@ -184,7 +201,12 @@ func (s *Service) UpdateAdapter(ctx context.Context, id uuid.UUID, input UpdateA
 	if input.Status != nil && !validAdapterStatus(*input.Status) {
 		return nil, fmt.Errorf("%w: unsupported adapter status %q", ErrValidation, *input.Status)
 	}
-	return s.repo.UpdateAdapter(ctx, id, input)
+	adapter, err := s.repo.UpdateAdapter(ctx, id, input)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "finance.adapter_updated", "finance_adapter", id.String(), nil)
+	return adapter, nil
 }
 
 func (s *Service) TestAdapter(ctx context.Context, id uuid.UUID) error {
@@ -363,6 +385,7 @@ func (s *Service) SubmitExportBatch(ctx context.Context, id uuid.UUID) (*ExportB
 	} else {
 		s.completeObservationTrace(ctx, trace, observability.TraceComplete)
 	}
+	s.audit(ctx, "finance.export_batch_submitted", "finance_export_batch", updated.ID.String(), map[string]any{"status": string(updated.Status), "currency": updated.Currency, "total_amount": updated.TotalAmount})
 	return updated, nil
 }
 

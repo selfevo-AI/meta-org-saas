@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/auditlog"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
@@ -47,7 +49,20 @@ func (s *Service) CreateTemplate(ctx context.Context, input CreateWorkflowInput)
 	for i := range input.Stages {
 		normalizeStage(&input.Stages[i])
 	}
-	return s.repo.CreateTemplate(ctx, input)
+	template, err := s.repo.CreateTemplate(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "workflow.template_created", "workflow_template", template.ID.String(), map[string]any{"name": template.Name})
+	return template, nil
+}
+
+// audit records a governance event on the tenant trail; a failed audit write
+// is logged but never fails the mutation that already committed.
+func (s *Service) audit(ctx context.Context, action, entityType, entityKey string, detail map[string]any) {
+	if err := s.repo.Audit(ctx, auditlog.Event{Action: action, EntityType: entityType, EntityKey: entityKey, Detail: detail}); err != nil {
+		slog.Error("audit event failed", "action", action, "entity_type", entityType, "entity_key", entityKey, "error", err)
+	}
 }
 
 func (s *Service) GetTemplate(ctx context.Context, id uuid.UUID) (*WorkflowTemplate, error) {
@@ -113,7 +128,11 @@ func (s *Service) UpdateWorkflowStatus(ctx context.Context, id uuid.UUID, status
 	if _, err := s.ensureWorkflowAccess(ctx, id); err != nil {
 		return err
 	}
-	return s.repo.UpdateInstanceStatus(ctx, id, status)
+	if err := s.repo.UpdateInstanceStatus(ctx, id, status); err != nil {
+		return err
+	}
+	s.audit(ctx, "workflow.status_updated", "workflow_instance", id.String(), map[string]any{"status": string(status)})
+	return nil
 }
 
 func (s *Service) CompleteTask(ctx context.Context, taskID uuid.UUID, output map[string]any) error {
@@ -123,7 +142,11 @@ func (s *Service) CompleteTask(ctx context.Context, taskID uuid.UUID, output map
 	if _, _, err := s.ensureTaskAccess(ctx, taskID); err != nil {
 		return err
 	}
-	return s.repo.CompleteTaskWithWorkflowProgress(ctx, taskID, output)
+	if err := s.repo.CompleteTaskWithWorkflowProgress(ctx, taskID, output); err != nil {
+		return err
+	}
+	s.audit(ctx, "workflow.task_completed", "workflow_task", taskID.String(), nil)
+	return nil
 }
 
 func (s *Service) CreateTaskMatrixAssignment(ctx context.Context, taskID uuid.UUID, input CreateTaskMatrixAssignmentInput) (*TaskMatrixAssignment, error) {
@@ -205,7 +228,12 @@ func (s *Service) RecordDecision(ctx context.Context, taskID uuid.UUID, decision
 		Reasoning:       reasoning,
 		Outcome:         outcome,
 	}
-	return s.repo.RecordDecision(ctx, d)
+	decision, err := s.repo.RecordDecision(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "workflow.decision_recorded", "workflow_decision", decision.ID.String(), map[string]any{"task_id": taskID.String(), "outcome": outcome, "maker_type": makerType})
+	return decision, nil
 }
 
 func (s *Service) GetContext(ctx context.Context, workflowID uuid.UUID) (*WorkflowContext, error) {

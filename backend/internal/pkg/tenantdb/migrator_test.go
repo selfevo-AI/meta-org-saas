@@ -83,8 +83,8 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 		t.Fatalf("LoadTenantMigrationFiles(repo tenant migrations) error = %v", err)
 	}
 
-	if len(files) != 11 {
-		t.Fatalf("tenant migration file count = %d, want 11", len(files))
+	if len(files) != 12 {
+		t.Fatalf("tenant migration file count = %d, want 12", len(files))
 	}
 	sql := files[0].SQL
 	for _, snippet := range []string{
@@ -182,6 +182,9 @@ func TestRepositoryTenantBusinessBaselineDeclaresPhysicalTenantRuntime(t *testin
 	}
 	if files[10].Filename != "011_smt_mes_solution.sql" || !strings.Contains(files[10].SQL, "tenantdb:include ../036_smt_mes_solution.sql") {
 		t.Fatalf("SMT MES tenant migration must expand the shared platform solution migration: %#v", files[10])
+	}
+	if files[11].Filename != "012_tenant_audit_events.sql" || !strings.Contains(files[11].SQL, "CREATE TABLE IF NOT EXISTS audit_events") {
+		t.Fatalf("tenant audit trail migration must create the audit_events table: %#v", files[11])
 	}
 }
 

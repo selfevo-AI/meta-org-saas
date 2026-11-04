@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"log/slog"
+
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/auditlog"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/middleware"
 )
 
@@ -51,7 +54,20 @@ func (s *Service) VoidCurrency(ctx context.Context, code string) (*Currency, err
 	if code == "" {
 		return nil, fmt.Errorf("%w: code is required", ErrValidation)
 	}
-	return s.repo.VoidCurrency(ctx, code)
+	currency, err := s.repo.VoidCurrency(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "costing.currency_voided", "currency", code, nil)
+	return currency, nil
+}
+
+// audit records a governance event on the tenant trail; a failed audit write
+// is logged but never fails the mutation that already committed.
+func (s *Service) audit(ctx context.Context, action, entityType, entityKey string, detail map[string]any) {
+	if err := s.repo.Audit(ctx, auditlog.Event{Action: action, EntityType: entityType, EntityKey: entityKey, Detail: detail}); err != nil {
+		slog.Error("audit event failed", "action", action, "entity_type", entityType, "entity_key", entityKey, "error", err)
+	}
 }
 
 func (s *Service) CreateExchangeRate(ctx context.Context, input CreateExchangeRateInput) (*ExchangeRateVersion, error) {
@@ -95,7 +111,12 @@ func (s *Service) VoidExchangeRate(ctx context.Context, id string) (*ExchangeRat
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid rate id", ErrValidation)
 	}
-	return s.repo.VoidExchangeRate(ctx, rateID)
+	rate, err := s.repo.VoidExchangeRate(ctx, rateID)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "costing.exchange_rate_voided", "exchange_rate", rateID.String(), nil)
+	return rate, nil
 }
 
 func (s *Service) Convert(ctx context.Context, input ConvertInput) (*ConversionResult, error) {
@@ -175,7 +196,12 @@ func (s *Service) VoidRateCard(ctx context.Context, id string) (*CostRateCard, e
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid rate card id", ErrValidation)
 	}
-	return s.repo.VoidRateCard(ctx, cardID)
+	card, err := s.repo.VoidRateCard(ctx, cardID)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "costing.rate_card_voided", "cost_rate_card", cardID.String(), nil)
+	return card, nil
 }
 
 func (s *Service) CreateBudget(ctx context.Context, input CreateBudgetInput) (*CostBudget, error) {
@@ -200,7 +226,12 @@ func (s *Service) CreateBudget(ctx context.Context, input CreateBudgetInput) (*C
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.CreateBudget(ctx, input, conversion)
+	budget, err := s.repo.CreateBudget(ctx, input, conversion)
+	if err != nil {
+		return nil, err
+	}
+	s.audit(ctx, "costing.budget_created", "cost_budget", budget.ID.String(), map[string]any{"scope_type": input.ScopeType, "amount": input.Amount, "currency": input.Currency})
+	return budget, nil
 }
 
 func (s *Service) ListBudgets(ctx context.Context, limit int) ([]CostBudget, error) {

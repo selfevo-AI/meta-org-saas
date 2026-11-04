@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/auditlog"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -26,6 +27,11 @@ type PostgresRepository struct {
 
 func NewRepository(db tenantdb.DB, box secretBox) *PostgresRepository {
 	return &PostgresRepository{db: db, box: box}
+}
+
+// Audit appends a governance audit event to the tenant trail.
+func (r *PostgresRepository) Audit(ctx context.Context, event auditlog.Event) error {
+	return auditlog.Record(ctx, r.db, event)
 }
 
 func (r *PostgresRepository) CreateAdapter(ctx context.Context, input CreateAdapterInput) (*FinanceAdapter, error) {

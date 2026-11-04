@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/project"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/auditlog"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/safeurl"
 )
 
@@ -208,6 +209,10 @@ type fakeRepository struct {
 	glAccounts                          map[string]GLAccount
 	glCostCenters                       map[string]GLCostCenter
 	glJournalEntries                    map[uuid.UUID]GLJournalEntry
+}
+
+func (f *fakeRepository) Audit(context.Context, auditlog.Event) error {
+	return nil
 }
 
 func (f *fakeRepository) CreateAdapter(context.Context, CreateAdapterInput) (*FinanceAdapter, error) {

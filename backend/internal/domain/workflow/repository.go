@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/auditlog"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
@@ -16,6 +17,11 @@ type Repository struct {
 
 func NewRepository(db tenantdb.DB) *Repository {
 	return &Repository{db: db}
+}
+
+// Audit appends a governance audit event to the tenant trail.
+func (r *Repository) Audit(ctx context.Context, event auditlog.Event) error {
+	return auditlog.Record(ctx, r.db, event)
 }
 
 func (r *Repository) CreateTemplate(ctx context.Context, input CreateWorkflowInput) (*WorkflowTemplate, error) {
