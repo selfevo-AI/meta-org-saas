@@ -8,21 +8,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 )
 
 type Handler struct {
-	repo      *Repository
-	router    *Router
-	evolution *evolution.Service
+	service *Service
 }
 
-func NewHandler(repo *Repository, router *Router, evo ...*evolution.Service) *Handler {
-	h := &Handler{repo: repo, router: router}
-	if len(evo) > 0 {
-		h.evolution = evo[0]
-	}
-	return h
+func NewHandler(service *Service) *Handler {
+	return &Handler{service: service}
 }
 
 func (h *Handler) RegisterRoutes(r chi.Router) {
@@ -44,7 +37,7 @@ func (h *Handler) createCapability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	cap, err := h.repo.CreateCapability(r.Context(), input)
+	cap, err := h.service.CreateCapability(r.Context(), input)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -53,7 +46,7 @@ func (h *Handler) createCapability(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listCapabilities(w http.ResponseWriter, r *http.Request) {
-	caps, err := h.repo.ListCapabilities(r.Context())
+	caps, err := h.service.ListCapabilities(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -67,7 +60,7 @@ func (h *Handler) getCapability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
-	cap, err := h.repo.GetCapabilityByID(r.Context(), id)
+	cap, err := h.service.GetCapabilityByID(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "capability not found"})
 		return
@@ -81,7 +74,7 @@ func (h *Handler) matchCapability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	results, err := h.router.MatchTask(r.Context(), req)
+	results, err := h.service.MatchTask(r.Context(), req)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -105,41 +98,17 @@ func (h *Handler) createEvaluation(w http.ResponseWriter, r *http.Request) {
 	if input.Evidence == nil {
 		input.Evidence = map[string]any{}
 	}
-	normalizeEvaluationScores(&input)
-	overall := evaluationOverall(input)
-	eval, err := h.repo.CreateCapabilityEvaluation(r.Context(), input, overall)
+	eval, err := h.service.CreateEvaluation(r.Context(), input)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
-	}
-	if h.evolution != nil && eval.ActorID != nil && eval.ActorType != "" {
-		riskLevel := "medium"
-		if raw, ok := eval.Evidence["risk_level"].(string); ok && raw != "" {
-			riskLevel = raw
-		}
-		_, _ = h.evolution.RecordContextOutcome(r.Context(), evolution.ContextOutcomeInput{
-			ActorID:      *eval.ActorID,
-			ActorType:    eval.ActorType,
-			OutcomeScore: eval.OverallScore,
-			Scope: evolution.ContextWeightScope{
-				CapabilityID: eval.CapabilityID,
-				TaskType:     "capability_evaluation",
-				RiskLevel:    riskLevel,
-				Context: map[string]any{
-					"evaluation_id":  eval.ID.String(),
-					"workflow_id":    uuidString(eval.WorkflowID),
-					"task_id":        uuidString(eval.TaskID),
-					"evaluator_type": eval.EvaluatorType,
-				},
-			},
-		})
 	}
 	writeJSON(w, http.StatusCreated, eval)
 }
 
 func (h *Handler) listEvaluations(w http.ResponseWriter, r *http.Request) {
 	limit := evaluationLimit(r)
-	evaluations, err := h.repo.ListCapabilityEvaluations(r.Context(), nil, limit)
+	evaluations, err := h.service.ListEvaluations(r.Context(), nil, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -154,7 +123,7 @@ func (h *Handler) listCapabilityEvaluations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	limit := evaluationLimit(r)
-	evaluations, err := h.repo.ListCapabilityEvaluations(r.Context(), &id, limit)
+	evaluations, err := h.service.ListEvaluations(r.Context(), &id, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -168,7 +137,7 @@ func (h *Handler) bindCapability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
-	binding, err := h.repo.BindCapability(r.Context(), input)
+	binding, err := h.service.BindCapability(r.Context(), input)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -182,7 +151,7 @@ func (h *Handler) unbindCapability(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
 		return
 	}
-	if err := h.repo.UnbindCapability(r.Context(), id); err != nil {
+	if err := h.service.UnbindCapability(r.Context(), id); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
@@ -200,7 +169,7 @@ func (h *Handler) listBindings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid mvru_id"})
 		return
 	}
-	bindings, err := h.repo.ListBoundCapabilities(r.Context(), mvruID)
+	bindings, err := h.service.ListBoundCapabilities(r.Context(), mvruID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -216,34 +185,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
-func normalizeEvaluationScores(input *CreateCapabilityEvaluationInput) {
-	input.QualityScore = clampScore(input.QualityScore)
-	input.ReliabilityScore = clampScore(input.ReliabilityScore)
-	input.CostScore = clampScore(input.CostScore)
-	input.LatencyScore = clampScore(input.LatencyScore)
-	input.RiskScore = clampScore(input.RiskScore)
-	input.ComplianceScore = clampScore(input.ComplianceScore)
-}
-
-func evaluationOverall(input CreateCapabilityEvaluationInput) float64 {
-	return (input.QualityScore*0.25 +
-		input.ReliabilityScore*0.20 +
-		input.CostScore*0.10 +
-		input.LatencyScore*0.10 +
-		input.RiskScore*0.15 +
-		input.ComplianceScore*0.20)
-}
-
-func clampScore(score float64) float64 {
-	if score < 0 {
-		return 0
-	}
-	if score > 1 {
-		return 1
-	}
-	return score
-}
-
 func evaluationLimit(r *http.Request) int {
 	limit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -252,11 +193,4 @@ func evaluationLimit(r *http.Request) int {
 		}
 	}
 	return limit
-}
-
-func uuidString(id *uuid.UUID) string {
-	if id == nil {
-		return ""
-	}
-	return id.String()
 }

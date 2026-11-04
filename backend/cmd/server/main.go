@@ -292,7 +292,8 @@ func main() {
 
 	capRepo := capability.NewRepository(db)
 	capRouter := capability.NewRouter(capRepo)
-	capHandler := capability.NewHandler(capRepo, capRouter, evoSvc)
+	capService := capability.NewService(capRepo, capRouter, evoSvc)
+	capHandler := capability.NewHandler(capService)
 
 	costRepo := costing.NewRepository(tenantBusinessDB)
 	costSvc := costing.NewService(costRepo)

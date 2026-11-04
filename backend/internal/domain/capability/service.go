@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/evolution"
 )
 
 var (
@@ -26,6 +27,124 @@ type Router struct {
 
 func NewRouter(repo *Repository) *Router {
 	return &Router{repo: repo}
+}
+
+// Service owns the capability business rules and the evaluation write path;
+// handlers only translate HTTP.
+type Service struct {
+	repo      *Repository
+	router    *Router
+	evolution *evolution.Service
+}
+
+func NewService(repo *Repository, router *Router, evolutionService *evolution.Service) *Service {
+	return &Service{repo: repo, router: router, evolution: evolutionService}
+}
+
+func (s *Service) CreateCapability(ctx context.Context, input CreateCapabilityInput) (*Capability, error) {
+	return s.repo.CreateCapability(ctx, input)
+}
+
+func (s *Service) ListCapabilities(ctx context.Context) ([]Capability, error) {
+	return s.repo.ListCapabilities(ctx)
+}
+
+func (s *Service) GetCapabilityByID(ctx context.Context, id uuid.UUID) (*Capability, error) {
+	return s.repo.GetCapabilityByID(ctx, id)
+}
+
+func (s *Service) MatchTask(ctx context.Context, req MatchRequest) ([]RankedCapability, error) {
+	return s.router.MatchTask(ctx, req)
+}
+
+// CreateEvaluation normalizes the scores, stores the evaluation, and — when the
+// evaluated actor is known — feeds the outcome back into the evolution
+// context-weight model so capability quality influences future routing.
+func (s *Service) CreateEvaluation(ctx context.Context, input CreateCapabilityEvaluationInput) (*CapabilityEvaluation, error) {
+	normalizeEvaluationScores(&input)
+	eval, err := s.repo.CreateCapabilityEvaluation(ctx, input, evaluationOverall(input))
+	if err != nil {
+		return nil, err
+	}
+	s.recordEvolutionOutcome(ctx, eval)
+	return eval, nil
+}
+
+func (s *Service) recordEvolutionOutcome(ctx context.Context, eval *CapabilityEvaluation) {
+	if s.evolution == nil || eval.ActorID == nil || eval.ActorType == "" {
+		return
+	}
+	riskLevel := "medium"
+	if raw, ok := eval.Evidence["risk_level"].(string); ok && raw != "" {
+		riskLevel = raw
+	}
+	_, _ = s.evolution.RecordContextOutcome(ctx, evolution.ContextOutcomeInput{
+		ActorID:      *eval.ActorID,
+		ActorType:    eval.ActorType,
+		OutcomeScore: eval.OverallScore,
+		Scope: evolution.ContextWeightScope{
+			CapabilityID: eval.CapabilityID,
+			TaskType:     "capability_evaluation",
+			RiskLevel:    riskLevel,
+			Context: map[string]any{
+				"evaluation_id":  eval.ID.String(),
+				"workflow_id":    uuidString(eval.WorkflowID),
+				"task_id":        uuidString(eval.TaskID),
+				"evaluator_type": eval.EvaluatorType,
+			},
+		},
+	})
+}
+
+func (s *Service) ListEvaluations(ctx context.Context, capabilityID *uuid.UUID, limit int) ([]CapabilityEvaluation, error) {
+	return s.repo.ListCapabilityEvaluations(ctx, capabilityID, limit)
+}
+
+func (s *Service) BindCapability(ctx context.Context, input BindCapabilityInput) (*CapabilityBinding, error) {
+	return s.repo.BindCapability(ctx, input)
+}
+
+func (s *Service) UnbindCapability(ctx context.Context, id uuid.UUID) error {
+	return s.repo.UnbindCapability(ctx, id)
+}
+
+func (s *Service) ListBoundCapabilities(ctx context.Context, mvruID uuid.UUID) ([]CapabilityBinding, error) {
+	return s.repo.ListBoundCapabilities(ctx, mvruID)
+}
+
+func normalizeEvaluationScores(input *CreateCapabilityEvaluationInput) {
+	input.QualityScore = clampScore(input.QualityScore)
+	input.ReliabilityScore = clampScore(input.ReliabilityScore)
+	input.CostScore = clampScore(input.CostScore)
+	input.LatencyScore = clampScore(input.LatencyScore)
+	input.RiskScore = clampScore(input.RiskScore)
+	input.ComplianceScore = clampScore(input.ComplianceScore)
+}
+
+func evaluationOverall(input CreateCapabilityEvaluationInput) float64 {
+	return (input.QualityScore*0.25 +
+		input.ReliabilityScore*0.20 +
+		input.CostScore*0.10 +
+		input.LatencyScore*0.10 +
+		input.RiskScore*0.15 +
+		input.ComplianceScore*0.20)
+}
+
+func clampScore(score float64) float64 {
+	if score < 0 {
+		return 0
+	}
+	if score > 1 {
+		return 1
+	}
+	return score
+}
+
+func uuidString(id *uuid.UUID) string {
+	if id == nil {
+		return ""
+	}
+	return id.String()
 }
 
 type MatchRequest struct {

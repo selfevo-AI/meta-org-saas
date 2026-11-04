@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/ontology"
@@ -141,7 +142,7 @@ func (s *Service) Recognize(ctx context.Context, id uuid.UUID, version int) (*Im
 	}
 	var started *Import
 	token := uuid.New()
-	err = s.repo.Transact(ctx, func(repo Repository, _ erp.Repository) error {
+	err = s.repo.Transact(ctx, func(repo Repository, _ pgx.Tx) error {
 		item, err := repo.Get(ctx, id)
 		if err != nil {
 			return err
@@ -186,7 +187,7 @@ func (s *Service) Recognize(ctx context.Context, id uuid.UUID, version int) (*Im
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer finishCancel()
 	var result *Import
-	err = s.repo.Transact(finishCtx, func(repo Repository, _ erp.Repository) error {
+	err = s.repo.Transact(finishCtx, func(repo Repository, _ pgx.Tx) error {
 		item, err := repo.Get(finishCtx, id)
 		if err != nil {
 			return err
@@ -228,7 +229,7 @@ func (s *Service) Review(ctx context.Context, id uuid.UUID, input ReviewInput) (
 		return nil, err
 	}
 	var result *Import
-	err = s.repo.Transact(ctx, func(repo Repository, _ erp.Repository) error {
+	err = s.repo.Transact(ctx, func(repo Repository, _ pgx.Tx) error {
 		item, err := repo.Get(ctx, id)
 		if err != nil {
 			return err
@@ -260,7 +261,7 @@ func (s *Service) Reject(ctx context.Context, id uuid.UUID, version int) (*Impor
 		return nil, err
 	}
 	var result *Import
-	err = s.repo.Transact(ctx, func(repo Repository, _ erp.Repository) error {
+	err = s.repo.Transact(ctx, func(repo Repository, _ pgx.Tx) error {
 		item, err := repo.Get(ctx, id)
 		if err != nil {
 			return err
@@ -292,7 +293,8 @@ func (s *Service) Confirm(ctx context.Context, id uuid.UUID, input ReviewInput) 
 		return nil, err
 	}
 	var result *Import
-	err = s.repo.Transact(ctx, func(repo Repository, businessRepo erp.Repository) error {
+	err = s.repo.Transact(ctx, func(repo Repository, tx pgx.Tx) error {
+		businessRepo := erp.NewRepositoryWithTx(tx)
 		item, err := repo.Get(ctx, id)
 		if err != nil {
 			return err

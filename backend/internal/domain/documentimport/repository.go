@@ -8,12 +8,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	// The repository only shares erp's error vocabulary (ErrNotFound/ErrConflict)
+	// so handlers can map persistence outcomes the same way for both domains; the
+	// ERP repositories themselves are built by the service layer inside Transact.
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/domain/erp"
 	"github.com/selfevo-AI/meta-org-saas/backend/internal/pkg/tenantdb"
 )
 
 type Repository interface {
-	Transact(context.Context, func(Repository, erp.Repository) error) error
+	Transact(context.Context, func(Repository, pgx.Tx) error) error
 	Create(context.Context, *Import, []SourceFile) (*Import, error)
 	Get(context.Context, uuid.UUID) (*Import, error)
 	List(context.Context, string, string, string, int) (*Page, error)
@@ -29,7 +32,10 @@ type PostgresRepository struct {
 
 func NewRepository(db tenantdb.DB) *PostgresRepository { return &PostgresRepository{db: db} }
 
-func (r *PostgresRepository) Transact(ctx context.Context, fn func(Repository, erp.Repository) error) error {
+// Transact opens the tenant-local transaction that document confirmation shares
+// with the ERP ledger; the callback receives the raw tx so this repository does
+// not depend on the erp package — the service layer builds erp repositories.
+func (r *PostgresRepository) Transact(ctx context.Context, fn func(Repository, pgx.Tx) error) error {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -39,7 +45,7 @@ func (r *PostgresRepository) Transact(ctx context.Context, fn func(Repository, e
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(current_database() || ':erp:ledger', 0))`); err != nil {
 		return err
 	}
-	if err := fn(&PostgresRepository{db: tx, inTx: true}, erp.NewRepositoryWithTx(tx)); err != nil {
+	if err := fn(&PostgresRepository{db: tx, inTx: true}, tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -47,7 +53,7 @@ func (r *PostgresRepository) Transact(ctx context.Context, fn func(Repository, e
 
 func (r *PostgresRepository) Create(ctx context.Context, item *Import, files []SourceFile) (*Import, error) {
 	var result *Import
-	err := r.Transact(ctx, func(store Repository, _ erp.Repository) error {
+	err := r.Transact(ctx, func(store Repository, _ pgx.Tx) error {
 		tx := store.(*PostgresRepository)
 		draft, err := json.Marshal(item.Draft)
 		if err != nil {
