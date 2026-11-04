@@ -1,10 +1,20 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 
 function read(path) {
   return readFileSync(`${frontendRoot}${path}`, 'utf8')
+}
+
+// api.ts and operations.ts were split into directories of modules.
+function readOperationsSourceLike(dir) {
+  return readdirSync(`${frontendRoot}${dir}`, { recursive: true })
+    .filter((entry) => String(entry).endsWith('.ts'))
+    .sort()
+    .map((entry) => readFileSync(join(`${frontendRoot}${dir}`, String(entry)), 'utf8'))
+    .join('\n')
 }
 
 const sources = {
@@ -14,7 +24,7 @@ const sources = {
   erp: read('src/app/erp-business-module-workspace.tsx'),
   projectLifecycle: read('src/app/project-lifecycle-workspace.tsx'),
   page: read('src/app/page.tsx'),
-  api: read('src/lib/api.ts'),
+  api: readOperationsSourceLike('src/lib/api'),
   stream: read('src/lib/stream.ts'),
   assistant: read('src/app/ai-assistant.tsx'),
   systemAdmin: read('src/app/system-admin-workspace.tsx'),

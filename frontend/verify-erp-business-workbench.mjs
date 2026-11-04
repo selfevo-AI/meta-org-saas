@@ -5,7 +5,16 @@ import { fileURLToPath } from 'node:url'
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
 const workspaceSource = readFileSync(`${frontendRoot}src/app/erp-business-module-workspace.tsx`, 'utf8')
 const documentSource = readFileSync(`${frontendRoot}src/app/document-workbench.tsx`, 'utf8')
-const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
+// api.ts was split into a directory of per-domain modules.
+function readApiSource() {
+  return readdirSync(`${frontendRoot}src/lib/api`, { recursive: true })
+    .filter((entry) => String(entry).endsWith('.ts'))
+    .sort()
+    .map((entry) => readFileSync(join(`${frontendRoot}src/lib/api`, String(entry)), 'utf8'))
+    .join('\n')
+}
+
+const apiSource = readApiSource()
 // operations.ts was split into a directory of per-domain catalog files.
 function readOperationsSource() {
   return readdirSync(`${frontendRoot}src/lib/operations`, { recursive: true })

@@ -1,12 +1,22 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
-const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
+// api.ts was split into a directory of per-domain modules.
+function readApiSource() {
+  return readdirSync(`${frontendRoot}src/lib/api`, { recursive: true })
+    .filter((entry) => String(entry).endsWith('.ts'))
+    .sort()
+    .map((entry) => readFileSync(join(`${frontendRoot}src/lib/api`, String(entry)), 'utf8'))
+    .join('\n')
+}
+
+const apiSource = readApiSource()
 const workbenchSource = readFileSync(`${frontendRoot}src/app/api-workbench.tsx`, 'utf8')
 
 const requiredApiSnippets = [
-  "import type { ApiOperation } from './operations'",
+  "import type { ApiOperation } from '@/lib/operations'",
   'export async function listRuntimeOperations',
   'export async function listPlatformRuntimeOperations',
   "'/runtime/operations'",

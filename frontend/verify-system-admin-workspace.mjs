@@ -3,7 +3,16 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
-const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
+// api.ts was split into a directory of per-domain modules.
+function readApiSource() {
+  return readdirSync(`${frontendRoot}src/lib/api`, { recursive: true })
+    .filter((entry) => String(entry).endsWith('.ts'))
+    .sort()
+    .map((entry) => readFileSync(join(`${frontendRoot}src/lib/api`, String(entry)), 'utf8'))
+    .join('\n')
+}
+
+const apiSource = readApiSource()
 const authSource = readFileSync(`${frontendRoot}src/lib/auth.ts`, 'utf8')
 const pageSource = readFileSync(`${frontendRoot}src/app/page.tsx`, 'utf8')
 const assistantSource = readFileSync(`${frontendRoot}src/app/ai-assistant.tsx`, 'utf8')

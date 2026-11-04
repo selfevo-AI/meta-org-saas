@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const frontendRoot = fileURLToPath(new URL('.', import.meta.url))
@@ -7,7 +8,16 @@ const procurementSource = readFileSync(`${frontendRoot}src/app/procurement-works
 const salesSource = readFileSync(`${frontendRoot}src/app/sales-workspace.tsx`, 'utf8')
 const inventorySource = readFileSync(`${frontendRoot}src/app/inventory-workspace.tsx`, 'utf8')
 const uiSource = readFileSync(`${frontendRoot}src/app/supply-chain-ui.tsx`, 'utf8')
-const apiSource = readFileSync(`${frontendRoot}src/lib/api.ts`, 'utf8')
+// api.ts was split into a directory of per-domain modules.
+function readApiSource() {
+  return readdirSync(`${frontendRoot}src/lib/api`, { recursive: true })
+    .filter((entry) => String(entry).endsWith('.ts'))
+    .sort()
+    .map((entry) => readFileSync(join(`${frontendRoot}src/lib/api`, String(entry)), 'utf8'))
+    .join('\n')
+}
+
+const apiSource = readApiSource()
 const i18nSource = readFileSync(`${frontendRoot}src/lib/i18n.tsx`, 'utf8')
 const englishI18nSource = readFileSync(`${frontendRoot}src/lib/i18n.en.ts`, 'utf8')
 
